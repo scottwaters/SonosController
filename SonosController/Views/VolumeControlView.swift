@@ -26,7 +26,7 @@ struct VolumeControlView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Speaker Volumes")
+            Text(L10n.speakerVolumes)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 24)
@@ -82,10 +82,13 @@ struct VolumeControlView: View {
             }
         }
         .padding(.bottom, 16)
+        .tint(sonosManager.resolvedAccentColor)
     }
 
     private func setVolume(device: SonosDevice) async {
         let vol = Int(speakerVolumes[device.id] ?? 0)
+        sonosManager.setVolumeGrace(deviceID: device.id, duration: 10)
+        sonosManager.deviceVolumes[device.id] = vol
         showPending(device.id)
         try? await sonosManager.setVolume(device: device, volume: vol)
         clearPending(device.id)
@@ -94,6 +97,8 @@ struct VolumeControlView: View {
     private func toggleMute(device: SonosDevice) async {
         let currentMute = speakerMutes[device.id] ?? false
         speakerMutes[device.id] = !currentMute
+        sonosManager.setMuteGrace(deviceID: device.id, duration: 10)
+        sonosManager.deviceMutes[device.id] = !currentMute
         showPending(device.id)
         try? await sonosManager.setMute(device: device, muted: !currentMute)
         clearPending(device.id)

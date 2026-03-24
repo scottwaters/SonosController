@@ -9,31 +9,31 @@ struct SleepTimerView: View {
     @State private var remaining: String = ""
     @State private var isActive = false
 
-    private let presets: [(String, String)] = [
-        ("15 min", "0:15:00"),
-        ("30 min", "0:30:00"),
-        ("45 min", "0:45:00"),
-        ("1 hour", "1:00:00"),
-        ("2 hours", "2:00:00"),
-    ]
+    private var presets: [(String, String)] {[
+        (L10n.min15, "0:15:00"),
+        (L10n.min30, "0:30:00"),
+        (L10n.min45, "0:45:00"),
+        (L10n.hour1, "1:00:00"),
+        (L10n.hours2, "2:00:00"),
+    ]}
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Sleep Timer")
+            Text(L10n.sleepTimer)
                 .font(.headline)
 
             Divider()
 
             if isActive {
                 VStack(spacing: 8) {
-                    Text("Time remaining")
+                    Text(L10n.timeRemaining)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(remaining)
                         .font(.title)
                         .monospacedDigit()
 
-                    Button("Cancel Timer") {
+                    Button(L10n.cancelTimer) {
                         Task {
                             try? await sonosManager.cancelSleepTimer(group: group)
                             isActive = false
@@ -63,7 +63,7 @@ struct SleepTimerView: View {
 
             HStack {
                 Spacer()
-                Button("Done") { dismiss() }
+                Button(L10n.done) { dismiss() }
                     .keyboardShortcut(.return)
             }
         }

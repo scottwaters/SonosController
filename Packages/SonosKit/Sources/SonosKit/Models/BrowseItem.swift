@@ -14,10 +14,12 @@ public struct BrowseItem: Identifiable, Equatable {
     public var itemClass: BrowseItemClass
     public var resourceURI: String? // playable URI
     public var resourceMetadata: String? // DIDL metadata for playback
+    public var serviceDescriptor: String? // SA_RINCON descriptor from desc element
 
     public init(id: String, title: String = "", artist: String = "", album: String = "",
                 albumArtURI: String? = nil, itemClass: BrowseItemClass = .unknown,
-                resourceURI: String? = nil, resourceMetadata: String? = nil) {
+                resourceURI: String? = nil, resourceMetadata: String? = nil,
+                serviceDescriptor: String? = nil) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -26,6 +28,7 @@ public struct BrowseItem: Identifiable, Equatable {
         self.itemClass = itemClass
         self.resourceURI = resourceURI
         self.resourceMetadata = resourceMetadata
+        self.serviceDescriptor = serviceDescriptor
     }
 
     public var isContainer: Bool {

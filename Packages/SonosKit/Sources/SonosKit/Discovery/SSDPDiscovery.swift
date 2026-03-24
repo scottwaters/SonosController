@@ -50,7 +50,7 @@ public final class SSDPDiscovery: @unchecked Sendable {
     private func createSocket() {
         socket = Darwin.socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
         guard socket >= 0 else {
-            print("SSDP: Failed to create socket")
+            // Socket creation failed
             return
         }
 

@@ -12,14 +12,14 @@ struct EQView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("EQ: \(device.roomName)")
+            Text("\(L10n.eq): \(device.roomName)")
                 .font(.headline)
 
             Divider()
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Bass")
+                    Text(L10n.bass)
                         .frame(width: 60, alignment: .leading)
                     Slider(value: $bass, in: -10...10, step: 1) { editing in
                         if !editing { Task { await saveBass() } }
@@ -31,7 +31,7 @@ struct EQView: View {
                 }
 
                 HStack {
-                    Text("Treble")
+                    Text(L10n.treble)
                         .frame(width: 60, alignment: .leading)
                     Slider(value: $treble, in: -10...10, step: 1) { editing in
                         if !editing { Task { await saveTreble() } }
@@ -42,7 +42,7 @@ struct EQView: View {
                         .frame(width: 28, alignment: .trailing)
                 }
 
-                Toggle("Loudness", isOn: $loudness)
+                Toggle(L10n.loudness, isOn: $loudness)
                     .onChange(of: loudness) {
                         Task { await saveLoudness() }
                     }
@@ -62,7 +62,7 @@ struct EQView: View {
             loudness = try await sonosManager.getLoudness(device: device)
             isLoading = false
         } catch {
-            print("Failed to load EQ: \(error)")
+            // EQ load failed — sliders will show defaults
         }
     }
 

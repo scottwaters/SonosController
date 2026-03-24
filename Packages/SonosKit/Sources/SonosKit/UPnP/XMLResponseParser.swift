@@ -63,7 +63,7 @@ public enum XMLResponseParser {
 
     // MARK: - Helpers
 
-    static func xmlUnescape(_ string: String) -> String {
+    public static func xmlUnescape(_ string: String) -> String {
         string
             .replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")
@@ -103,6 +103,8 @@ public struct DIDLItem {
     public var creator: String = ""
     public var album: String = ""
     public var albumArtURI: String = ""
+    public var streamContent: String = ""  // r:streamContent — current track info for streams
+    public var resourceURI: String = ""    // res element — track URI for art URL construction
 }
 
 // MARK: - Simple XML Parser (SAX-based)
@@ -251,6 +253,8 @@ private class DIDLParser: NSObject, XMLParserDelegate {
         case "creator": item.creator = trimmed
         case "album": item.album = trimmed
         case "albumArtURI": item.albumArtURI = trimmed
+        case "streamContent": item.streamContent = trimmed
+        case "res": item.resourceURI = trimmed
         default: break
         }
     }

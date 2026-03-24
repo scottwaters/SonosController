@@ -13,10 +13,10 @@ struct QueueView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Queue")
+                Text(L10n.queue)
                     .font(.headline)
                 Spacer()
-                Text("\(totalTracks) tracks")
+                Text("\(totalTracks) \(L10n.tracks)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button {
@@ -26,7 +26,7 @@ struct QueueView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
-                .help("Clear queue")
+                .help(L10n.clearQueue)
                 .disabled(queueItems.isEmpty)
             }
             .padding(.horizontal, 16)
@@ -38,7 +38,7 @@ struct QueueView: View {
                 ProgressView()
                     .frame(maxHeight: .infinity)
             } else if queueItems.isEmpty {
-                Text("Queue is empty")
+                Text(L10n.queueIsEmpty)
                     .foregroundStyle(.secondary)
                     .frame(maxHeight: .infinity)
             } else {
@@ -50,9 +50,9 @@ struct QueueView: View {
                                 Task { await playTrack(item.id) }
                             }
                             .contextMenu {
-                                Button("Play") { Task { await playTrack(item.id) } }
+                                Button(L10n.play) { Task { await playTrack(item.id) } }
                                 Divider()
-                                Button("Remove from Queue") { Task { await removeTrack(item.id) } }
+                                Button(L10n.removeFromQueue) { Task { await removeTrack(item.id) } }
                             }
                     }
                     .onMove { from, to in
@@ -75,7 +75,7 @@ struct QueueView: View {
             let posInfo = try await sonosManager.getPositionInfo(group: group)
             currentTrack = posInfo.trackNumber
         } catch {
-            print("Failed to load queue: \(error)")
+            // Queue load failed
         }
         isLoading = false
     }
@@ -85,7 +85,7 @@ struct QueueView: View {
             try await sonosManager.playTrackFromQueue(group: group, trackNumber: trackNumber)
             currentTrack = trackNumber
         } catch {
-            print("Failed to play track: \(error)")
+            // Track playback failed
         }
     }
 
@@ -94,7 +94,7 @@ struct QueueView: View {
             try await sonosManager.removeFromQueue(group: group, trackIndex: trackIndex)
             await loadQueue()
         } catch {
-            print("Failed to remove track: \(error)")
+            // Track removal failed
         }
     }
 
@@ -104,7 +104,7 @@ struct QueueView: View {
             queueItems = []
             totalTracks = 0
         } catch {
-            print("Failed to clear queue: \(error)")
+            // Queue clear failed
         }
     }
 
@@ -116,7 +116,7 @@ struct QueueView: View {
             try await sonosManager.moveTrackInQueue(group: group, from: fromTrack, to: toTrack)
             await loadQueue()
         } catch {
-            print("Failed to move track: \(error)")
+            // Track move failed
         }
     }
 }

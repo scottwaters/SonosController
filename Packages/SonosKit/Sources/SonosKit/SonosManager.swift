@@ -1,14 +1,74 @@
 /// SonosManager.swift — Central coordinator for all Sonos operations.
 ///
-/// Acts as the single source of truth for speaker topology, playback control,
-/// browsing, and caching. All UPnP service calls are funneled through here so
-/// the UI layer never touches SOAP directly. Uses a "Quick Start" cache system
-/// to show speakers instantly on launch while live discovery runs in the background.
+/// Acts as the single source of truth for speaker topology, playback state,
+/// volume, and browsing. Supports two communications modes:
+/// - Hybrid Event-First: UPnP event subscriptions with targeted polling fallback
+/// - Legacy Polling: Original periodic SOAP queries (2-second interval)
+///
+/// All UPnP service calls are funneled through here so the UI layer never
+/// touches SOAP directly. Uses a "Quick Start" cache system to show speakers
+/// instantly on launch while live discovery runs in the background.
 import Foundation
+
+private let debugLogPath = "/tmp/sonos_debug.log"
+public func sonosDebugLog(_ msg: String) {
+    #if DEBUG
+    let line = "\(Date()): \(msg)\n"
+    if let data = line.data(using: .utf8) {
+        if FileManager.default.fileExists(atPath: debugLogPath) {
+            if let handle = FileHandle(forWritingAtPath: debugLogPath) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            }
+        } else {
+            FileManager.default.createFile(atPath: debugLogPath, contents: data)
+        }
+    }
+    #endif
+}
 
 public enum StartupMode: String, CaseIterable {
     case quickStart = "Quick Start"
     case classic = "Classic"
+}
+
+public enum CommunicationMode: String, CaseIterable {
+    case hybridEventFirst = "Event-Driven"
+    case legacyPolling = "Legacy Polling"
+}
+
+public enum AppearanceMode: String, CaseIterable {
+    case system = "System"
+    case light = "Light"
+    case dark = "Dark"
+}
+
+/// Stored as RGB array [r, g, b] in UserDefaults. [-1,-1,-1] means "use system default".
+public struct StoredColor: Equatable {
+    public var red: Double
+    public var green: Double
+    public var blue: Double
+
+    public static let system = StoredColor(red: -1, green: -1, blue: -1)
+    public var isSystem: Bool { red < 0 }
+
+    public init(red: Double, green: Double, blue: Double) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+    }
+
+    public func save(to key: String) {
+        UserDefaults.standard.set([red, green, blue], forKey: key)
+    }
+
+    public static func load(from key: String, default defaultValue: StoredColor = .system) -> StoredColor {
+        guard let arr = UserDefaults.standard.array(forKey: key) as? [Double], arr.count == 3 else {
+            return defaultValue
+        }
+        return StoredColor(red: arr[0], green: arr[1], blue: arr[2])
+    }
 }
 
 @MainActor
@@ -27,8 +87,146 @@ public class SonosManager: ObservableObject {
     @Published public var isRefreshing = false
     @Published public var staleMessage: String?
 
+    // MARK: - Transport State (centralized, updated by transport strategy)
+
+    /// Per-group playback state, keyed by group ID
+    @Published public var groupTransportStates: [String: TransportState] = [:]
+    @Published public var groupTrackMetadata: [String: TrackMetadata] = [:]
+    @Published public var groupPlayModes: [String: PlayMode] = [:]
+    @Published public var groupPositions: [String: TimeInterval] = [:]
+    @Published public var groupDurations: [String: TimeInterval] = [:]
+
+    /// Per-device volume/mute state, keyed by device ID
+    @Published public var deviceVolumes: [String: Int] = [:]
+    @Published public var deviceMutes: [String: Bool] = [:]
+
+    /// Cached art URLs discovered during playback
+    /// Used by browse list to show art for items that lack it in their DIDL
+    @Published public var discoveredArtURLs: [String: String] = [:]
+
+    /// The objectID of the last favorite that was played — used to map art back to the browse list
+    public var lastPlayedFavoriteID: String?
+
+    /// Set when user initiates playback, cleared only when speaker confirms playing
+    @Published public var awaitingPlayback: [String: Bool] = [:]
+
+    /// Stores an art URL with multiple cache keys for flexible lookup
+    public func cacheArtURL(_ artURL: String, forURI uri: String, title: String = "", itemID: String = "") {
+        if !uri.isEmpty {
+            discoveredArtURLs[uri] = artURL
+        }
+        if !title.isEmpty {
+            discoveredArtURLs["title:\(title.lowercased())"] = artURL
+            let normalized = Self.normalizeForCache(title)
+            if !normalized.isEmpty {
+                discoveredArtURLs["norm:\(normalized)"] = artURL
+            }
+        }
+        if !itemID.isEmpty {
+            discoveredArtURLs[itemID] = artURL
+        }
+        persistArtCache()
+    }
+
+    private var artCacheSaveTask: Task<Void, Never>?
+
+    /// Debounced persist of art URL cache to disk
+    private func persistArtCache() {
+        artCacheSaveTask?.cancel()
+        artCacheSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s debounce
+            guard !Task.isCancelled, let self else { return }
+            self.cache.saveArtURLs(self.discoveredArtURLs)
+        }
+    }
+
+    /// Looks up cached art by URI, exact title, or normalized title
+    public func lookupCachedArt(uri: String?, title: String) -> String? {
+        if let uri = uri, let art = discoveredArtURLs[uri] { return art }
+        if let art = discoveredArtURLs["title:\(title.lowercased())"] { return art }
+        let normalized = Self.normalizeForCache(title)
+        if !normalized.isEmpty, let art = discoveredArtURLs["norm:\(normalized)"] { return art }
+        return nil
+    }
+
+    private static func normalizeForCache(_ title: String) -> String {
+        title.lowercased()
+            .replacingOccurrences(of: " - ", with: " ")
+            .replacingOccurrences(of: "radio", with: "")
+            .replacingOccurrences(of: "station", with: "")
+            .components(separatedBy: .alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    // MARK: - Grace Periods (centralized)
+
+    private var transportGraceUntils: [String: Date] = [:]
+    private var volumeGraceUntils: [String: Date] = [:]
+    private var muteGraceUntils: [String: Date] = [:]
+    private var modeGraceUntils: [String: Date] = [:]
+    private var positionGraceUntils: [String: Date] = [:]
+
+    public func setTransportGrace(groupID: String, duration: TimeInterval = 5) {
+        transportGraceUntils[groupID] = Date().addingTimeInterval(duration)
+    }
+
+    public func setVolumeGrace(deviceID: String, duration: TimeInterval = 5) {
+        volumeGraceUntils[deviceID] = Date().addingTimeInterval(duration)
+    }
+
+    public func setMuteGrace(deviceID: String, duration: TimeInterval = 5) {
+        muteGraceUntils[deviceID] = Date().addingTimeInterval(duration)
+    }
+
+    public func setModeGrace(groupID: String, duration: TimeInterval = 5) {
+        modeGraceUntils[groupID] = Date().addingTimeInterval(duration)
+    }
+
+    public func isVolumeGraceActive(deviceID: String) -> Bool {
+        guard let until = volumeGraceUntils[deviceID] else { return false }
+        return Date() < until
+    }
+
+    public func isMuteGraceActive(deviceID: String) -> Bool {
+        guard let until = muteGraceUntils[deviceID] else { return false }
+        return Date() < until
+    }
+
+    public func setPositionGrace(coordinatorID: String, duration: TimeInterval = 5) {
+        positionGraceUntils[coordinatorID] = Date().addingTimeInterval(duration)
+    }
+
+    // MARK: - Settings
+
     @Published public var startupMode: StartupMode {
         didSet { UserDefaults.standard.set(startupMode.rawValue, forKey: "startupMode") }
+    }
+
+    @Published public var communicationMode: CommunicationMode {
+        didSet {
+            UserDefaults.standard.set(communicationMode.rawValue, forKey: "communicationMode")
+            Task { await switchTransportStrategy() }
+        }
+    }
+
+    @Published public var appearanceMode: AppearanceMode {
+        didSet { UserDefaults.standard.set(appearanceMode.rawValue, forKey: "appearanceMode") }
+    }
+
+    @Published public var appLanguage: AppLanguage {
+        didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: "appLanguage") }
+    }
+
+    @Published public var accentColor: StoredColor {
+        didSet { accentColor.save(to: "accentColor") }
+    }
+    @Published public var playingZoneColor: StoredColor {
+        didSet { playingZoneColor.save(to: "playingZoneColor") }
+    }
+    @Published public var inactiveZoneColor: StoredColor {
+        didSet { inactiveZoneColor.save(to: "inactiveZoneColor") }
     }
 
     // MARK: - Private Services
@@ -47,9 +245,44 @@ public class SonosManager: ObservableObject {
     private var discoveredLocations: Set<String> = []  // de-dups SSDP responses
     private var refreshTimer: Timer?
 
+    // MARK: - Transport Strategy
+
+    private var transportStrategy: TransportStrategy?
+    private var strategyStarted = false
+
+    // Debug logging is in the sonosDebugLog free function below
+
+    /// Number of active event subscriptions (for diagnostics in Settings)
+    public var activeSubscriptionCount: Int {
+        (transportStrategy as? HybridEventFirstTransport)?.activeSubscriptionCount ?? 0
+    }
+
+    /// Subscription details for diagnostics
+    public var subscriptionDetails: [(sid: String, deviceID: String, service: String, expiresAt: Date)] {
+        (transportStrategy as? HybridEventFirstTransport)?.subscriptionDetails ?? []
+    }
+
+    /// Event callback URL for diagnostics
+    public var eventCallbackURL: String {
+        (transportStrategy as? HybridEventFirstTransport)?.callbackURLString ?? "Not available"
+    }
+
     public init() {
-        let saved = UserDefaults.standard.string(forKey: "startupMode") ?? StartupMode.quickStart.rawValue
-        self.startupMode = StartupMode(rawValue: saved) ?? .quickStart
+        let savedStartup = UserDefaults.standard.string(forKey: "startupMode") ?? StartupMode.quickStart.rawValue
+        self.startupMode = StartupMode(rawValue: savedStartup) ?? .quickStart
+
+        let savedComms = UserDefaults.standard.string(forKey: "communicationMode") ?? CommunicationMode.hybridEventFirst.rawValue
+        self.communicationMode = CommunicationMode(rawValue: savedComms) ?? .hybridEventFirst
+
+        let savedAppearance = UserDefaults.standard.string(forKey: "appearanceMode") ?? AppearanceMode.system.rawValue
+        self.appearanceMode = AppearanceMode(rawValue: savedAppearance) ?? .system
+
+        let savedLang = UserDefaults.standard.string(forKey: "appLanguage") ?? AppLanguage.english.rawValue
+        self.appLanguage = AppLanguage(rawValue: savedLang) ?? .english
+
+        self.accentColor = StoredColor.load(from: "accentColor", default: .system)
+        self.playingZoneColor = StoredColor.load(from: "playingZoneColor", default: StoredColor(red: 0.2, green: 0.78, blue: 0.35))
+        self.inactiveZoneColor = StoredColor.load(from: "inactiveZoneColor", default: StoredColor(red: 0.56, green: 0.56, blue: 0.58))
 
         discovery.onDeviceFound = { [weak self] location, ip, port in
             Task { @MainActor [weak self] in
@@ -62,6 +295,12 @@ public class SonosManager: ObservableObject {
 
     public func startDiscovery() {
         guard !isDiscovering else { return }
+
+        // Restore persisted art URL mappings (independent of startup mode)
+        let savedArtURLs = cache.loadArtURLs()
+        if !savedArtURLs.isEmpty {
+            discoveredArtURLs = savedArtURLs
+        }
 
         // Quick Start: load cache first for instant UI
         if startupMode == .quickStart, let cached = cache.load() {
@@ -85,6 +324,7 @@ public class SonosManager: ObservableObject {
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
+                self?.discoveredLocations.removeAll()
                 self?.discovery.rescan()
             }
         }
@@ -95,6 +335,12 @@ public class SonosManager: ObservableObject {
         discovery.stopDiscovery()
         refreshTimer?.invalidate()
         refreshTimer = nil
+
+        Task {
+            await transportStrategy?.stop()
+            transportStrategy = nil
+            strategyStarted = false
+        }
     }
 
     public func rescan() {
@@ -122,7 +368,7 @@ public class SonosManager: ObservableObject {
             devices[device.id] = device
             await refreshTopology(from: device)
         } catch {
-            print("Failed to fetch device description from \(location): \(error)")
+            // Device description fetch failed — will retry on next SSDP response
         }
     }
 
@@ -152,15 +398,76 @@ public class SonosManager: ObservableObject {
                 newGroups.append(group)
             }
 
-            self.groups = newGroups.sorted { $0.name < $1.name }
+            let sortedGroups = newGroups.sorted { $0.name < $1.name }
+
+            // Only update groups if topology actually changed — prevents UI flash
+            let changed = sortedGroups.count != groups.count ||
+                zip(sortedGroups, groups).contains { new, old in
+                    new.id != old.id ||
+                    new.coordinatorID != old.coordinatorID ||
+                    new.members.count != old.members.count ||
+                    zip(new.members, old.members).contains { $0.id != $1.id }
+                }
+
+            if changed {
+                self.groups = sortedGroups
+                saveCache()
+            }
+
             self.isUsingCachedData = false
             self.isRefreshing = false
             self.staleMessage = nil
 
-            // Save to cache for next launch
-            saveCache()
+            // Start or update transport strategy
+            await startOrUpdateTransportStrategy()
         } catch {
-            print("Failed to fetch zone topology: \(error)")
+            // Topology fetch failed — will retry on next discovery cycle
+        }
+    }
+
+    // MARK: - Transport Strategy Management
+
+    private func startOrUpdateTransportStrategy() async {
+        if !strategyStarted {
+            let strategy = createStrategy()
+            strategy.delegate = self
+            transportStrategy = strategy
+            strategyStarted = true
+            await strategy.start(groups: groups, devices: devices)
+        } else if let strategy = transportStrategy {
+            await strategy.onGroupsChanged(groups, devices: devices)
+        }
+    }
+
+    private func switchTransportStrategy() async {
+        // Stop current strategy
+        if let oldStrategy = transportStrategy {
+            await oldStrategy.stop()
+        }
+
+        // Clear state so views re-initialize
+        groupTransportStates.removeAll()
+        groupTrackMetadata.removeAll()
+        groupPlayModes.removeAll()
+        groupPositions.removeAll()
+        groupDurations.removeAll()
+        deviceVolumes.removeAll()
+        deviceMutes.removeAll()
+
+        // Start new strategy
+        let strategy = createStrategy()
+        strategy.delegate = self
+        transportStrategy = strategy
+        strategyStarted = true
+        await strategy.start(groups: groups, devices: devices)
+    }
+
+    private func createStrategy() -> TransportStrategy {
+        switch communicationMode {
+        case .hybridEventFirst:
+            return HybridEventFirstTransport()
+        case .legacyPolling:
+            return LegacyPollingTransport()
         }
     }
 
@@ -246,6 +553,11 @@ public class SonosManager: ObservableObject {
     public func getTransportState(group: SonosGroup) async throws -> TransportState {
         guard let coordinator = group.coordinator else { return .stopped }
         return try await avTransport.getTransportInfo(device: coordinator)
+    }
+
+    public func getMediaInfo(group: SonosGroup) async throws -> [String: String] {
+        guard let coordinator = group.coordinator else { return [:] }
+        return try await avTransport.getMediaInfo(device: coordinator)
     }
 
     public func getPositionInfo(group: SonosGroup) async throws -> TrackMetadata {
@@ -345,6 +657,16 @@ public class SonosManager: ObservableObject {
 
     public func playTrackFromQueue(group: SonosGroup, trackNumber: Int) async throws {
         guard let coordinator = group.coordinator else { return }
+        // Clear radio station state — we're switching to queue playback
+        if var meta = groupTrackMetadata[coordinator.id] {
+            meta.stationName = ""
+            meta.albumArtURI = nil
+            groupTrackMetadata[coordinator.id] = meta
+        }
+        // Ensure transport is pointing at the queue (not a radio stream etc.)
+        try await avTransport.setAVTransportURI(
+            device: coordinator, uri: "x-rincon-queue:\(coordinator.id)#0"
+        )
         try await contentDirectory.seekToTrack(device: coordinator, trackNumber: trackNumber)
         try await avTransport.play(device: coordinator)
     }
@@ -441,7 +763,7 @@ public class SonosManager: ObservableObject {
                     return
                 }
             } catch {
-                print("Music services attempt \(attempt + 1) failed: \(error)")
+                // Will retry up to 3 times
             }
         }
     }
@@ -468,6 +790,11 @@ public class SonosManager: ObservableObject {
         }
     }
 
+    public func browseMetadata(objectID: String) async throws -> BrowseItem? {
+        guard let anyDevice = preferredDevice else { return nil }
+        return try await contentDirectory.browseMetadata(device: anyDevice, objectID: objectID)
+    }
+
     public func browse(objectID: String, start: Int = 0, count: Int = 100) async throws -> (items: [BrowseItem], total: Int) {
         guard let anyDevice = preferredDevice else { return ([], 0) }
         return try await contentDirectory.browse(device: anyDevice, objectID: objectID, start: start, count: count)
@@ -483,12 +810,95 @@ public class SonosManager: ObservableObject {
     public func playBrowseItem(_ item: BrowseItem, in group: SonosGroup) async throws {
         guard let coordinator = group.coordinator else { return }
 
+        // Remember which favorite was played so art can be mapped back
+        lastPlayedFavoriteID = item.id
+
+        // Build metadata from browse item for UI display
+        let isRadioStream = item.resourceURI?.hasPrefix("x-sonosapi-stream:") == true
+            || item.resourceURI?.hasPrefix("x-sonosapi-radio:") == true
+            || item.resourceURI?.hasPrefix("x-rincon-mp3radio:") == true
+
+        var initialMeta = TrackMetadata(
+            title: item.title,
+            artist: item.artist ?? "",
+            album: item.album ?? "",
+            albumArtURI: item.albumArtURI,
+            stationName: isRadioStream ? item.title : ""
+        )
+        if let art = initialMeta.albumArtURI, art.hasPrefix("/") {
+            initialMeta.albumArtURI = "http://\(coordinator.ip):\(coordinator.port)\(art)"
+        }
+
+        // Show new item info immediately with transitioning state.
+        // Use cached art if available so artwork appears instantly while waiting.
+        let isContainer = item.resourceURI?.hasPrefix("x-rincon-cpcontainer:") == true
+        awaitingPlayback[coordinator.id] = true
+        if !isContainer {
+            var pendingMeta = initialMeta
+            // Prefer cached art (survives restart), then item's DIDL art, then nil
+            if let cachedArt = discoveredArtURLs[item.id] ?? lookupCachedArt(uri: item.resourceURI, title: item.title) {
+                pendingMeta.albumArtURI = cachedArt
+            }
+            groupTrackMetadata[coordinator.id] = pendingMeta
+            groupTransportStates[coordinator.id] = .transitioning
+            setTransportGrace(groupID: coordinator.id, duration: 10)
+        }
+
         if let uri = item.resourceURI, !uri.isEmpty {
-            try await withStaleHandling(for: group.name) {
-                try await avTransport.setAVTransportURI(
-                    device: coordinator, uri: uri, metadata: item.resourceMetadata ?? ""
-                )
-                try await avTransport.play(device: coordinator)
+            // Unescape metadata — browse parser stores it XML-escaped
+            var meta = item.resourceMetadata ?? ""
+            if meta.contains("&lt;") {
+                meta = XMLResponseParser.xmlUnescape(meta)
+            }
+
+            if uri.hasPrefix("x-rincon-cpcontainer:") {
+                // Streaming service containers (albums/playlists) —
+                // try adding to queue first, fall back to direct transport URI
+                do {
+                    try await contentDirectory.removeAllTracksFromQueue(device: coordinator)
+                    _ = try await contentDirectory.addURIToQueue(
+                        device: coordinator, uri: uri, metadata: meta
+                    )
+                    try await avTransport.setAVTransportURI(
+                        device: coordinator, uri: "x-rincon-queue:\(coordinator.id)#0"
+                    )
+                    try await avTransport.play(device: coordinator)
+                } catch {
+                    // Fallback: try direct transport URI
+                    try await avTransport.setAVTransportURI(
+                        device: coordinator, uri: uri, metadata: meta
+                    )
+                    try await avTransport.play(device: coordinator)
+                }
+                // Success — show new item info with transitioning state
+                var pendingMeta = initialMeta
+                if let cachedArt = discoveredArtURLs[item.id] ?? lookupCachedArt(uri: item.resourceURI, title: item.title) {
+                    pendingMeta.albumArtURI = cachedArt
+                }
+                groupTrackMetadata[coordinator.id] = pendingMeta
+                groupTransportStates[coordinator.id] = .transitioning
+                setTransportGrace(groupID: coordinator.id, duration: 10)
+                awaitingPlayback[coordinator.id] = true
+            } else if uri.hasPrefix("x-rincon-playlist:") || uri.hasPrefix("file:///jffs/") {
+                // Sonos playlists and library playlists — add to queue then play
+                try await withStaleHandling(for: group.name) {
+                    try await contentDirectory.removeAllTracksFromQueue(device: coordinator)
+                    _ = try await contentDirectory.addURIToQueue(
+                        device: coordinator, uri: uri, metadata: meta
+                    )
+                    try await avTransport.setAVTransportURI(
+                        device: coordinator, uri: "x-rincon-queue:\(coordinator.id)#0"
+                    )
+                    try await avTransport.play(device: coordinator)
+                }
+            } else {
+                // Direct playback — singles, radio streams, etc.
+                try await withStaleHandling(for: group.name) {
+                    try await avTransport.setAVTransportURI(
+                        device: coordinator, uri: uri, metadata: meta
+                    )
+                    try await avTransport.play(device: coordinator)
+                }
             }
         } else if item.isContainer {
             try await withStaleHandling(for: group.name) {
@@ -533,10 +943,262 @@ public class SonosManager: ObservableObject {
         return try await musicServices.listAvailableServices(device: device)
     }
 
+    /// Looks up a music service name by its Sonos service ID (sid=NNN in URIs)
+    public func musicServiceName(for serviceID: Int) -> String? {
+        if let match = musicServicesList.first(where: { $0.id == serviceID }) {
+            return match.name
+        }
+        return nil
+    }
+
+    /// Detects the music service from a URI by checking both sid= and URI content patterns.
+    public func detectServiceName(fromURI uri: String) -> String? {
+        // 1. Try sid= parameter
+        if let range = uri.range(of: "sid=") {
+            let after = uri[range.upperBound...]
+            let numStr = String(after.prefix(while: { $0.isNumber }))
+            if let sid = Int(numStr), let name = musicServiceName(for: sid) {
+                return name
+            }
+        }
+
+        // 2. Check URI content for known service patterns
+        let lower = uri.lowercased()
+        if lower.contains("spotify") { return "Spotify" }
+        if lower.contains("apple") { return "Apple Music" }
+        if lower.contains("amazon") || lower.contains("amzn") { return "Amazon Music" }
+        if lower.contains("deezer") { return "Deezer" }
+        if lower.contains("tidal") { return "TIDAL" }
+        if lower.contains("soundcloud") { return "SoundCloud" }
+        if lower.contains("youtube") { return "YouTube Music" }
+        if lower.contains("pandora") { return "Pandora" }
+        if lower.contains("napster") { return "Napster" }
+        if lower.contains("qobuz") { return "Qobuz" }
+        if lower.contains("plex") { return "Plex" }
+        if lower.contains("audible") { return "Audible" }
+        if lower.contains("iheart") || lower.contains("iheartradio") { return "iHeartRadio" }
+        if lower.contains("calmradio") || uri.contains("sid=144") { return "Calm Radio" }
+
+        // Radio streams — check after specific services
+        if uri.hasPrefix("x-sonosapi-stream:") || uri.hasPrefix("x-sonosapi-radio:") { return "Radio" }
+        if uri.hasPrefix("x-rincon-mp3radio:") { return "Radio" }
+
+        // Apple Music uses x-sonos-http with sid=204
+        if uri.hasPrefix("x-sonos-http:") { return "Apple Music" }
+
+        // Local sources
+        if uri.hasPrefix("x-file-cifs://") || uri.hasPrefix("x-smb://") { return "Music Library" }
+        if uri.hasPrefix("file:///jffs/settings/savedqueues") { return "Sonos Playlist" }
+
+        return nil
+    }
+
+    /// Looks up a music service name from a SA_RINCON descriptor string.
+    /// e.g. "SA_RINCON52231_X_#Svc52231-0-Token" → extracts 52231 and maps it.
+    /// SA_RINCON numbers map via: sid = rinconNumber / 256 (approximately)
+    public func musicServiceName(fromDescriptor desc: String) -> String? {
+        guard let range = desc.range(of: "SA_RINCON") else { return nil }
+        let after = desc[range.upperBound...]
+        let numStr = String(after.prefix(while: { $0.isNumber }))
+        guard let rinconNum = Int(numStr) else { return nil }
+
+        // Try direct match first
+        if let name = musicServiceName(for: rinconNum) { return name }
+
+        // SA_RINCON numbers are typically serviceType * 256 + 7
+        let derived = (rinconNum - 7) / 256
+        if let name = musicServiceName(for: derived) { return name }
+
+        // Try common known mappings
+        switch rinconNum {
+        case 2311: return "Spotify"
+        case 52231: return "Apple Music"
+        case 65031: return "Amazon Music"
+        case 3079: return "TuneIn"
+        case 519: return "Pandora"
+        case 36871: return "Calm Radio"
+        default: break
+        }
+
+        // Try dividing by various factors
+        for divisor in [256, 257, 7] {
+            let candidate = rinconNum / divisor
+            if let name = musicServiceName(for: candidate) { return name }
+        }
+
+        return nil
+    }
+
     /// Returns a reliable device for SOAP calls — prefers a group coordinator
     /// over an arbitrary device from the dictionary, since coordinators are
     /// always full speakers (never subs or satellites)
     private var preferredDevice: SonosDevice? {
         groups.first?.coordinator ?? devices.values.first
+    }
+}
+
+// MARK: - TransportStrategyDelegate
+
+extension SonosManager: TransportStrategyDelegate {
+    public func transportDidUpdateState(_ groupID: String, state: TransportState) {
+        let now = Date()
+        if let grace = transportGraceUntils[groupID], now < grace {
+            let currentOptimistic = groupTransportStates[groupID]
+            if state == currentOptimistic {
+                transportGraceUntils[groupID] = nil
+            } else if currentOptimistic == .transitioning && state == .playing {
+                // Allow transitioning → playing through (expected progression)
+                transportGraceUntils[groupID] = nil
+            } else {
+                return
+            }
+        }
+        groupTransportStates[groupID] = state
+        if state == .playing {
+            awaitingPlayback[groupID] = false
+        }
+    }
+
+    public func transportDidUpdateTrackMetadata(_ groupID: String, metadata: TrackMetadata) {
+        guard let existing = groupTrackMetadata[groupID] else {
+            groupTrackMetadata[groupID] = metadata
+            return
+        }
+
+        // If station changed, accept the new metadata completely (don't keep old art)
+        if !metadata.stationName.isEmpty && !existing.stationName.isEmpty &&
+           metadata.stationName != existing.stationName {
+            groupTrackMetadata[groupID] = metadata
+            return
+        }
+
+        // Don't overwrite existing good metadata with empty or technical stream names
+        if !existing.title.isEmpty {
+            let newTitle = metadata.title
+            if newTitle.isEmpty || looksLikeTechnicalName(newTitle) {
+                var merged = existing
+                merged.position = metadata.position
+                merged.duration = metadata.duration
+                merged.trackNumber = metadata.trackNumber
+                merged.trackURI = metadata.trackURI
+                if !metadata.stationName.isEmpty {
+                    merged.stationName = metadata.stationName
+                }
+                // Update art if new one is available
+                if let newArt = metadata.albumArtURI, !newArt.isEmpty {
+                    merged.albumArtURI = newArt
+                }
+                groupTrackMetadata[groupID] = merged
+                return
+            }
+        }
+
+        var updated = metadata
+
+        // Only carry forward station name if still playing radio
+        let isStillRadio = updated.trackURI?.contains("x-sonosapi-stream:") == true ||
+                           updated.trackURI?.contains("x-sonosapi-radio:") == true ||
+                           updated.trackURI?.contains("x-rincon-mp3radio:") == true
+        if updated.stationName.isEmpty && !existing.stationName.isEmpty && isStillRadio {
+            updated.stationName = existing.stationName
+        }
+
+        // Only carry forward art if the source hasn't changed
+        if updated.albumArtURI == nil, let existingArt = existing.albumArtURI {
+            // Don't carry radio art to queue tracks
+            if isStillRadio || existing.stationName.isEmpty {
+                updated.albumArtURI = existingArt
+            }
+        }
+        groupTrackMetadata[groupID] = updated
+    }
+
+    /// Detects technical stream names that should not replace friendly titles.
+    /// e.g. "moviesoundtracks_mobile_mp3", "s233145", "stream_128k"
+    private func looksLikeTechnicalName(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        // Contains underscores but no spaces — likely a stream ID
+        if name.contains("_") && !name.contains(" ") { return true }
+        // Very short alphanumeric codes
+        if name.count < 4 && name.allSatisfy({ $0.isLetter || $0.isNumber }) { return true }
+        // URLs or URL-like strings
+        if name.contains("://") || name.contains("?") || name.contains("&") { return true }
+        if name.hasPrefix("http") || name.hasPrefix("x-") { return true }
+        // File extensions
+        if lower.hasSuffix(".mp3") || lower.hasSuffix(".mp4") || lower.hasSuffix(".pls") ||
+           lower.hasSuffix(".m3u") || lower.hasSuffix(".m3u8") || lower.hasSuffix(".aac") ||
+           lower.hasSuffix(".ogg") || lower.hasSuffix(".flac") || lower.hasSuffix(".wav") { return true }
+        // Looks like a filename with no spaces and a dot
+        if name.contains(".") && !name.contains(" ") { return true }
+        return false
+    }
+
+    public func transportDidUpdatePlayMode(_ groupID: String, mode: PlayMode) {
+        let now = Date()
+        if let grace = modeGraceUntils[groupID], now < grace { return }
+        groupPlayModes[groupID] = mode
+    }
+
+    public func transportDidUpdateVolume(_ deviceID: String, volume: Int) {
+        let now = Date()
+        if let grace = volumeGraceUntils[deviceID], now < grace { return }
+        deviceVolumes[deviceID] = volume
+    }
+
+    public func transportDidUpdateMute(_ deviceID: String, muted: Bool) {
+        let now = Date()
+        if let grace = muteGraceUntils[deviceID], now < grace { return }
+        deviceMutes[deviceID] = muted
+    }
+
+    public func transportDidUpdateTopology(_ groupData: [ZoneGroupData]) {
+        // Topology changed via event — refresh from the data
+        var newGroups: [SonosGroup] = []
+        for gd in groupData {
+            var members: [SonosDevice] = []
+            for md in gd.members {
+                let dev = SonosDevice(
+                    id: md.uuid,
+                    ip: md.ip,
+                    port: md.port,
+                    roomName: md.zoneName,
+                    isCoordinator: md.uuid == gd.coordinatorUUID,
+                    groupID: gd.id
+                )
+                devices[dev.id] = dev
+                if !md.isInvisible {
+                    members.append(dev)
+                }
+            }
+            let group = SonosGroup(id: gd.id, coordinatorID: gd.coordinatorUUID, members: members)
+            newGroups.append(group)
+        }
+
+        self.groups = newGroups.sorted { $0.name < $1.name }
+        saveCache()
+
+        // Notify transport strategy about topology change
+        Task {
+            await transportStrategy?.onGroupsChanged(groups, devices: devices)
+        }
+    }
+
+    public func transportDidUpdatePosition(_ groupID: String, position: TimeInterval, duration: TimeInterval) {
+        let now = Date()
+        if let grace = positionGraceUntils[groupID], now < grace { return }
+        groupPositions[groupID] = position
+        groupDurations[groupID] = duration
+    }
+
+    public func getAVTransportService() -> AVTransportService {
+        avTransport
+    }
+
+    public func getRenderingControlService() -> RenderingControlService {
+        renderingControl
+    }
+
+    public func getZoneGroupTopologyService() -> ZoneGroupTopologyService {
+        zoneTopology
     }
 }

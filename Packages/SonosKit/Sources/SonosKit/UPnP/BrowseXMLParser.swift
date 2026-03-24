@@ -21,6 +21,7 @@ public class BrowseXMLParser: NSObject, XMLParserDelegate {
     private var currentClass = ""
     private var currentResURI = ""
     private var currentResMD = ""
+    private var currentDesc = ""
     private var isContainerEntry = false
 
     // resMD handling: track depth so we skip nested elements inside resMD
@@ -112,6 +113,7 @@ public class BrowseXMLParser: NSObject, XMLParserDelegate {
             currentClass = ""
             currentResURI = ""
             currentResMD = ""
+            currentDesc = ""
         }
 
         if inEntry && name == "resMD" {
@@ -156,14 +158,19 @@ public class BrowseXMLParser: NSObject, XMLParserDelegate {
                 if trimmed.hasPrefix("/") {
                     currentArtURI = "http://\(deviceIP):\(devicePort)\(trimmed)"
                 } else if !trimmed.isEmpty {
-                    currentArtURI = trimmed
+                    // Upgrade external HTTP to HTTPS (ATS blocks HTTP to external hosts)
+                    if trimmed.hasPrefix("http://") && !trimmed.contains(deviceIP) {
+                        currentArtURI = trimmed.replacingOccurrences(of: "http://", with: "https://")
+                    } else {
+                        currentArtURI = trimmed
+                    }
                 }
             case "class":
                 currentClass = trimmed
             case "res":
                 if currentResURI.isEmpty { currentResURI = trimmed }
-            case "description":
-                break
+            case "desc", "description":
+                if currentDesc.isEmpty { currentDesc = trimmed }
 
             case "item", "container":
                 let itemClass: BrowseItemClass
@@ -181,7 +188,8 @@ public class BrowseXMLParser: NSObject, XMLParserDelegate {
                     albumArtURI: currentArtURI.isEmpty ? nil : currentArtURI,
                     itemClass: itemClass,
                     resourceURI: currentResURI.isEmpty ? nil : currentResURI,
-                    resourceMetadata: currentResMD.isEmpty ? nil : currentResMD
+                    resourceMetadata: currentResMD.isEmpty ? nil : currentResMD,
+                    serviceDescriptor: currentDesc.isEmpty ? nil : currentDesc
                 )
                 items.append(item)
                 inEntry = false

@@ -1,8 +1,7 @@
-/// RoomListView.swift — Sidebar showing Sonos groups (rooms) with playing indicators.
+/// RoomListView.swift — Custom sidebar showing Sonos groups (rooms) with playing indicators.
 ///
-/// Polls transport state every 5 seconds to show animated sound waves next to
-/// actively playing groups. Handles topology changes by re-validating the selection
-/// (e.g. if a grouped speaker splits, the selection follows the coordinator).
+/// Uses a custom ScrollView instead of List to avoid the AppKit NSTableView blue
+/// selection flash. Selection is handled manually with accent-colored backgrounds.
 import SwiftUI
 import SonosKit
 
@@ -10,59 +9,38 @@ struct RoomListView: View {
     @EnvironmentObject var sonosManager: SonosManager
     @Binding var selectedGroupID: String?
 
-    @State private var playingGroupIDs: Set<String> = []
-    @State private var statusTask: Task<Void, Never>?
+    private let iconColumnWidth: CGFloat = 34
 
-    private let iconColumnWidth: CGFloat = 54
+    private var playingCoordinatorIDs: Set<String> {
+        Set(sonosManager.groupTransportStates.filter { $0.value.isActive }.map { $0.key })
+    }
+
+    private var selectionColor: Color {
+        sonosManager.resolvedAccentColor ?? .accentColor
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
-            List(sonosManager.groups, selection: $selectedGroupID) { group in
-                let isPlaying = playingGroupIDs.contains(group.id)
+            ScrollView {
+                VStack(spacing: 1) {
+                    ForEach(sonosManager.groups) { group in
+                        let isPlaying = playingCoordinatorIDs.contains(group.coordinatorID)
+                        let isSelected = selectedGroupID == group.id
 
-                if group.members.count <= 1 {
-                    HStack(spacing: 8) {
-                        speakerWithWaves(playing: isPlaying, grouped: false)
-                            .frame(width: iconColumnWidth)
-
-                        Text(group.coordinator?.roomName ?? group.name)
-                            .font(.body)
-                    }
-                    .padding(.vertical, 4)
-                    .tag(group.id)
-                    .id(group.id)
-                } else {
-                    let coordinator = group.coordinator
-                    let others = group.members
-                        .filter { $0.id != group.coordinatorID }
-                        .sorted { $0.roomName.localizedCaseInsensitiveCompare($1.roomName) == .orderedAscending }
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            speakerWithWaves(playing: isPlaying, grouped: true)
-                                .frame(width: iconColumnWidth)
-
-                            Text(coordinator?.roomName ?? group.name)
-                                .font(.body)
-                                .fontWeight(.medium)
+                        Button {
+                            selectedGroupID = group.id
+                        } label: {
+                            roomRow(group: group, isPlaying: isPlaying, isSelected: isSelected)
                         }
-
-                        ForEach(others, id: \.id) { member in
-                            Text(member.roomName)
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                                .padding(.leading, iconColumnWidth + 18)
-                        }
+                        .buttonStyle(.plain)
+                        .id(group.id)
                     }
-                    .padding(.vertical, 4)
-                    .tag(group.id)
-                    .id(group.id)
                 }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 4)
             }
-            .listStyle(.sidebar)
-            .navigationTitle("Rooms")
-            .onAppear { startStatusPolling() }
-            .onDisappear { stopStatusPolling() }
+            .clipped()
+            .navigationTitle(L10n.rooms)
             .onChange(of: sonosManager.groups) {
                 validateAndScrollSelection(proxy: proxy)
             }
@@ -72,8 +50,69 @@ struct RoomListView: View {
         }
     }
 
+    // MARK: - Room Row
+
+    @ViewBuilder
+    private func roomRow(group: SonosGroup, isPlaying: Bool, isSelected: Bool) -> some View {
+        if group.members.count <= 1 {
+            HStack(spacing: 6) {
+                speakerWithWaves(playing: isPlaying, grouped: false)
+                    .frame(width: iconColumnWidth)
+
+                Text(group.coordinator?.roomName ?? group.name)
+                    .font(.body)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(isSelected ? .white : .primary)
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
+            .background(isSelected ? selectionColor : .clear, in: RoundedRectangle(cornerRadius: 6))
+        } else {
+            let coordinator = group.coordinator
+            let others = group.members
+                .filter { $0.id != group.coordinatorID }
+                .sorted { $0.roomName.localizedCaseInsensitiveCompare($1.roomName) == .orderedAscending }
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    speakerWithWaves(playing: isPlaying, grouped: true)
+                        .frame(width: iconColumnWidth)
+
+                    Text(coordinator?.roomName ?? group.name)
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundStyle(isSelected ? .white : .primary)
+
+                    Spacer(minLength: 0)
+                }
+
+                ForEach(others, id: \.id) { member in
+                    Text(member.roomName)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundStyle(isSelected ? .white.opacity(0.8) : .secondary)
+                        .padding(.leading, iconColumnWidth + 6)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
+            .background(isSelected ? selectionColor : .clear, in: RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
     // MARK: - Speaker Icon with Waves
 
+    /// Icon colors always use the user's chosen zone colors, regardless of selection state.
     private func speakerWithWaves(playing: Bool, grouped: Bool) -> some View {
         HStack(spacing: 2) {
             if playing {
@@ -88,44 +127,12 @@ struct RoomListView: View {
 
             Image(systemName: grouped ? "hifispeaker.2.fill" : "hifispeaker.fill")
                 .font(.system(size: 16))
-                .foregroundStyle(grouped ? Color.accentColor : .secondary)
+                .foregroundStyle(playing ? sonosManager.resolvedPlayingZoneColor : sonosManager.resolvedInactiveZoneColor)
         }
-    }
-
-    // MARK: - Status Polling
-
-    private func startStatusPolling() {
-        stopStatusPolling()
-        statusTask = Task {
-            while !Task.isCancelled {
-                await pollPlayingStatus()
-                try? await Task.sleep(for: .seconds(5))
-            }
-        }
-    }
-
-    private func stopStatusPolling() {
-        statusTask?.cancel()
-        statusTask = nil
-    }
-
-    private func pollPlayingStatus() async {
-        var playing = Set<String>()
-        for group in sonosManager.groups {
-            do {
-                let state = try await sonosManager.getTransportState(group: group)
-                if state.isActive {
-                    playing.insert(group.id)
-                }
-            } catch {}
-        }
-        playingGroupIDs = playing
     }
 
     // MARK: - Selection
 
-    /// When topology changes, the selected group ID may no longer exist.
-    /// Try to find the new group containing the same device, otherwise fall back to first.
     private func validateAndScrollSelection(proxy: ScrollViewProxy) {
         if let selectedID = selectedGroupID,
            !sonosManager.groups.contains(where: { $0.id == selectedID }) {

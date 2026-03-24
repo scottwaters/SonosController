@@ -9,10 +9,12 @@ public struct TrackMetadata: Equatable {
     public var position: TimeInterval
     public var trackNumber: Int
     public var queueSize: Int
+    public var stationName: String  // Radio/stream station name (shown above track info)
 
     public init(title: String = "", artist: String = "", album: String = "",
                 albumArtURI: String? = nil, duration: TimeInterval = 0,
-                position: TimeInterval = 0, trackNumber: Int = 0, queueSize: Int = 0) {
+                position: TimeInterval = 0, trackNumber: Int = 0, queueSize: Int = 0,
+                stationName: String = "") {
         self.title = title
         self.artist = artist
         self.album = album
@@ -21,6 +23,7 @@ public struct TrackMetadata: Equatable {
         self.position = position
         self.trackNumber = trackNumber
         self.queueSize = queueSize
+        self.stationName = stationName
     }
 
     public var durationString: String {
@@ -41,6 +44,17 @@ public struct TrackMetadata: Equatable {
         }
         return String(format: "%d:%02d", minutes, seconds)
     }
+
+    /// Extracts the Sonos service ID (sid=NNN) from the track URI, if present.
+    /// Used to identify which streaming service is playing.
+    public var serviceID: Int? {
+        guard let uri = trackURI, let range = uri.range(of: "sid=") else { return nil }
+        let after = uri[range.upperBound...]
+        let numStr = after.prefix(while: { $0.isNumber })
+        return Int(numStr)
+    }
+
+    public var trackURI: String?
 
     public static func parseTimeString(_ time: String) -> TimeInterval {
         let parts = time.split(separator: ":").compactMap { Double($0) }

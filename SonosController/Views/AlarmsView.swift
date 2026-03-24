@@ -9,7 +9,7 @@ struct AlarmsView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Alarms")
+                Text(L10n.alarms)
                     .font(.headline)
                 Spacer()
                 Button {
@@ -33,7 +33,7 @@ struct AlarmsView: View {
                     Image(systemName: "alarm")
                         .font(.title)
                         .foregroundStyle(.secondary)
-                    Text("No alarms set")
+                    Text(L10n.noAlarmsSet)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -44,7 +44,7 @@ struct AlarmsView: View {
                             Task { await toggleAlarm(alarm, enabled: enabled) }
                         })
                         .contextMenu {
-                            Button("Delete", role: .destructive) {
+                            Button(L10n.delete, role: .destructive) {
                                 Task { await deleteAlarm(alarm) }
                             }
                         }
@@ -62,7 +62,7 @@ struct AlarmsView: View {
             alarms = try await sonosManager.getAlarms()
             alarms.sort { $0.startTime < $1.startTime }
         } catch {
-            print("Failed to load alarms: \(error)")
+            // Alarm load failed
         }
         isLoading = false
     }
@@ -76,7 +76,7 @@ struct AlarmsView: View {
                 alarms[idx].enabled = enabled
             }
         } catch {
-            print("Failed to toggle alarm: \(error)")
+            // Alarm toggle failed
         }
     }
 
@@ -85,7 +85,7 @@ struct AlarmsView: View {
             try await sonosManager.deleteAlarm(alarm)
             alarms.removeAll { $0.id == alarm.id }
         } catch {
-            print("Failed to delete alarm: \(error)")
+            // Alarm deletion failed
         }
     }
 }
