@@ -1,187 +1,252 @@
-/// SettingsView.swift — App preferences: startup mode, cache management, artwork limits.
-///
-/// Startup mode controls whether the app uses cached topology (Quick Start) or waits
-/// for live SSDP discovery (Classic). Artwork cache settings let users configure
-/// max disk size and expiry age for the ImageCache LRU eviction.
+/// SettingsView.swift — App preferences following macOS HIG patterns.
+/// Uses Form with grouped sections, disclosure groups for details, and clear labeling.
 import SwiftUI
 import SonosKit
 
 struct SettingsView: View {
     @EnvironmentObject var sonosManager: SonosManager
     @Environment(\.dismiss) private var dismiss
+    @State private var showAppearanceInfo = false
+    @State private var showNetworkInfo = false
+    @State private var showCacheInfo = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                Text("Settings")
-                    .font(.title)
-                    .fontWeight(.bold)
+        VStack(spacing: 0) {
+            // Title bar
+            HStack {
+                Text(L10n.settings)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                Spacer()
+                Button(L10n.done) { dismiss() }
+                    .keyboardShortcut(.return)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 20)
+            .padding(.bottom, 12)
 
-                // Startup Mode
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Startup Mode")
-                            .font(.headline)
+            Divider()
 
-                        Picker("", selection: $sonosManager.startupMode) {
-                            ForEach(StartupMode.allCases, id: \.self) { mode in
-                                Text(mode.rawValue).tag(mode)
+            // Settings content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+
+                    // ─── LANGUAGE ───
+                    settingsSection(L10n.language) {
+                        Picker("", selection: $sonosManager.appLanguage) {
+                            ForEach(AppLanguage.allCases, id: \.self) { lang in
+                                Text("\(lang.displayName) — \(lang.englishName)").tag(lang)
                             }
                         }
-                        .pickerStyle(.segmented)
-
-                        if sonosManager.startupMode == .quickStart {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Label("Instant startup", systemImage: "bolt.fill")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Color.accentColor)
-
-                                Text("Your speaker layout and browse menu are saved locally when the app closes. On next launch, the UI appears instantly from this saved state while speakers are verified in the background.")
-                                    .font(.body)
-                                    .foregroundStyle(.secondary)
-
-                                Text("If a speaker has moved, gone offline, or groups have changed since the last session, you'll see a brief notification and the list will refresh automatically. Any action on a stale speaker will gracefully retry.")
-                                    .font(.body)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.top, 4)
-                        } else {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Label("Live discovery", systemImage: "wifi")
-                                    .font(.subheadline)
-                                    .foregroundStyle(Color.accentColor)
-
-                                Text("The app waits for live network discovery to complete before showing any speakers. This takes a few seconds but guarantees the speaker list is always current.")
-                                    .font(.body)
-                                    .foregroundStyle(.secondary)
-
-                                Text("Use this mode if your Sonos setup changes frequently (speakers added/removed, IP addresses changing) and you prefer accuracy over speed.")
-                                    .font(.body)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.top, 4)
-                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 300)
                     }
-                    .padding(4)
-                }
 
-                // Cache Status
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Cache Status")
-                            .font(.headline)
-
-                        if sonosManager.isUsingCachedData {
-                            HStack(spacing: 8) {
-                                Image(systemName: "clock.arrow.circlepath")
-                                    .font(.title3)
-                                    .foregroundStyle(.orange)
-                                VStack(alignment: .leading) {
-                                    Text("Using cached data")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                    Text("Last saved \(sonosManager.cacheAge). Background refresh in progress.")
-                                        .font(.body)
-                                        .foregroundStyle(.secondary)
-                                }
+                    // ─── APPEARANCE ───
+                    settingsSection(L10n.appearance) {
+                        // Theme
+                        settingsRow(L10n.theme) {
+                            Picker("", selection: $sonosManager.appearanceMode) {
+                                ForEach(AppearanceMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                             }
-                        } else {
-                            HStack(spacing: 8) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(.title3)
-                                    .foregroundStyle(.green)
-                                VStack(alignment: .leading) {
-                                    Text("Live data")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                    Text("All speakers verified and up to date.")
-                                        .font(.body)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 240)
                         }
 
-                        HStack(spacing: 12) {
-                            Button("Clear Speaker Cache") {
-                                sonosManager.clearCache()
-                            }
-                            Button("Clear Artwork Cache") {
-                                ImageCache.shared.clearDisk()
-                                ImageCache.shared.clearMemory()
-                            }
-                        }
-
-                        Text("Speaker cache stores your room layout for instant startup. Artwork cache stores album art for faster browsing. Both rebuild automatically.")
-                            .font(.callout)
+                        // Colors
+                        Text(L10n.colors)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
+
+                        colorRow(label: L10n.accent, systemImage: "paintpalette.fill",
+                                 iconColor: sonosManager.resolvedAccentColor ?? .accentColor,
+                                 storedColor: $sonosManager.accentColor, allowSystem: true)
+
+                        colorRow(label: L10n.playing, systemImage: "hifispeaker.fill",
+                                 iconColor: sonosManager.resolvedPlayingZoneColor,
+                                 storedColor: $sonosManager.playingZoneColor, allowSystem: true)
+
+                        colorRow(label: L10n.inactive, systemImage: "hifispeaker",
+                                 iconColor: sonosManager.resolvedInactiveZoneColor,
+                                 storedColor: $sonosManager.inactiveZoneColor, allowSystem: true)
+
+                        infoToggle(isExpanded: $showAppearanceInfo, label: L10n.aboutAppearance,
+                                   text: LocalizedStringKey(L10n.appearanceInfo))
                     }
-                    .padding(4)
-                }
 
-                // Artwork Cache Settings
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Artwork Cache")
-                            .font(.headline)
+                    // ─── NETWORK ───
+                    settingsSection(L10n.network) {
+                        settingsRow(L10n.updates) {
+                            Picker("", selection: $sonosManager.communicationMode) {
+                                ForEach(CommunicationMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 260)
+                        }
 
-                        HStack {
-                            Text("Current usage:")
-                                .font(.body)
-                            Text("\(ImageCache.shared.diskUsageString) (\(ImageCache.shared.fileCount) images)")
-                                .font(.body)
+                        if sonosManager.communicationMode == .hybridEventFirst,
+                           sonosManager.activeSubscriptionCount > 0 {
+                            HStack(spacing: 4) {
+                                Circle().fill(.green).frame(width: 6, height: 6)
+                                Text("\(sonosManager.activeSubscriptionCount) \(L10n.activeSubscriptions)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Divider()
+
+                        settingsRow(L10n.startup) {
+                            Picker("", selection: $sonosManager.startupMode) {
+                                ForEach(StartupMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 240)
+                        }
+
+                        infoToggle(isExpanded: $showNetworkInfo, label: L10n.aboutNetwork,
+                                   text: "**Event-Driven** — Real-time UPnP subscriptions. Lower traffic, faster response.\n\n**Legacy Polling** — Queries every 2 seconds. More predictable on problematic networks.\n\n**Quick Start** — Instant UI from cache, verified in background.\n\n**Classic** — Waits for live discovery. Always accurate.")
+
+                    }
+
+                    // ─── CACHE ───
+                    settingsSection(L10n.cache) {
+                        HStack(spacing: 16) {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(sonosManager.isUsingCachedData ? .orange : .green)
+                                    .frame(width: 6, height: 6)
+                                Text(sonosManager.isUsingCachedData ? L10n.cachedData : L10n.liveData)
+                                    .font(.caption)
+                            }
+                            Spacer()
+                            Text("\(ImageCache.shared.diskUsageString) artwork · \(ImageCache.shared.fileCount) images")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
 
-                        HStack {
-                            Text("Max size")
-                                .frame(width: 80, alignment: .leading)
-                            Picker("", selection: Binding(
-                                get: { ImageCache.shared.maxSizeMB },
-                                set: { ImageCache.shared.maxSizeMB = $0 }
-                            )) {
-                                Text("100 MB").tag(100)
-                                Text("250 MB").tag(250)
-                                Text("500 MB").tag(500)
-                                Text("1 GB").tag(1024)
-                                Text("2 GB").tag(2048)
-                                Text("5 GB").tag(5120)
+                        HStack(spacing: 20) {
+                            settingsRow(L10n.maxSize) {
+                                Picker("", selection: Binding(
+                                    get: { ImageCache.shared.maxSizeMB },
+                                    set: { ImageCache.shared.maxSizeMB = $0 }
+                                )) {
+                                    Text("100 MB").tag(100)
+                                    Text("500 MB").tag(500)
+                                    Text("1 GB").tag(1024)
+                                    Text("5 GB").tag(5120)
+                                }
+                                .frame(width: 100)
                             }
-                            .frame(width: 140)
+
+                            settingsRow(L10n.maxAge) {
+                                Picker("", selection: Binding(
+                                    get: { ImageCache.shared.maxAgeDays },
+                                    set: { ImageCache.shared.maxAgeDays = $0 }
+                                )) {
+                                    Text("7 days").tag(7)
+                                    Text("30 days").tag(30)
+                                    Text("90 days").tag(90)
+                                    Text("1 year").tag(365)
+                                    Text("Never").tag(99999)
+                                }
+                                .frame(width: 100)
+                            }
                         }
 
-                        HStack {
-                            Text("Max age")
-                                .frame(width: 80, alignment: .leading)
-                            Picker("", selection: Binding(
-                                get: { ImageCache.shared.maxAgeDays },
-                                set: { ImageCache.shared.maxAgeDays = $0 }
-                            )) {
-                                Text("7 days").tag(7)
-                                Text("14 days").tag(14)
-                                Text("30 days").tag(30)
-                                Text("90 days").tag(90)
-                                Text("1 year").tag(365)
-                                Text("Never").tag(99999)
+                        HStack(spacing: 8) {
+                            Button(L10n.clearSpeakerCache) { sonosManager.clearCache() }
+                                .controlSize(.small)
+                            Button(L10n.clearArtworkCache) {
+                                ImageCache.shared.clearDisk()
+                                ImageCache.shared.clearMemory()
                             }
-                            .frame(width: 140)
+                            .controlSize(.small)
                         }
 
-                        Text("Images older than the max age are removed automatically. If total size exceeds the limit, the oldest images are removed first.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                        infoToggle(isExpanded: $showCacheInfo, label: L10n.aboutCache,
+                                   text: "Speaker cache stores your room layout for instant startup. Artwork cache stores album art for faster browsing. Both rebuild automatically when cleared.")
                     }
-                    .padding(4)
                 }
-
-                Spacer()
-            }
-            .padding(28)
-        }
-        .frame(width: 520, height: 540)
-        .overlay(alignment: .bottomTrailing) {
-            Button("Done") { dismiss() }
-                .keyboardShortcut(.return)
                 .padding(24)
+            }
+        }
+        .frame(width: 560, height: 700)
+        .onDisappear {
+            // Close the macOS system color panel if it's open
+            NSColorPanel.shared.close()
+        }
+    }
+
+    // MARK: - Layout Helpers
+
+    private func settingsSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+            }
+            .padding(16)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func deviceName(for deviceID: String) -> String {
+        sonosManager.devices[deviceID]?.roomName ?? String(deviceID.prefix(20))
+    }
+
+    private func infoToggle(isExpanded: Binding<Bool>, label: String, text: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { isExpanded.wrappedValue.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .rotationEffect(isExpanded.wrappedValue ? .degrees(90) : .zero)
+                    Text(label)
+                        .font(.caption)
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded.wrappedValue {
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+                    .padding(.leading, 16)
+            }
+        }
+    }
+
+    private func colorRow(label: String, systemImage: String, iconColor: Color, storedColor: Binding<StoredColor>, allowSystem: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .foregroundStyle(iconColor)
+                .frame(width: 14)
+            Text(label)
+                .font(.caption)
+                .frame(width: 50, alignment: .leading)
+            ColorSwatchGrid(
+                storedColor: storedColor,
+                allowSystem: allowSystem
+            )
+        }
+    }
+
+    private func settingsRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .frame(width: 70, alignment: .leading)
+            content()
         }
     }
 }
+
+// ColorSwatchGrid is in ColorSwatchGrid.swift

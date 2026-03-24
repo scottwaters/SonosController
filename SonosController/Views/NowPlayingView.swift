@@ -1,48 +1,41 @@
 /// NowPlayingView.swift — Main playback control UI for a Sonos group.
 ///
 /// Key design decisions:
-/// - **Grace period system**: After a user action (play/pause/volume/mode), the UI
-///   holds the optimistic state for 5 seconds, ignoring poll responses. This prevents
-///   the UI from flickering back to the old state while the speaker processes the command.
-/// - **Smooth progress**: A 0.5s timer interpolates the position bar between 2s polls
+/// - **Centralized state**: Reads transport state, volume, and metadata from
+///   SonosManager's @Published properties (updated by the active transport strategy).
+/// - **Grace period system**: After a user action (play/pause/volume/mode), the manager
+///   holds the optimistic state for 5 seconds, ignoring updates from the transport strategy.
+/// - **Awaiting playback**: When a new item is played, `awaitingPlayback` is set on
+///   SonosManager. Cached artwork and item text display immediately with a loading
+///   spinner. The flag clears only when the speaker confirms `.playing` state.
+/// - **Smooth progress**: A 0.5s timer interpolates the position bar between server updates
 ///   so it moves fluidly. After seek/play, position is frozen for 3s until the speaker
 ///   reports the new position.
 /// - **Proportional group volume**: The master slider applies a delta to each speaker,
 ///   preserving relative volume differences across grouped speakers.
 import SwiftUI
+import Combine
+import AppKit
 import SonosKit
 
 struct NowPlayingView: View {
     @EnvironmentObject var sonosManager: SonosManager
     let group: SonosGroup
 
-    @State private var transportState: TransportState = .stopped
-    @State private var trackMetadata = TrackMetadata()
-    @State private var volume: Double = 30
-    @State private var isMuted = false
-    @State private var playMode: PlayMode = .normal
-    @State private var isLoading = true
-    @State private var pollingTask: Task<Void, Never>?
     @State private var actionInFlight: String?
 
-    // MARK: - Grace Periods
-    // Each controls a different piece of state; polling skips updates until grace expires.
-    // If the speaker catches up early (reports the expected state), grace ends immediately.
-    @State private var transportGraceUntil: Date = .distantPast
-    @State private var volumeGraceUntil: Date = .distantPast
-    @State private var muteGraceUntil: Date = .distantPast
-    @State private var modeGraceUntil: Date = .distantPast
-
-    private let graceDuration: TimeInterval = 5
-
-    // MARK: - Group Volume
-    // Per-speaker volumes allow proportional adjustment via the master slider
+    // MARK: - Local Volume State
+    // Master volume and per-speaker volumes are managed locally for smooth interaction,
+    // then synced back to SonosManager and speakers.
+    @State private var volume: Double = 30
+    @State private var isMuted = false
     @State private var speakerVolumes: [String: Double] = [:]
     @State private var speakerMutes: [String: Bool] = [:]
     @State private var lastMasterVolume: Double = 0
-
     @State private var volumeActionPending = false
     @State private var volumePendingTimer: Task<Void, Never>?
+    @State private var volumeGraceUntil: Date = .distantPast
+    @State private var muteGraceUntil: Date = .distantPast
 
     // MARK: - Smooth Progress Interpolation
     @State private var lastKnownPosition: TimeInterval = 0
@@ -55,9 +48,39 @@ struct NowPlayingView: View {
     @State private var showGroupEditor = false
     @State private var showSleepTimer = false
     @State private var showEQ = false
+    @State private var showCopied = false
+    @State private var isInitialized = false
+
+    // MARK: - Derived State from Manager
+
+    private var transportState: TransportState {
+        sonosManager.groupTransportStates[group.coordinatorID] ?? .stopped
+    }
+
+    private var trackMetadata: TrackMetadata {
+        sonosManager.groupTrackMetadata[group.coordinatorID] ?? TrackMetadata()
+    }
+
+    private var playMode: PlayMode {
+        sonosManager.groupPlayModes[group.coordinatorID] ?? .normal
+    }
 
     private var hasTrack: Bool {
-        !trackMetadata.title.isEmpty || trackMetadata.duration > 0
+        !trackMetadata.title.isEmpty || !trackMetadata.stationName.isEmpty || trackMetadata.duration > 0
+    }
+
+    private var awaitingPlayback: Bool {
+        sonosManager.awaitingPlayback[group.coordinatorID] ?? false
+    }
+
+    /// Resolves the artist field — converts RINCON device IDs to room names
+    /// for TV/Line-In sources.
+    private var displayArtist: String {
+        let artist = trackMetadata.artist
+        if artist.hasPrefix("RINCON_") {
+            return sonosManager.devices[artist]?.roomName ?? artist
+        }
+        return artist
     }
 
     var body: some View {
@@ -67,6 +90,14 @@ struct NowPlayingView: View {
                 HStack(spacing: 24) {
                     if hasTrack {
                         albumArtView
+                            .frame(width: 180, height: 180)
+                    } else if awaitingPlayback {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(.quaternary)
+                            .overlay {
+                                ProgressView()
+                                    .controlSize(.regular)
+                            }
                             .frame(width: 180, height: 180)
                     } else {
                         RoundedRectangle(cornerRadius: 8)
@@ -80,24 +111,76 @@ struct NowPlayingView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(hasTrack ? trackMetadata.title : "No Track")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(hasTrack ? .primary : .secondary)
-                            .lineLimit(2)
+                        // Station name for radio/streams
+                        if !trackMetadata.stationName.isEmpty {
+                            HStack(spacing: 6) {
+                                Label(trackMetadata.stationName, systemImage: "antenna.radiowaves.left.and.right")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                if awaitingPlayback {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                }
+                            }
+                        }
+
+                        // Show track title only if it's different from the station name
+                        let showTitle = !trackMetadata.title.isEmpty &&
+                            trackMetadata.title.lowercased() != trackMetadata.stationName.lowercased()
+                        if showTitle {
+                            HStack(spacing: 8) {
+                                Text(trackMetadata.title)
+                                    .font(trackMetadata.stationName.isEmpty ? .title2 : .title3)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                if awaitingPlayback && trackMetadata.stationName.isEmpty {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                }
+                            }
+                        } else if trackMetadata.stationName.isEmpty && awaitingPlayback {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(L10n.loading)
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if trackMetadata.stationName.isEmpty {
+                            Text(L10n.noTrack)
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                        }
 
                         if hasTrack {
-                            Text(trackMetadata.artist.isEmpty ? "Unknown Artist" : trackMetadata.artist)
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            if !displayArtist.isEmpty {
+                                Text(displayArtist)
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
 
-                            Text(trackMetadata.album.isEmpty ? "" : trackMetadata.album)
-                                .font(.body)
-                                .foregroundStyle(.tertiary)
-                                .lineLimit(1)
+                            if !trackMetadata.album.isEmpty {
+                                Text(trackMetadata.album)
+                                    .font(.body)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+
+                            // Show streaming service name when artist/album unavailable
+                            if displayArtist.isEmpty,
+                               let sid = trackMetadata.serviceID,
+                               let serviceName = sonosManager.musicServiceName(for: sid) {
+                                Label("\(L10n.playingFrom) \(serviceName)", systemImage: "music.note.tv")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
-                            Text("Nothing playing on this speaker")
+                            Text(L10n.nothingPlaying)
                                 .font(.body)
                                 .foregroundStyle(.tertiary)
                         }
@@ -106,14 +189,14 @@ struct NowPlayingView: View {
 
                         HStack(spacing: 12) {
                             Button { showGroupEditor = true } label: {
-                                Label("Group", systemImage: "rectangle.stack")
+                                Label(L10n.group, systemImage: "rectangle.stack")
                                     .font(.caption)
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
 
                             Button { showSleepTimer = true } label: {
-                                Label("Sleep", systemImage: "moon.zzz")
+                                Label(L10n.sleep, systemImage: "moon.zzz")
                                     .font(.caption)
                             }
                             .buttonStyle(.bordered)
@@ -121,7 +204,7 @@ struct NowPlayingView: View {
 
                             if let coordinator = group.coordinator {
                                 Button { showEQ = true } label: {
-                                    Label("EQ", systemImage: "slider.horizontal.3")
+                                    Label(L10n.eq, systemImage: "slider.horizontal.3")
                                         .font(.caption)
                                 }
                                 .buttonStyle(.bordered)
@@ -131,6 +214,15 @@ struct NowPlayingView: View {
                                         .environmentObject(sonosManager)
                                 }
                             }
+
+                            if hasTrack {
+                                Button { copyTrackInfo() } label: {
+                                    Label(showCopied ? L10n.copied : L10n.copyTrackInfo, systemImage: showCopied ? "checkmark" : "doc.on.doc")
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -139,45 +231,64 @@ struct NowPlayingView: View {
 
                 Divider()
 
-                // Seek slider
-                VStack(spacing: 4) {
-                    Slider(
-                        value: Binding(
-                            get: { smoothPosition },
-                            set: { newVal in
-                                smoothPosition = newVal
+                // Seek slider — hidden for streams with no duration
+                if trackMetadata.duration > 0 {
+                    VStack(spacing: 4) {
+                        Slider(
+                            value: Binding(
+                                get: { smoothPosition },
+                                set: { newVal in
+                                    smoothPosition = newVal
+                                }
+                            ),
+                            in: 0...trackMetadata.duration
+                        ) { editing in
+                            isDraggingSeek = editing
+                            if !editing {
+                                seekToPosition(smoothPosition)
                             }
-                        ),
-                        in: 0...max(trackMetadata.duration, 1)
-                    ) { editing in
-                        isDraggingSeek = editing
-                        if !editing {
-                            seekToPosition(smoothPosition)
+                        }
+
+                        HStack {
+                            Text(smoothPositionString)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                            Spacer()
+                            Text(trackMetadata.durationString)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
                         }
                     }
-
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                } else if transportState.isActive {
+                    // Streaming content — show elapsed time only
                     HStack {
                         Text(smoothPositionString)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                         Spacer()
-                        Text(trackMetadata.durationString)
+                        Text(L10n.live)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .monospacedDigit()
                     }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                } else {
+                    Spacer()
+                        .frame(height: 12)
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 12)
 
                 // Transport controls
                 HStack(spacing: 24) {
                     transportButton("shuffle", icon: "shuffle", size: .body,
-                                    tint: playMode.isShuffled ? Color.accentColor : .secondary) {
+                                    tint: playMode.isShuffled ? (sonosManager.resolvedAccentColor ?? .accentColor) : .secondary) {
                         toggleShuffle()
                     }
-                    .help("Shuffle")
+                    .help(L10n.shuffle)
 
                     transportButton("previous", icon: "backward.fill", size: .title2) {
                         performAction("previous") { try await sonosManager.previous(group: group) }
@@ -195,10 +306,10 @@ struct NowPlayingView: View {
                     }
 
                     transportButton("repeat", icon: repeatIcon, size: .body,
-                                    tint: playMode.repeatMode != .off ? Color.accentColor : .secondary) {
+                                    tint: playMode.repeatMode != .off ? (sonosManager.resolvedAccentColor ?? .accentColor) : .secondary) {
                         cycleRepeat()
                     }
-                    .help("Repeat")
+                    .help(L10n.repeat_)
                 }
                 .padding(.vertical, 16)
 
@@ -242,9 +353,24 @@ struct NowPlayingView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { startPolling() }
-        .onDisappear { stopPolling() }
-        .onChange(of: group.id) { startPolling() }
+        .tint(sonosManager.resolvedAccentColor)
+        .onAppear {
+            startProgressTimer()
+            syncFromManager()
+            Task { await fetchCurrentState() }
+        }
+        .onDisappear { stopProgressTimer() }
+        .onChange(of: group.id) {
+            startProgressTimer()
+            syncFromManager()
+            Task { await fetchCurrentState() }
+        }
+        .onReceive(sonosManager.$deviceVolumes) { _ in syncVolumeFromManager() }
+        .onReceive(sonosManager.$deviceMutes) { _ in syncMuteFromManager() }
+        .onChange(of: speakerMutes) { syncMasterMuteFromSpeakers() }
+        .onReceive(sonosManager.$groupTrackMetadata) { _ in
+            // Force view to re-evaluate trackMetadata computed property
+        }
         .sheet(isPresented: $showGroupEditor) {
             GroupEditorView(initialGroup: group)
                 .environmentObject(sonosManager)
@@ -281,9 +407,117 @@ struct NowPlayingView: View {
 
     // MARK: - Subviews
 
+    @State private var webArtURL: URL?
+    @State private var lastArtSearchKey = ""
+    @State private var forceWebArt = false
+
     private var albumArtView: some View {
-        let url = trackMetadata.albumArtURI.flatMap { URL(string: $0) }
-        return CachedAsyncImage(url: url, cornerRadius: 8)
+        let url = forceWebArt ? (webArtURL ?? trackMetadata.albumArtURI.flatMap { URL(string: $0) }) :
+                                (trackMetadata.albumArtURI.flatMap { URL(string: $0) } ?? webArtURL)
+
+        return ZStack {
+            if url != nil {
+                CachedAsyncImage(url: url, cornerRadius: 8)
+            } else {
+                // Generic art placeholder for streaming/radio without art
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(
+                        LinearGradient(
+                            colors: [.purple.opacity(0.3), .blue.opacity(0.3)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay {
+                        Image(systemName: !trackMetadata.stationName.isEmpty ? "radio.fill" : "music.note")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.white.opacity(0.6))
+                    }
+            }
+        }
+        .onAppear { loadPersistedArtOverride(); searchWebArtIfNeeded() }
+        .onReceive(sonosManager.$groupTrackMetadata) { _ in
+            searchWebArtIfNeeded()
+        }
+            .contextMenu {
+                Button(L10n.refreshArtwork) {
+                    forceITunesArtSearch()
+                }
+                if webArtURL != nil || trackMetadata.albumArtURI != nil {
+                    Button(L10n.clearArtwork) {
+                        let searchTerm = !trackMetadata.title.isEmpty ? trackMetadata.title :
+                                         !trackMetadata.stationName.isEmpty ? trackMetadata.stationName : ""
+                        if !searchTerm.isEmpty {
+                            UserDefaults.standard.removeObject(forKey: "artOverride:\(searchTerm.lowercased())")
+                        }
+                        webArtURL = nil
+                        lastArtSearchKey = ""
+                        forceWebArt = false
+                    }
+                }
+            }
+    }
+
+    /// Forces an iTunes artwork search regardless of existing art.
+    /// Persists the override to UserDefaults so it survives app restart.
+    private func forceITunesArtSearch() {
+        let artist = displayArtist
+        let searchTerm = !trackMetadata.title.isEmpty ? trackMetadata.title :
+                         !trackMetadata.stationName.isEmpty ? trackMetadata.stationName : ""
+        guard !searchTerm.isEmpty else { return }
+        lastArtSearchKey = ""
+        forceWebArt = false
+        Task {
+            if let artURL = await AlbumArtSearchService.shared.searchArtwork(
+                artist: artist, album: searchTerm
+            ) {
+                webArtURL = URL(string: artURL)
+                forceWebArt = true
+                // Persist so it survives restart
+                let key = "artOverride:\(searchTerm.lowercased())"
+                UserDefaults.standard.set(artURL, forKey: key)
+            }
+        }
+    }
+
+    /// Checks for a persisted art override from a previous "Refresh artwork" action.
+    private func loadPersistedArtOverride() {
+        let searchTerm = !trackMetadata.title.isEmpty ? trackMetadata.title :
+                         !trackMetadata.stationName.isEmpty ? trackMetadata.stationName : ""
+        guard !searchTerm.isEmpty else { return }
+        let key = "artOverride:\(searchTerm.lowercased())"
+        if let saved = UserDefaults.standard.string(forKey: key) {
+            webArtURL = URL(string: saved)
+            forceWebArt = true
+        }
+    }
+
+    /// Searches iTunes for album art when none available from Sonos.
+    private func searchWebArtIfNeeded() {
+        guard trackMetadata.albumArtURI == nil || trackMetadata.albumArtURI?.isEmpty == true else {
+            if !forceWebArt {
+                if webArtURL != nil { webArtURL = nil }
+            }
+            return
+        }
+        forceWebArt = false
+        // Use station name, track title, or artist for the search
+        let searchTerm = !trackMetadata.stationName.isEmpty ? trackMetadata.stationName :
+                         !trackMetadata.title.isEmpty ? trackMetadata.title : ""
+        let key = "\(searchTerm)|\(displayArtist)"
+        guard !searchTerm.isEmpty else { return }
+        guard key != lastArtSearchKey else { return }
+        lastArtSearchKey = key
+        webArtURL = nil  // Clear old art while searching
+        Task {
+            if let artURL = await AlbumArtSearchService.shared.searchArtwork(
+                artist: displayArtist, album: searchTerm
+            ) {
+                webArtURL = URL(string: artURL)
+            } else {
+                webArtURL = nil
+            }
+        }
     }
 
     private var volumeIcon: String {
@@ -298,11 +532,6 @@ struct NowPlayingView: View {
         case .off, .all: return "repeat"
         case .one: return "repeat.1"
         }
-    }
-
-    private var progress: Double {
-        guard trackMetadata.duration > 0 else { return 0 }
-        return min(smoothPosition / trackMetadata.duration, 1.0)
     }
 
     private var smoothPositionString: String {
@@ -324,9 +553,10 @@ struct NowPlayingView: View {
 
     private func togglePlayPause() {
         let wasPlaying = transportState.isPlaying
-        transportState = wasPlaying ? .paused : .playing
-        transportGraceUntil = Date().addingTimeInterval(graceDuration)
-        // Freeze position bar for 3s after play/resume to let Sonos catch up
+        // Optimistically update manager state and hold with 10s grace
+        sonosManager.groupTransportStates[group.coordinatorID] = wasPlaying ? .paused : .playing
+        sonosManager.setTransportGrace(groupID: group.coordinatorID, duration: 10)
+        // Freeze position bar for 3s to let Sonos catch up
         if !wasPlaying {
             positionFrozenUntil = Date().addingTimeInterval(3)
         }
@@ -351,6 +581,10 @@ struct NowPlayingView: View {
         lastKnownPosition = seconds
         lastPositionTimestamp = Date()
         positionFrozenUntil = Date().addingTimeInterval(3)
+        // If playing, hold the transport state during seek buffering
+        if transportState.isPlaying {
+            sonosManager.setTransportGrace(groupID: group.coordinatorID, duration: 5)
+        }
 
         Task {
             try? await sonosManager.seek(group: group, to: timeStr)
@@ -359,9 +593,11 @@ struct NowPlayingView: View {
 
     private func toggleMute() {
         isMuted.toggle()
-        muteGraceUntil = Date().addingTimeInterval(graceDuration)
+        muteGraceUntil = Date().addingTimeInterval(10)
         for member in group.members {
             speakerMutes[member.id] = isMuted
+            sonosManager.setMuteGrace(deviceID: member.id, duration: 10)
+            sonosManager.deviceMutes[member.id] = isMuted
         }
         showVolumePending()
         performAction("mute") {
@@ -376,24 +612,29 @@ struct NowPlayingView: View {
     /// master position and adds it to each speaker proportionally — this preserves
     /// the relative volume balance (e.g. kitchen at 40, living room at 60).
     private func setVolume() {
-        volumeGraceUntil = Date().addingTimeInterval(graceDuration)
+        volumeGraceUntil = Date().addingTimeInterval(10)
 
         let delta = volume - lastMasterVolume
         lastMasterVolume = volume
 
         if group.members.count <= 1 {
             guard let coordinator = group.coordinator else { return }
+            let targetVol = Int(volume)
+            sonosManager.setVolumeGrace(deviceID: coordinator.id, duration: 10)
+            sonosManager.deviceVolumes[coordinator.id] = targetVol
             showVolumePending()
             Task {
-                try? await sonosManager.setVolume(device: coordinator, volume: Int(volume))
+                try? await sonosManager.setVolume(device: coordinator, volume: targetVol)
                 clearVolumePending()
             }
         } else {
-            // Animate individual sliders proportionally
             withAnimation(.easeInOut(duration: 0.2)) {
                 for member in group.members {
                     let current = speakerVolumes[member.id] ?? volume
-                    speakerVolumes[member.id] = max(0, min(100, current + delta))
+                    let newVal = max(0, min(100, current + delta))
+                    speakerVolumes[member.id] = newVal
+                    sonosManager.setVolumeGrace(deviceID: member.id, duration: 10)
+                    sonosManager.deviceVolumes[member.id] = Int(newVal)
                 }
             }
             showVolumePending()
@@ -426,8 +667,8 @@ struct NowPlayingView: View {
 
     private func toggleShuffle() {
         let newMode = playMode.togglingShuffle()
-        playMode = newMode
-        modeGraceUntil = Date().addingTimeInterval(graceDuration)
+        sonosManager.groupPlayModes[group.coordinatorID] = newMode
+        sonosManager.setModeGrace(groupID: group.coordinatorID)
         performAction("shuffle") {
             try await sonosManager.setPlayMode(group: group, mode: newMode)
         }
@@ -435,176 +676,337 @@ struct NowPlayingView: View {
 
     private func cycleRepeat() {
         let newMode = playMode.cyclingRepeat()
-        playMode = newMode
-        modeGraceUntil = Date().addingTimeInterval(graceDuration)
+        sonosManager.groupPlayModes[group.coordinatorID] = newMode
+        sonosManager.setModeGrace(groupID: group.coordinatorID)
         performAction("repeat") {
             try await sonosManager.setPlayMode(group: group, mode: newMode)
         }
     }
 
-    /// Executes a SOAP action with in-flight tracking. Polling is suppressed while
-    /// actionInFlight is set. After completion, the grace period (not an immediate
-    /// refresh) ensures the optimistic state holds until the speaker catches up.
+    private func copyTrackInfo() {
+        var lines: [String] = []
+
+        // Audio source (station or streaming service)
+        if !trackMetadata.stationName.isEmpty {
+            lines.append("\(L10n.sourceLabel): \(trackMetadata.stationName)")
+        } else if let sid = trackMetadata.serviceID,
+                  let serviceName = sonosManager.musicServiceName(for: sid) {
+            lines.append("\(L10n.sourceLabel): \(serviceName)")
+        }
+
+        if !displayArtist.isEmpty {
+            lines.append("\(L10n.artistLabel): \(displayArtist)")
+        }
+        if !trackMetadata.album.isEmpty {
+            lines.append("\(L10n.albumLabel): \(trackMetadata.album)")
+        }
+        if !trackMetadata.title.isEmpty {
+            lines.append("\(L10n.trackLabel): \(trackMetadata.title)")
+        }
+
+        let text = lines.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+
+        showCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            showCopied = false
+        }
+    }
+
+    /// Executes a SOAP action with in-flight tracking.
     private func performAction(_ id: String, _ action: @escaping () async throws -> Void) {
         actionInFlight = id
         Task {
             do {
                 try await action()
             } catch {
-                print("Action failed: \(error)")
+                // Action failed — UI will reflect actual state on next update
             }
             actionInFlight = nil
         }
     }
 
-    // MARK: - Polling
+    // MARK: - Immediate State Fetch
 
-    private func startPolling() {
-        stopPolling()
-        pollingTask = Task {
-            while !Task.isCancelled {
-                await refreshState()
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
-        // Smooth progress timer — ticks every 0.5s for fluid bar movement
-        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [self] _ in
-            // Don't advance while user is dragging the seek slider
-            guard !isDraggingSeek else { return }
-            // Don't advance while frozen (waiting for Sonos after play/seek)
-            guard Date() > positionFrozenUntil else { return }
-            guard transportState.isPlaying else { return }
-
-            let elapsed = Date().timeIntervalSince(lastPositionTimestamp)
-            let interpolated = lastKnownPosition + elapsed
-            // Only move forward — never jump back
-            let clamped = trackMetadata.duration > 0 ? min(interpolated, trackMetadata.duration) : interpolated
-            if clamped >= smoothPosition {
-                smoothPosition = clamped
-            }
-            // If clamped < smoothPosition, we're ahead — just wait (don't move)
-        }
-    }
-
-    private func stopPolling() {
-        pollingTask?.cancel()
-        pollingTask = nil
-        progressTimer?.invalidate()
-        progressTimer = nil
-    }
-
-    private func refreshState() async {
-        // Skip polling entirely while an action is in flight
-        guard actionInFlight == nil else { return }
+    /// Fetches current state directly from the speaker when the user selects a room.
+    /// Provides instant UI update; event-driven updates take over afterward.
+    private func fetchCurrentState() async {
+        guard let coordinator = group.coordinator else { return }
 
         do {
-            let now = Date()
-
             async let stateResult = sonosManager.getTransportState(group: group)
             async let positionResult = sonosManager.getPositionInfo(group: group)
             async let modeResult = sonosManager.getPlayMode(group: group)
 
             let (state, position, mode) = try await (stateResult, positionResult, modeResult)
 
-            // Only update transport state if grace period has expired
-            // During grace, keep the optimistic state (e.g. "playing") even if
-            // the speaker still reports TRANSITIONING or STOPPED
-            if now > transportGraceUntil {
-                transportState = state
-            } else if state == .playing || state == .paused {
-                // If the speaker has caught up to our intended state, end grace early
-                transportState = state
-                transportGraceUntil = .distantPast
+            sonosManager.groupTransportStates[group.coordinatorID] = state
+            sonosManager.groupPlayModes[group.coordinatorID] = mode
+
+            // Enrich with station name and art from GetMediaInfo
+            var enrichedPosition = position
+            if state.isActive {
+                let mediaInfo = try? await sonosManager.getMediaInfo(group: group)
+                if let rawDIDL = mediaInfo?["CurrentURIMetaData"], !rawDIDL.isEmpty,
+                   rawDIDL != "NOT_IMPLEMENTED" {
+                    let didl = rawDIDL.contains("&lt;") ? XMLResponseParser.xmlUnescape(rawDIDL) : rawDIDL
+                    if let parsed = XMLResponseParser.parseDIDLMetadata(didl) {
+                        let currentURI = mediaInfo?["CurrentURI"] ?? ""
+                        let isRadio = currentURI.contains("x-sonosapi-stream:") ||
+                                      currentURI.contains("x-sonosapi-radio:") ||
+                                      currentURI.contains("x-rincon-mp3radio:")
+                        if isRadio && !parsed.title.isEmpty {
+                            enrichedPosition.stationName = parsed.title
+                        }
+                        if enrichedPosition.title.isEmpty {
+                            enrichedPosition.title = parsed.title
+                        }
+                        // Always try to get art from media info for radio
+                        var artURI = parsed.albumArtURI
+                        if artURI.hasPrefix("/") {
+                            artURI = "http://\(coordinator.ip):\(coordinator.port)\(artURI)"
+                        }
+                        if !artURI.isEmpty {
+                            enrichedPosition.albumArtURI = artURI
+                            // Cache by the favorite's ID so the browse list can find it directly
+                            if let favID = sonosManager.lastPlayedFavoriteID {
+                                sonosManager.cacheArtURL(artURI, forURI: "", title: enrichedPosition.stationName.isEmpty ? enrichedPosition.title : enrichedPosition.stationName, itemID: favID)
+                            }
+                        }
+                    }
+                }
             }
 
-            // Update track metadata
-            trackMetadata = position
+            sonosManager.transportDidUpdateTrackMetadata(group.coordinatorID, metadata: enrichedPosition)
 
-            // Sync smooth position from server — but not while dragging or frozen
-            let serverPosition = position.position
+            // Set position directly on the slider
+            lastKnownPosition = enrichedPosition.position
+            lastPositionTimestamp = Date()
+            smoothPosition = enrichedPosition.position
 
-            if !isDraggingSeek && now > positionFrozenUntil {
-                let ahead = smoothPosition - serverPosition // positive = we're ahead
-                let behind = serverPosition - smoothPosition // positive = we're behind
+            // Fetch volume/mute per member
+            for member in group.members {
+                let vol = try await sonosManager.getVolume(device: member)
+                let muted = try await sonosManager.getMute(device: member)
+                sonosManager.deviceVolumes[member.id] = vol
+                sonosManager.deviceMutes[member.id] = muted
+            }
 
-                if behind > 2 || lastKnownPosition > serverPosition + 5 || !state.isPlaying {
-                    // We're significantly behind, or track changed, or paused — snap to server
-                    lastKnownPosition = serverPosition
-                    lastPositionTimestamp = now
-                    smoothPosition = serverPosition
-                } else if ahead > 0 && ahead <= 2 {
-                    // We're slightly ahead — just re-anchor without moving smoothPosition.
-                    // The interpolation timer will pause until server catches up because
-                    // lastKnownPosition + elapsed won't exceed current smoothPosition.
-                    lastKnownPosition = serverPosition
-                    lastPositionTimestamp = now
-                    // Don't update smoothPosition — it stays where it is, timer pauses naturally
-                } else {
-                    // We're slightly behind or exactly right — re-anchor normally
-                    lastKnownPosition = serverPosition
-                    lastPositionTimestamp = now
+            syncVolumeFromManager()
+            syncMuteFromManager()
+        } catch {
+            // Fall back to whatever the transport strategy has cached
+        }
+    }
+
+    // MARK: - Position Polling & Interpolation
+    //
+    // Position tracking is owned by the view, matching the proven original design.
+    // The view runs its own position poll (every 2s) and smooth interpolation (every 0.5s).
+    // This is independent of the transport strategy — it always works.
+
+    @State private var positionPollingTask: Task<Void, Never>?
+
+    private func startProgressTimer() {
+        stopProgressTimer()
+
+        // Position polling — fetch position from speaker every 2s
+        positionPollingTask = Task {
+            while !Task.isCancelled {
+                await pollPosition()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+
+        // Smooth progress timer — ticks every 0.5s for fluid bar movement
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [self] _ in
+            guard !isDraggingSeek else { return }
+            guard Date() > positionFrozenUntil else { return }
+            guard transportState.isPlaying else { return }
+
+            let elapsed = Date().timeIntervalSince(lastPositionTimestamp)
+            let interpolated = lastKnownPosition + elapsed
+            let duration = trackMetadata.duration
+            let clamped = duration > 0 ? min(interpolated, duration) : interpolated
+            if clamped >= smoothPosition {
+                smoothPosition = clamped
+            }
+        }
+    }
+
+    private func stopProgressTimer() {
+        progressTimer?.invalidate()
+        progressTimer = nil
+        positionPollingTask?.cancel()
+        positionPollingTask = nil
+    }
+
+    /// Polls transport state, position, and track metadata from the speaker.
+    /// Uses the original proven re-anchor logic for smooth position updates.
+    private func pollPosition() async {
+        // Skip while an action is in-flight or frozen
+        guard actionInFlight == nil else { return }
+
+        do {
+            // Fetch transport state alongside position — catches external
+            // playback changes (e.g. playing from favorites, Sonos app, etc.)
+            async let stateResult = sonosManager.getTransportState(group: group)
+            async let positionResult = sonosManager.getPositionInfo(group: group)
+
+            var (state, position) = try await (stateResult, positionResult)
+
+            // For streaming/radio content, enrich from GetMediaInfo when needed
+            if (position.title.isEmpty || position.stationName.isEmpty), state.isActive,
+               let coordinator = group.coordinator {
+                let mediaInfo = try? await sonosManager.getMediaInfo(group: group)
+                if let rawDIDL = mediaInfo?["CurrentURIMetaData"], !rawDIDL.isEmpty,
+                   rawDIDL != "NOT_IMPLEMENTED" {
+                    let didl = rawDIDL.contains("&lt;") ? XMLResponseParser.xmlUnescape(rawDIDL) : rawDIDL
+                    if let parsed = XMLResponseParser.parseDIDLMetadata(didl) {
+                        let currentURI = mediaInfo?["CurrentURI"] ?? ""
+                        let isRadio = currentURI.contains("x-sonosapi-stream:") ||
+                                      currentURI.contains("x-sonosapi-radio:") ||
+                                      currentURI.contains("x-rincon-mp3radio:")
+
+                        if isRadio && position.stationName.isEmpty && !parsed.title.isEmpty {
+                            position.stationName = parsed.title
+                        }
+                        if position.title.isEmpty { position.title = parsed.title }
+                        if position.artist.isEmpty { position.artist = parsed.creator }
+                        if position.album.isEmpty { position.album = parsed.album }
+                        // For radio, always prefer MediaInfo art (e.g. TuneIn logo)
+                        // over constructed /getaa URLs which may not work
+                        var artURI = parsed.albumArtURI
+                        if artURI.hasPrefix("/") {
+                            artURI = "http://\(coordinator.ip):\(coordinator.port)\(artURI)"
+                        }
+                        if !artURI.isEmpty {
+                            position.albumArtURI = artURI
+                            if let favID = sonosManager.lastPlayedFavoriteID {
+                                sonosManager.cacheArtURL(artURI, forURI: "", title: position.stationName.isEmpty ? position.title : position.stationName, itemID: favID)
+                            }
+                        }
+                    }
                 }
-            } else if now > positionFrozenUntil && !isDraggingSeek {
-                // Freeze just ended — accept server position
+            }
+
+            sonosManager.groupTransportStates[group.coordinatorID] = state
+            sonosManager.transportDidUpdateTrackMetadata(group.coordinatorID, metadata: position)
+
+            guard Date() > positionFrozenUntil else { return }
+
+            let serverPosition = position.position
+            let now = Date()
+
+            guard !isDraggingSeek, Date() > positionFrozenUntil else { return }
+
+            let ahead = smoothPosition - serverPosition   // positive = we're ahead
+            let behind = serverPosition - smoothPosition   // positive = we're behind
+
+            if behind > 2 || lastKnownPosition > serverPosition + 5 || !transportState.isPlaying {
+                // We're significantly behind, or track changed, or paused — snap to server
                 lastKnownPosition = serverPosition
                 lastPositionTimestamp = now
                 smoothPosition = serverPosition
+            } else if ahead > 0 && ahead <= 2 {
+                // We're slightly ahead — just re-anchor without moving smoothPosition.
+                // The interpolation timer will pause until server catches up because
+                // lastKnownPosition + elapsed won't exceed current smoothPosition.
+                lastKnownPosition = serverPosition
+                lastPositionTimestamp = now
+            } else {
+                // We're slightly behind or exactly right — re-anchor normally
+                lastKnownPosition = serverPosition
+                lastPositionTimestamp = now
             }
-
-            if now > modeGraceUntil {
-                playMode = mode
-            }
-
-            // Volume: for groups, compute average across all members
-            if now > volumeGraceUntil {
-                if group.members.count > 1 {
-                    var totalVol = 0.0
-                    for member in group.members {
-                        let v = try await sonosManager.getVolume(device: member)
-                        let dv = Double(v)
-                        if abs((speakerVolumes[member.id] ?? 0) - dv) > 0.5 {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                speakerVolumes[member.id] = dv
-                            }
-                        }
-                        totalVol += dv
-                    }
-                    let avg = totalVol / Double(group.members.count)
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        volume = avg
-                    }
-                    lastMasterVolume = avg
-                } else if let coordinator = group.coordinator {
-                    let vol = Double(try await sonosManager.getVolume(device: coordinator))
-                    if abs(volume - vol) > 0.5 {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            volume = vol
-                        }
-                    }
-                    lastMasterVolume = vol
-                }
-            }
-
-            // Mute: for groups, poll each speaker and sync speakerMutes
-            if now > muteGraceUntil {
-                if group.members.count > 1 {
-                    var allMuted = true
-                    for member in group.members {
-                        let m = try await sonosManager.getMute(device: member)
-                        speakerMutes[member.id] = m
-                        if !m { allMuted = false }
-                    }
-                    isMuted = allMuted
-                } else if let coordinator = group.coordinator {
-                    let m = try await sonosManager.getMute(device: coordinator)
-                    speakerMutes[coordinator.id] = m
-                    isMuted = m
-                }
-            }
-
-            isLoading = false
         } catch {
-            // Silently retry on next poll
+            // Silently retry next poll
         }
     }
+
+    // MARK: - Sync from Manager
+
+    /// Initial sync of volume/mute state from manager when view appears or group changes
+    private func syncFromManager() {
+        isInitialized = false
+        syncVolumeFromManager()
+        syncMuteFromManager()
+        isInitialized = true
+    }
+
+    private func syncVolumeFromManager() {
+        let now = Date()
+        guard now > volumeGraceUntil else { return }
+
+        if group.members.count > 1 {
+            var totalVol = 0.0
+            for member in group.members {
+                // Skip devices with active grace (user just adjusted this speaker's volume)
+                if sonosManager.isVolumeGraceActive(deviceID: member.id) {
+                    totalVol += speakerVolumes[member.id] ?? 0
+                    continue
+                }
+                let v = Double(sonosManager.deviceVolumes[member.id] ?? 0)
+                if abs((speakerVolumes[member.id] ?? 0) - v) > 0.5 || !isInitialized {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        speakerVolumes[member.id] = v
+                    }
+                }
+                totalVol += v
+            }
+            let avg = totalVol / Double(group.members.count)
+            if abs(volume - avg) > 0.5 || !isInitialized {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    volume = avg
+                }
+            }
+            lastMasterVolume = avg
+        } else if let coordinator = group.coordinator {
+            guard !sonosManager.isVolumeGraceActive(deviceID: coordinator.id) else { return }
+            let vol = Double(sonosManager.deviceVolumes[coordinator.id] ?? 0)
+            if abs(volume - vol) > 0.5 || !isInitialized {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    volume = vol
+                }
+            }
+            lastMasterVolume = vol
+        }
+    }
+
+    private func syncMuteFromManager() {
+        let now = Date()
+        guard now > muteGraceUntil else { return }
+
+        if group.members.count > 1 {
+            var allMuted = true
+            for member in group.members {
+                // Skip devices with active grace (user just toggled mute on this speaker)
+                guard !sonosManager.isMuteGraceActive(deviceID: member.id) else {
+                    if !(speakerMutes[member.id] ?? false) { allMuted = false }
+                    continue
+                }
+                let m = sonosManager.deviceMutes[member.id] ?? false
+                speakerMutes[member.id] = m
+                if !m { allMuted = false }
+            }
+            isMuted = allMuted
+        } else if let coordinator = group.coordinator {
+            guard !sonosManager.isMuteGraceActive(deviceID: coordinator.id) else { return }
+            let m = sonosManager.deviceMutes[coordinator.id] ?? false
+            speakerMutes[coordinator.id] = m
+            isMuted = m
+        }
+    }
+
+    /// When sub-speaker mutes change (e.g. user mutes all individually),
+    /// update the master mute indicator to reflect the aggregate state.
+    private func syncMasterMuteFromSpeakers() {
+        guard group.members.count > 1 else { return }
+        let allMuted = group.members.allSatisfy { speakerMutes[$0.id] ?? false }
+        if isMuted != allMuted {
+            isMuted = allMuted
+        }
+    }
+
 }

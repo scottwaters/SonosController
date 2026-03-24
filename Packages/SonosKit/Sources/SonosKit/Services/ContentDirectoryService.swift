@@ -114,6 +114,28 @@ public final class ContentDirectoryService {
         )
     }
 
+    /// Fetches metadata for a single item (not its children).
+    /// Returns the item's own DIDL including albumArtURI if available.
+    public func browseMetadata(device: SonosDevice, objectID: String) async throws -> BrowseItem? {
+        let result = try await soap.send(
+            to: device.baseURL,
+            path: Self.path,
+            service: Self.service,
+            action: "Browse",
+            arguments: [
+                ("ObjectID", objectID),
+                ("BrowseFlag", "BrowseMetadata"),
+                ("Filter", "dc:title,res,dc:creator,upnp:artist,upnp:album,upnp:albumArtURI,upnp:class"),
+                ("StartingIndex", "0"),
+                ("RequestedCount", "1"),
+                ("SortCriteria", "")
+            ]
+        )
+        guard let didlResult = result["Result"], !didlResult.isEmpty else { return nil }
+        let items = BrowseXMLParser.parse(didlResult, deviceIP: device.ip, devicePort: device.port)
+        return items.first
+    }
+
     // MARK: - Generic Browse
 
     public func browse(device: SonosDevice, objectID: String, start: Int = 0, count: Int = 100) async throws -> (items: [BrowseItem], total: Int) {

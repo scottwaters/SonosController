@@ -98,18 +98,78 @@ public final class AVTransportService {
 
         var metadata = TrackMetadata()
 
-        if let didl = result["TrackMetaData"], !didl.isEmpty {
+        if let didl = result["TrackMetaData"], !didl.isEmpty,
+           didl != "NOT_IMPLEMENTED" {
             if let parsed = XMLResponseParser.parseDIDLMetadata(didl) {
                 metadata.title = parsed.title
                 metadata.artist = parsed.creator
                 metadata.album = parsed.album
+
+                // Detect radio/streaming from the track URI or content type
+                let trackURI = result["TrackURI"] ?? ""
+                let isRadioStream = trackURI.contains("x-sonosapi-stream:") ||
+                                    trackURI.contains("x-sonosapi-radio:") ||
+                                    trackURI.contains("x-rincon-mp3radio:") ||
+                                    trackURI.hasSuffix(".m3u8") ||
+                                    trackURI.hasSuffix(".pls") ||
+                                    trackURI.contains("tunein.com") ||
+                                    parsed.title.lowercased().hasSuffix(".m3u8") ||
+                                    parsed.title.lowercased().hasSuffix(".pls") ||
+                                    parsed.title.lowercased().hasSuffix(".mp3")
+
+                // r:streamContent has the currently playing track for radio/streams.
+                if !parsed.streamContent.isEmpty {
+                    let parts = parsed.streamContent.components(separatedBy: " - ")
+                    if parts.count >= 2 {
+                        metadata.artist = Self.smartCase(parts[0].trimmingCharacters(in: .whitespaces))
+                        metadata.title = Self.smartCase(parts.dropFirst().joined(separator: " - ").trimmingCharacters(in: .whitespaces))
+                    } else {
+                        metadata.title = Self.smartCase(parsed.streamContent)
+                    }
+                } else if isRadioStream {
+                    // No track info from stream — clear title so station name shows alone
+                    metadata.title = ""
+                    metadata.artist = ""
+                }
+
+                // Final safety: clear title if it looks like a technical name
+                if Self.looksLikeTechnicalTitle(metadata.title) {
+                    metadata.title = ""
+                }
+                if Self.looksLikeTechnicalTitle(metadata.artist) {
+                    metadata.artist = ""
+                }
 
                 // Relative art URIs need the device's base URL prepended
                 var artURI = parsed.albumArtURI
                 if artURI.hasPrefix("/") {
                     artURI = "http://\(device.ip):\(device.port)\(artURI)"
                 }
+                if artURI.isEmpty, !parsed.resourceURI.isEmpty {
+                    let encoded = parsed.resourceURI.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? parsed.resourceURI
+                    artURI = "http://\(device.ip):\(device.port)/getaa?s=1&u=\(encoded)"
+                }
                 metadata.albumArtURI = artURI.isEmpty ? nil : artURI
+            }
+        }
+
+        // Detect TV/HDMI and Line-In sources from the track URI.
+        // Must run AFTER DIDL parsing — overrides any RINCON ID that appears as title.
+        if let trackURI = result["TrackURI"] {
+            if trackURI.contains("x-sonos-htastream:") {
+                metadata.title = "TV"
+                let uriParts = trackURI.components(separatedBy: ":")
+                if uriParts.count >= 2 {
+                    metadata.artist = uriParts[1]  // RINCON_xxx — resolved to room name by the view
+                }
+                metadata.album = trackURI.contains(":spdif") ? "HDMI / Optical" : "HDMI"
+            } else if trackURI.contains("x-rincon-stream:") {
+                metadata.title = "Line-In"
+                let uriParts = trackURI.components(separatedBy: ":")
+                if uriParts.count >= 2 {
+                    metadata.artist = uriParts[1]
+                }
+                metadata.album = "Analog Input"
             }
         }
 
@@ -122,6 +182,7 @@ public final class AVTransportService {
         if let trackStr = result["Track"], let track = Int(trackStr) {
             metadata.trackNumber = track
         }
+        metadata.trackURI = result["TrackURI"]
 
         return metadata
     }
@@ -199,6 +260,38 @@ public final class AVTransportService {
                 ("CurrentURIMetaData", metadata)
             ]
         )
+    }
+
+    /// Detects technical stream/file names that shouldn't be shown as track titles.
+    private static func looksLikeTechnicalTitle(_ name: String) -> Bool {
+        guard !name.isEmpty else { return false }
+        let lower = name.lowercased()
+        // File extensions
+        if lower.hasSuffix(".mp3") || lower.hasSuffix(".mp4") || lower.hasSuffix(".m3u8") ||
+           lower.hasSuffix(".m3u") || lower.hasSuffix(".pls") || lower.hasSuffix(".aac") ||
+           lower.hasSuffix(".ogg") || lower.hasSuffix(".flac") || lower.hasSuffix(".wav") { return true }
+        // No spaces + has dot = filename
+        if name.contains(".") && !name.contains(" ") { return true }
+        // No spaces + has underscores = technical ID
+        if name.contains("_") && !name.contains(" ") { return true }
+        // URL-like
+        if name.contains("://") || name.contains("?") || name.contains("&") { return true }
+        if name.hasPrefix("http") || name.hasPrefix("x-") { return true }
+        return false
+    }
+
+    /// Converts ALL CAPS text to Title Case. Leaves mixed-case text unchanged.
+    private static func smartCase(_ text: String) -> String {
+        // Only convert if the text is mostly uppercase (>70% caps letters)
+        let letters = text.filter { $0.isLetter }
+        guard !letters.isEmpty else { return text }
+        let upperCount = letters.filter { $0.isUppercase }.count
+        guard Double(upperCount) / Double(letters.count) > 0.7 else { return text }
+        // Title-case: capitalize first letter of each word
+        return text.lowercased().split(separator: " ").map { word in
+            guard let first = word.first else { return String(word) }
+            return String(first).uppercased() + word.dropFirst()
+        }.joined(separator: " ")
     }
 
     public func becomeCoordinatorOfStandaloneGroup(device: SonosDevice) async throws {

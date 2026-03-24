@@ -22,6 +22,8 @@
 		A10017 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10017; };
 		A10018 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10018; };
 		A10019 /* CachedAsyncImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10019; };
+		A10021 /* AccentColorHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021; };
+		A10022 /* ColorSwatchGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10022; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +44,8 @@
 		B10017 /* BrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseView.swift; sourceTree = "<group>"; };
 		B10018 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B10019 /* CachedAsyncImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedAsyncImage.swift; sourceTree = "<group>"; };
+		B10021 /* AccentColorHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccentColorHelper.swift; sourceTree = "<group>"; };
+		B10022 /* ColorSwatchGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorSwatchGrid.swift; sourceTree = "<group>"; };
 		B10020 /* SonosController.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SonosController.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -93,6 +97,8 @@
 				B10017 /* BrowseView.swift */,
 				B10018 /* SettingsView.swift */,
 				B10019 /* CachedAsyncImage.swift */,
+				B10021 /* AccentColorHelper.swift */,
+				B10022 /* ColorSwatchGrid.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -190,6 +196,8 @@
 				A10017 /* BrowseView.swift in Sources */,
 				A10018 /* SettingsView.swift in Sources */,
 				A10019 /* CachedAsyncImage.swift in Sources */,
+				A10021 /* AccentColorHelper.swift in Sources */,
+				A10022 /* ColorSwatchGrid.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -255,7 +263,7 @@
 				CODE_SIGN_ENTITLEMENTS = SonosController/SonosController.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -266,7 +274,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.sonoscontroller.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -282,7 +290,7 @@
 				CODE_SIGN_ENTITLEMENTS = SonosController/SonosController.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -293,7 +301,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.sonoscontroller.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

@@ -50,7 +50,7 @@ The user sees a brief "not responding, refreshing..." message and the speaker li
 ### Disk tier
 
 - JPEG files stored in the ImageCache directory
-- 200 MB maximum — LRU eviction removes oldest-accessed files when exceeded
+- 500 MB default maximum (configurable) — LRU eviction removes oldest-accessed files when exceeded
 - File modification date is updated on each read (touch) to track access recency
 - Survives app restarts
 
@@ -78,7 +78,44 @@ All three views use `CachedAsyncImage`, a drop-in replacement for SwiftUI's `Asy
 
 - **Clear Artwork Cache:** removes all files from the ImageCache directory and clears the memory cache. Shows current disk usage in the button label.
 
-## 3. Optimistic State Cache (In-Memory)
+## 3. Art URL Cache (Persistent)
+
+**Location:** `~/Library/Application Support/SonosController/art_url_cache.json`
+**Format:** JSON dictionary mapping keys to art URLs
+
+### Problem
+
+When browsing Sonos Favorites, many items (especially Calm Radio, some streaming services) have album art URLs in their DIDL metadata that rotate or expire between sessions. The speaker returns different URLs each time, so the image disk cache (keyed by URL hash) misses on restart even though the correct image was previously downloaded.
+
+### Solution
+
+Art URLs discovered during playback or browsing are persisted to disk as a `[String: String]` dictionary. Each art URL is stored under multiple keys for flexible lookup:
+
+- **Item ID** (e.g. `FV:2/118`) — direct favorite lookup
+- **Resource URI** — the playable stream URI
+- **Title** (e.g. `title:native flute`) — case-insensitive title match
+- **Normalized title** (e.g. `norm:native flute`) — fuzzy match with common words stripped
+
+### Flow
+
+```
+Favorite displayed in browse list
+  → Check art URL cache by item ID
+    → HIT: use cached URL → ImageCache loads image from disk
+    → MISS: Check by resource URI, title, normalized title
+      → HIT: use cached URL → ImageCache loads image from disk
+      → MISS: Use DIDL albumArtURI or run discovery cascade
+        → Store discovered URL under all keys
+        → Debounced persist to disk (2 second delay)
+```
+
+### Persistence
+
+- Saved via `SonosCache.saveArtURLs()` with a 2-second debounce to batch rapid updates
+- Restored on startup in `startDiscovery()` before any UI renders
+- Independent of Quick Start / Classic startup mode
+
+## 4. Optimistic State Cache (In-Memory)
 
 Not a traditional cache, but a grace period system that temporarily holds user-intended state to prevent polling from reverting it.
 

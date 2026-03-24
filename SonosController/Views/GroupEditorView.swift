@@ -46,10 +46,10 @@ struct GroupEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Group Speakers")
+            Text(L10n.groupSpeakers)
                 .font(.headline)
 
-            Text("Tap a speaker to add or remove it from \"\(currentGroup?.name ?? initialGroup.name)\"")
+            Text("\(L10n.tapToAddOrRemove) \"\(currentGroup?.name ?? initialGroup.name)\"")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -79,11 +79,11 @@ struct GroupEditorView: View {
                                     .font(.body)
 
                                 if isCoordinator {
-                                    Text("Coordinator")
+                                    Text(L10n.coordinator)
                                         .font(.caption2)
                                         .foregroundStyle(.tertiary)
                                 } else if let otherName = otherGroupName, !isMember {
-                                    Text("In group: \(otherName)")
+                                    Text("\(L10n.inGroup): \(otherName)")
                                         .font(.caption2)
                                         .foregroundStyle(.orange)
                                 }
@@ -106,13 +106,13 @@ struct GroupEditorView: View {
             Divider()
 
             HStack(spacing: 12) {
-                Button("Group All") {
+                Button(L10n.groupAll) {
                     Task { await groupAll() }
                 }
                 .controlSize(.small)
                 .disabled(pendingDeviceID != nil)
 
-                Button("Ungroup All") {
+                Button(L10n.ungroupAll) {
                     Task { await ungroupAll() }
                 }
                 .controlSize(.small)
@@ -120,7 +120,7 @@ struct GroupEditorView: View {
 
                 Spacer()
 
-                Button("Done") { dismiss() }
+                Button(L10n.done) { dismiss() }
                     .keyboardShortcut(.return)
             }
         }
@@ -147,7 +147,7 @@ struct GroupEditorView: View {
             do {
                 try await sonosManager.joinGroup(device: device, toCoordinator: coordinator)
             } catch {
-                print("Failed to group \(device.roomName): \(error)")
+                // Grouping failed — will continue with remaining devices
             }
         }
         try? await Task.sleep(for: .seconds(1))
@@ -168,7 +168,7 @@ struct GroupEditorView: View {
             do {
                 try await sonosManager.ungroupDevice(device)
             } catch {
-                print("Failed to ungroup \(device.roomName): \(error)")
+                // Ungrouping failed — will continue with remaining devices
             }
         }
         try? await Task.sleep(for: .seconds(1))
@@ -222,7 +222,7 @@ struct GroupEditorView: View {
             } else {
                 optimisticMemberIDs.remove(device.id)
             }
-            print("Failed to change grouping: \(error)")
+            // Grouping change failed — optimistic state reverted above
         }
 
         pendingDeviceID = nil

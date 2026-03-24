@@ -19,6 +19,19 @@ struct ContentView: View {
         return sonosManager.groups.first { $0.id == id }
     }
 
+    /// Calculates browse panel width — takes ~40% of available space
+    private func browseWidth(totalWidth: CGFloat) -> CGFloat {
+        let nowPlayingMin: CGFloat = 350
+        let available = totalWidth - nowPlayingMin - (showQueue ? 300 : 0)
+        return max(280, min(available, totalWidth * 0.35))
+    }
+
+    /// Calculates queue panel width — takes ~30% of available space
+    private func queueWidth(totalWidth: CGFloat) -> CGFloat {
+        let available = totalWidth * 0.3
+        return max(250, min(available, 400))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Stale data / cache banner
@@ -29,7 +42,7 @@ struct ContentView: View {
                     Text(message)
                         .font(.caption)
                     Spacer()
-                    Button("Dismiss") {
+                    Button(L10n.dismiss) {
                         sonosManager.dismissStaleMessage()
                     }
                     .font(.caption)
@@ -44,13 +57,13 @@ struct ContentView: View {
                     Image(systemName: "clock.arrow.circlepath")
                         .foregroundStyle(.blue)
                         .font(.caption)
-                    Text("Using cached data (from \(sonosManager.cacheAge))")
+                    Text("\(L10n.usingCachedData) (\(sonosManager.cacheAge))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if sonosManager.isRefreshing {
                         ProgressView()
                             .controlSize(.mini)
-                        Text("Refreshing...")
+                        Text(L10n.refreshing)
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
@@ -63,21 +76,26 @@ struct ContentView: View {
 
             NavigationSplitView {
                 RoomListView(selectedGroupID: $selectedGroupID)
+                    .navigationSplitViewColumnWidth(min: 160, ideal: 200, max: 280)
             } detail: {
                 if let group = selectedGroup {
-                    HSplitView {
-                        if showBrowse {
-                            BrowseView(group: group)
-                                .environmentObject(sonosManager)
-                                .frame(minWidth: 280, idealWidth: 320, maxWidth: 420)
-                        }
+                    GeometryReader { geo in
+                        HStack(spacing: 0) {
+                            if showBrowse {
+                                BrowseView(group: group)
+                                    .environmentObject(sonosManager)
+                                    .frame(width: browseWidth(totalWidth: geo.size.width))
+                                Divider()
+                            }
 
-                        NowPlayingView(group: group)
-                            .frame(minWidth: 400)
+                            NowPlayingView(group: group)
+                                .frame(maxWidth: .infinity)
 
-                        if showQueue {
-                            QueueView(group: group)
-                                .frame(minWidth: 280, idealWidth: 320, maxWidth: 400)
+                            if showQueue {
+                                Divider()
+                                QueueView(group: group)
+                                    .frame(width: queueWidth(totalWidth: geo.size.width))
+                            }
                         }
                     }
                 } else {
@@ -86,17 +104,17 @@ struct ContentView: View {
                             .font(.system(size: 48))
                             .foregroundStyle(.secondary)
                         if sonosManager.groups.isEmpty && !sonosManager.isUsingCachedData {
-                            Text("Searching for Sonos speakers...")
+                            Text(L10n.searchingForSpeakers)
                                 .font(.title2)
                                 .foregroundStyle(.secondary)
                             ProgressView()
                         } else if sonosManager.groups.isEmpty {
-                            Text("Loading cached speakers...")
+                            Text(L10n.loadingCachedSpeakers)
                                 .font(.title2)
                                 .foregroundStyle(.secondary)
                             ProgressView()
                         } else {
-                            Text("Select a room")
+                            Text(L10n.selectARoom)
                                 .font(.title2)
                                 .foregroundStyle(.secondary)
                         }
@@ -112,7 +130,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "square.grid.2x2")
                     }
-                    .help("Toggle Browse")
+                    .help(L10n.browseMusicLibrary)
                     .disabled(selectedGroupID == nil)
 
                     Button {
@@ -120,7 +138,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "list.bullet")
                     }
-                    .help("Toggle Queue")
+                    .help(L10n.showPlayQueue)
                     .disabled(selectedGroupID == nil)
 
                     Button {
@@ -128,7 +146,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "alarm")
                     }
-                    .help("Alarms")
+                    .help(L10n.manageAlarms)
                     .popover(isPresented: $showAlarms) {
                         AlarmsView()
                             .environmentObject(sonosManager)
@@ -136,30 +154,30 @@ struct ContentView: View {
                     }
 
                     Menu {
-                        Button("Mute All Speakers") {
+                        Button(L10n.muteAllSpeakers) {
                             Task { await muteAll(muted: true) }
                         }
-                        Button("Unmute All Speakers") {
+                        Button(L10n.unmuteAllSpeakers) {
                             Task { await muteAll(muted: false) }
                         }
                     } label: {
                         Image(systemName: "speaker.wave.3")
                     }
-                    .help("Mute/Unmute All")
+                    .help(L10n.muteOrUnmuteAll)
 
                     Button {
                         sonosManager.rescan()
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
-                    .help("Rescan for speakers")
+                    .help(L10n.rescanNetwork)
 
                     Button {
                         showSettings.toggle()
                     } label: {
                         Image(systemName: "gear")
                     }
-                    .help("Settings")
+                    .help(L10n.appSettings)
                     .sheet(isPresented: $showSettings) {
                         SettingsView()
                             .environmentObject(sonosManager)

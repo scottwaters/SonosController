@@ -1,9 +1,13 @@
-/// SonosCache.swift — Persists speaker topology to disk for Quick Start mode.
+/// SonosCache.swift — Persists speaker topology and art URL mappings to disk.
 ///
 /// Serializes groups, devices, and browse sections to a JSON file in Application Support.
 /// On next launch, the cache is restored to populate the UI immediately while live
 /// SSDP discovery runs in the background. The cache has no TTL — staleness is handled
 /// by SonosManager.withStaleHandling() when a SOAP call fails.
+///
+/// Also persists art URL mappings (art_url_cache.json) so favorites retain artwork
+/// across restarts. Art URLs are stored under multiple keys (item ID, resource URI,
+/// title) for flexible lookup.
 import Foundation
 
 public struct CachedTopology: Codable {
@@ -48,12 +52,14 @@ public struct CachedBrowseSection: Codable {
 
 public final class SonosCache {
     private let fileURL: URL
+    private let artCacheURL: URL
 
     public init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = appSupport.appendingPathComponent("SonosController", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.fileURL = dir.appendingPathComponent("topology_cache.json")
+        self.artCacheURL = dir.appendingPathComponent("art_url_cache.json")
     }
 
     public func save(groups: [SonosGroup], devices: [String: SonosDevice], browseSections: [BrowseSection]) {
@@ -76,7 +82,7 @@ public final class SonosCache {
             let data = try JSONEncoder().encode(cached)
             try data.write(to: fileURL, options: .atomic)
         } catch {
-            print("Cache save failed: \(error)")
+            // Cache save failed — non-critical, will retry next save
         }
     }
 
@@ -115,5 +121,19 @@ public final class SonosCache {
         cached.browseSections.map { cs in
             BrowseSection(id: cs.id, title: cs.title, objectID: cs.objectID, icon: cs.icon)
         }
+    }
+
+    // MARK: - Art URL Cache
+
+    public func saveArtURLs(_ urls: [String: String]) {
+        do {
+            let data = try JSONEncoder().encode(urls)
+            try data.write(to: artCacheURL, options: .atomic)
+        } catch {}
+    }
+
+    public func loadArtURLs() -> [String: String] {
+        guard let data = try? Data(contentsOf: artCacheURL) else { return [:] }
+        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
     }
 }
