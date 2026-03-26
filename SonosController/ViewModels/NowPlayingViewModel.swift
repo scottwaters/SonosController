@@ -80,20 +80,14 @@ final class NowPlayingViewModel {
 
     // MARK: - Art
 
-    var displayedArtURL: URL?
-    var radioTrackArtURL: URL?
-    var radioStationArtURL: URL?
-    var webArtURL: URL?
-    var forceWebArt = false
-    var lastArtSearchKey = ""
-    var lastTrackURI = ""
-    var lastRadioTrackKey = ""
+    let art: ArtResolver
 
     // MARK: - Init
 
     init(sonosManager: SonosManager, group: SonosGroup) {
         self.sonosManager = sonosManager
         self.group = group
+        self.art = ArtResolver(sonosManager: sonosManager)
     }
 
     // MARK: - Transport Actions
@@ -491,160 +485,4 @@ final class NowPlayingViewModel {
         } catch {}
     }
 
-    // MARK: - Art Resolution
-
-    var localFileArtURL: String? {
-        guard let uri = trackMetadata.trackURI,
-              URIPrefix.isLocal(uri),
-              let coordinator = group.coordinator else { return nil }
-        return AlbumArtSearchService.getaaURL(speakerIP: coordinator.ip, port: coordinator.port, trackURI: uri)
-    }
-
-    func resolveArtURL() -> URL? {
-        let isLocalFile = trackMetadata.trackURI.map(URIPrefix.isLocal) ?? false
-        let artURI = trackMetadata.albumArtURI ?? localFileArtURL
-        if forceWebArt {
-            return webArtURL ?? artURI.flatMap { URL(string: $0) }
-        } else if isLocalFile && webArtURL != nil {
-            return webArtURL
-        } else {
-            return artURI.flatMap { URL(string: $0) } ?? webArtURL
-        }
-    }
-
-    func updateDisplayedArt() {
-        let resolved = resolveArtURL()
-        if resolved != displayedArtURL {
-            if resolved == nil && displayedArtURL != nil {
-                let currentURI = trackMetadata.trackURI ?? ""
-                if currentURI == lastTrackURI { return }
-            }
-            displayedArtURL = resolved
-        }
-    }
-
-    func searchRadioTrackArt() {
-        guard !trackMetadata.stationName.isEmpty,
-              !trackMetadata.title.isEmpty,
-              trackMetadata.title != trackMetadata.stationName else {
-            if radioTrackArtURL != nil { radioTrackArtURL = nil }
-            return
-        }
-        let key = "\(trackMetadata.title)|\(trackMetadata.artist)"
-        guard key != lastRadioTrackKey else { return }
-        lastRadioTrackKey = key
-        if radioStationArtURL == nil, let stationArt = displayedArtURL ?? trackMetadata.albumArtURI.flatMap({ URL(string: $0) }) {
-            radioStationArtURL = stationArt
-        }
-        let artist = trackMetadata.artist.hasPrefix("RINCON_") ? "" : trackMetadata.artist
-        let cleanTitle = AlbumArtSearchService.cleanTrackTitle(trackMetadata.title)
-        let searchTitle = cleanTitle.isEmpty ? trackMetadata.title : cleanTitle
-        Task {
-            if let artURL = await AlbumArtSearchService.shared.searchRadioTrackArt(
-                artist: artist, title: searchTitle
-            ) {
-                radioTrackArtURL = URL(string: artURL)
-                // Update history entry with resolved artwork
-                sonosManager.playHistoryManager?.updateArtwork(
-                    forTitle: trackMetadata.title, artist: trackMetadata.artist, artURL: artURL
-                )
-            } else {
-                radioTrackArtURL = nil
-            }
-        }
-    }
-
-    func searchWebArtIfNeeded() {
-        let currentURI = trackMetadata.trackURI ?? trackMetadata.title
-        if currentURI != lastTrackURI && !currentURI.isEmpty {
-            lastTrackURI = currentURI
-            if !forceWebArt {
-                webArtURL = nil
-                lastArtSearchKey = ""
-            }
-            displayedArtURL = trackMetadata.albumArtURI.flatMap { URL(string: $0) }
-            if trackMetadata.stationName.isEmpty {
-                radioTrackArtURL = nil
-                radioStationArtURL = nil
-                lastRadioTrackKey = ""
-            }
-            loadPersistedArtOverride()
-        }
-
-        let hasArt = trackMetadata.albumArtURI != nil && !(trackMetadata.albumArtURI?.isEmpty ?? true)
-        let isLocalFile = trackMetadata.trackURI.map(URIPrefix.isLocal) ?? false
-        if hasArt && !isLocalFile {
-            if !forceWebArt { if webArtURL != nil { webArtURL = nil } }
-            return
-        }
-        forceWebArt = false
-
-        let searchTerm: String
-        if isLocalFile && !trackMetadata.album.isEmpty {
-            searchTerm = trackMetadata.album
-        } else if !trackMetadata.stationName.isEmpty {
-            searchTerm = trackMetadata.stationName
-        } else if !trackMetadata.album.isEmpty {
-            searchTerm = trackMetadata.album
-        } else if !trackMetadata.title.isEmpty {
-            searchTerm = trackMetadata.title
-        } else {
-            searchTerm = ""
-        }
-        let artist = displayArtist
-        let key = "\(searchTerm)|\(artist)"
-        guard !searchTerm.isEmpty else { return }
-        guard key != lastArtSearchKey else { return }
-        lastArtSearchKey = key
-        webArtURL = nil
-        sonosDebugLog("[ART-SEARCH] Searching iTunes for artist='\(artist)' album='\(searchTerm)'")
-        Task {
-            if let artURL = await AlbumArtSearchService.shared.searchArtwork(
-                artist: artist, album: searchTerm
-            ) {
-                sonosDebugLog("[ART-SEARCH] Found: \(artURL.prefix(80))")
-                webArtURL = URL(string: artURL)
-                // Update history entry with resolved artwork
-                sonosManager.playHistoryManager?.updateArtwork(
-                    forTitle: trackMetadata.title, artist: trackMetadata.artist, artURL: artURL
-                )
-            } else {
-                sonosDebugLog("[ART-SEARCH] No result from iTunes")
-                webArtURL = nil
-            }
-            updateDisplayedArt()
-        }
-    }
-
-    func forceITunesArtSearch() {
-        let artist = displayArtist
-        let searchTerm = !trackMetadata.title.isEmpty ? trackMetadata.title :
-                         !trackMetadata.stationName.isEmpty ? trackMetadata.stationName : ""
-        guard !searchTerm.isEmpty else { return }
-        lastArtSearchKey = ""
-        forceWebArt = false
-        Task {
-            if let artURL = await AlbumArtSearchService.shared.searchArtwork(
-                artist: artist, album: searchTerm
-            ) {
-                webArtURL = URL(string: artURL)
-                forceWebArt = true
-                let key = "\(UDKey.artOverridePrefix)\(searchTerm.lowercased())"
-                UserDefaults.standard.set(artURL, forKey: key)
-                updateDisplayedArt()
-            }
-        }
-    }
-
-    func loadPersistedArtOverride() {
-        let searchTerm = !trackMetadata.title.isEmpty ? trackMetadata.title :
-                         !trackMetadata.stationName.isEmpty ? trackMetadata.stationName : ""
-        guard !searchTerm.isEmpty else { return }
-        let key = "\(UDKey.artOverridePrefix)\(searchTerm.lowercased())"
-        if let saved = UserDefaults.standard.string(forKey: key) {
-            webArtURL = URL(string: saved)
-            forceWebArt = true
-            updateDisplayedArt()
-        }
-    }
 }

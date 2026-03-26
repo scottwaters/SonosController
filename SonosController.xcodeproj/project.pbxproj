@@ -39,6 +39,8 @@
 		A10035 /* BrowseViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10035; };
 		A10036 /* PlayHistoryDashboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10036; };
 		A10037 /* AlarmsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10037; };
+		A10038 /* ArtResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10038; };
+		A10039 /* BrowseItemArtLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10039; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -76,6 +78,8 @@
 		B10033 /* QueueViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueViewModel.swift; sourceTree = "<group>"; };
 		B10036 /* PlayHistoryDashboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayHistoryDashboard.swift; sourceTree = "<group>"; };
 		B10037 /* AlarmsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlarmsViewModel.swift; sourceTree = "<group>"; };
+		B10038 /* ArtResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtResolver.swift; sourceTree = "<group>"; };
+		B10039 /* BrowseItemArtLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseItemArtLoader.swift; sourceTree = "<group>"; };
 		B10020 /* SonosController.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SonosController.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -120,6 +124,8 @@
 				B10033 /* QueueViewModel.swift */,
 				B10035 /* BrowseViewModel.swift */,
 				B10037 /* AlarmsViewModel.swift */,
+				B10038 /* ArtResolver.swift */,
+				B10039 /* BrowseItemArtLoader.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -266,6 +272,8 @@
 				A10035 /* BrowseViewModel.swift in Sources */,
 				A10036 /* PlayHistoryDashboard.swift in Sources */,
 				A10037 /* AlarmsViewModel.swift in Sources */,
+				A10038 /* ArtResolver.swift in Sources */,
+				A10039 /* BrowseItemArtLoader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

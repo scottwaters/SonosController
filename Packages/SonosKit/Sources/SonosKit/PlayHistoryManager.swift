@@ -1,6 +1,9 @@
-/// PlayHistoryManager.swift — Tracks play history with SQLite persistence and stats.
+/// PlayHistoryManager.swift — Play history business logic and stats.
+///
+/// Owns the in-memory entries list and delegates all persistence to
+/// PlayHistoryRepository. Provides dedup logic, stats computation,
+/// and export functionality.
 import Foundation
-import SQLite3
 
 @MainActor
 public final class PlayHistoryManager: ObservableObject {
@@ -11,17 +14,16 @@ public final class PlayHistoryManager: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: UDKey.playHistoryEnabled); objectWillChange.send() }
     }
 
-    private var db: OpaquePointer?
-    private let dbPath: String
+    private let repo: PlayHistoryRepository
     private var lastLoggedTrack: [String: String] = [:]
     private var reloadTask: Task<Void, Never>?
-    private static let maxEntries = 50_000
 
     // Legacy JSON path for migration
     private let legacyJSONURL: URL
 
     public init() {
-        self.dbPath = AppPaths.appSupportDirectory.appendingPathComponent("play_history.sqlite").path
+        let dbPath = AppPaths.appSupportDirectory.appendingPathComponent("play_history.sqlite").path
+        self.repo = PlayHistoryRepository(dbPath: dbPath)
         self.legacyJSONURL = AppPaths.appSupportDirectory.appendingPathComponent("play_history.json")
 
         // Default to enabled
@@ -30,138 +32,23 @@ public final class PlayHistoryManager: ObservableObject {
             UserDefaults.standard.set(true, forKey: UDKey.playHistoryEnabledSet)
         }
 
-        openDatabase()
         migrateFromJSONIfNeeded()
         loadEntries()
     }
 
-    deinit {
-        sqlite3_close(db)
-    }
-
-    // MARK: - Database Setup
-
-    private func openDatabase() {
-        if sqlite3_open(dbPath, &db) != SQLITE_OK {
-            sonosDebugLog("[HISTORY] Failed to open database: \(String(cString: sqlite3_errmsg(db)))")
-            return
-        }
-
-        // WAL mode for better concurrent read performance
-        exec("PRAGMA journal_mode=WAL")
-
-        exec("""
-            CREATE TABLE IF NOT EXISTS history (
-                id TEXT PRIMARY KEY,
-                timestamp REAL NOT NULL,
-                title TEXT NOT NULL DEFAULT '',
-                artist TEXT NOT NULL DEFAULT '',
-                album TEXT NOT NULL DEFAULT '',
-                station_name TEXT NOT NULL DEFAULT '',
-                source_uri TEXT,
-                group_name TEXT NOT NULL DEFAULT '',
-                duration REAL NOT NULL DEFAULT 0,
-                album_art_uri TEXT
-            )
-        """)
-
-        exec("CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp)")
-        exec("CREATE INDEX IF NOT EXISTS idx_history_artist ON history(artist)")
-    }
-
-    private func migrateFromJSONIfNeeded() {
-        guard FileManager.default.fileExists(atPath: legacyJSONURL.path) else { return }
-        guard let data = try? Data(contentsOf: legacyJSONURL),
-              let jsonEntries = try? JSONDecoder().decode([PlayHistoryEntry].self, from: data),
-              !jsonEntries.isEmpty else { return }
-
-        sonosDebugLog("[HISTORY] Migrating \(jsonEntries.count) entries from JSON to SQLite")
-
-        exec("BEGIN TRANSACTION")
-        for entry in jsonEntries {
-            insertEntry(entry)
-        }
-        exec("COMMIT")
-
-        // Remove legacy file
-        try? FileManager.default.removeItem(at: legacyJSONURL)
-        sonosDebugLog("[HISTORY] Migration complete, removed JSON file")
-    }
-
-    // MARK: - CRUD
-
-    private func insertEntry(_ entry: PlayHistoryEntry) {
-        let sql = """
-            INSERT OR IGNORE INTO history (id, timestamp, title, artist, album, station_name, source_uri, group_name, duration, album_art_uri)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(stmt) }
-
-        let idStr = entry.id.uuidString
-        sqlite3_bind_text(stmt, 1, (idStr as NSString).utf8String, -1, nil)
-        sqlite3_bind_double(stmt, 2, entry.timestamp.timeIntervalSince1970)
-        sqlite3_bind_text(stmt, 3, (entry.title as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(stmt, 4, (entry.artist as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(stmt, 5, (entry.album as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(stmt, 6, (entry.stationName as NSString).utf8String, -1, nil)
-        if let uri = entry.sourceURI {
-            sqlite3_bind_text(stmt, 7, (uri as NSString).utf8String, -1, nil)
-        } else {
-            sqlite3_bind_null(stmt, 7)
-        }
-        sqlite3_bind_text(stmt, 8, (entry.groupName as NSString).utf8String, -1, nil)
-        sqlite3_bind_double(stmt, 9, entry.duration)
-        if let art = entry.albumArtURI {
-            sqlite3_bind_text(stmt, 10, (art as NSString).utf8String, -1, nil)
-        } else {
-            sqlite3_bind_null(stmt, 10)
-        }
-
-        if sqlite3_step(stmt) != SQLITE_DONE {
-            sonosDebugLog("[HISTORY] Insert failed: \(String(cString: sqlite3_errmsg(db)))")
-        }
-    }
+    // MARK: - Loading
 
     private func loadEntries() {
-        entries.removeAll()
-        let sql = "SELECT id, timestamp, title, artist, album, station_name, source_uri, group_name, duration, album_art_uri FROM history ORDER BY timestamp ASC"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-        defer { sqlite3_finalize(stmt) }
-
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let entry = PlayHistoryEntry(
-                id: UUID(uuidString: String(cString: sqlite3_column_text(stmt, 0))) ?? UUID(),
-                timestamp: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)),
-                title: String(cString: sqlite3_column_text(stmt, 2)),
-                artist: String(cString: sqlite3_column_text(stmt, 3)),
-                album: String(cString: sqlite3_column_text(stmt, 4)),
-                stationName: String(cString: sqlite3_column_text(stmt, 5)),
-                sourceURI: sqlite3_column_type(stmt, 6) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 6)) : nil,
-                groupName: String(cString: sqlite3_column_text(stmt, 7)),
-                duration: sqlite3_column_double(stmt, 8),
-                albumArtURI: sqlite3_column_type(stmt, 9) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 9)) : nil
-            )
-            entries.append(entry)
-        }
-
+        entries = repo.loadAll()
         pruneIfNeeded()
     }
 
     private func pruneIfNeeded() {
-        guard entries.count > Self.maxEntries else { return }
-        let toRemove = entries.count - Self.maxEntries
-        let oldEntries = entries.prefix(toRemove)
-        let sql = "DELETE FROM history WHERE id = ?"
-        for entry in oldEntries {
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
-            sqlite3_bind_text(stmt, 1, (entry.id.uuidString as NSString).utf8String, -1, nil)
-            sqlite3_step(stmt)
-            sqlite3_finalize(stmt)
-        }
+        let max = PlayHistoryRepository.maxEntries
+        guard entries.count > max else { return }
+        let toRemove = entries.count - max
+        let idsToDelete = entries.prefix(toRemove).map(\.id)
+        repo.delete(ids: idsToDelete)
         entries.removeFirst(toRemove)
     }
 
@@ -173,6 +60,20 @@ public final class PlayHistoryManager: ObservableObject {
             self.loadEntries()
         }
     }
+
+    private func migrateFromJSONIfNeeded() {
+        guard FileManager.default.fileExists(atPath: legacyJSONURL.path) else { return }
+        guard let data = try? Data(contentsOf: legacyJSONURL),
+              let jsonEntries = try? JSONDecoder().decode([PlayHistoryEntry].self, from: data),
+              !jsonEntries.isEmpty else { return }
+
+        sonosDebugLog("[HISTORY] Migrating \(jsonEntries.count) entries from JSON to SQLite")
+        repo.insertBatch(jsonEntries)
+        try? FileManager.default.removeItem(at: legacyJSONURL)
+        sonosDebugLog("[HISTORY] Migration complete, removed JSON file")
+    }
+
+    // MARK: - Track Logging
 
     /// Called by SonosManager when track metadata changes
     public func trackMetadataChanged(groupID: String, metadata: TrackMetadata,
@@ -190,7 +91,7 @@ public final class PlayHistoryManager: ObservableObject {
         // For radio/streaming, also check DB to avoid duplicates across app restarts
         if !metadata.stationName.isEmpty || (metadata.trackURI.map { URIPrefix.isRadio($0) } ?? false) {
             let fiveMinAgo = Date().timeIntervalSince1970 - 300
-            if hasRecentEntry(title: normTitle, artist: normArtist, groupName: groupName, since: fiveMinAgo) {
+            if repo.hasRecentEntry(title: normTitle, artist: normArtist, groupName: groupName, since: fiveMinAgo) {
                 lastLoggedTrack[groupID] = dedupKey
                 return
             }
@@ -208,27 +109,17 @@ public final class PlayHistoryManager: ObservableObject {
             duration: metadata.duration,
             albumArtURI: metadata.albumArtURI
         )
-        insertEntry(entry)
+        repo.insert(entry)
         entries.append(entry)
     }
 
-    /// Updates the album art URI for the most recent entry matching title+artist on a group
+    /// Updates the album art URI for the most recent entry matching title+artist
     public func updateArtwork(forTitle title: String, artist: String, artURL: String) {
-        // Update in-memory
         for i in entries.indices.reversed() {
             if entries[i].title == title && entries[i].artist == artist {
                 guard entries[i].albumArtURI != artURL else { return }
                 entries[i].albumArtURI = artURL
-                // Update in database
-                let sql = "UPDATE history SET album_art_uri = ? WHERE id = ?"
-                var stmt: OpaquePointer?
-                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-                defer { sqlite3_finalize(stmt) }
-                sqlite3_bind_text(stmt, 1, (artURL as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 2, (entries[i].id.uuidString as NSString).utf8String, -1, nil)
-                if sqlite3_step(stmt) != SQLITE_DONE {
-                    sonosDebugLog("[HISTORY] Update art failed: \(String(cString: sqlite3_errmsg(db)))")
-                }
+                repo.updateArtwork(id: entries[i].id, artURL: artURL)
                 return
             }
         }
@@ -237,26 +128,7 @@ public final class PlayHistoryManager: ObservableObject {
     public func clearHistory() {
         entries.removeAll()
         lastLoggedTrack.removeAll()
-        exec("DELETE FROM history")
-    }
-
-    /// Checks if a matching entry was logged recently (used to dedup radio across restarts)
-    private func hasRecentEntry(title: String, artist: String, groupName: String, since: TimeInterval) -> Bool {
-        let sql = "SELECT COUNT(*) FROM history WHERE title = ? AND artist = ? AND group_name = ? AND timestamp > ?"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, (title as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(stmt, 2, (artist as NSString).utf8String, -1, nil)
-        sqlite3_bind_text(stmt, 3, (groupName as NSString).utf8String, -1, nil)
-        sqlite3_bind_double(stmt, 4, since)
-        return sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) > 0
-    }
-
-    private func exec(_ sql: String) {
-        if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
-            sonosDebugLog("[HISTORY] SQL error: \(String(cString: sqlite3_errmsg(db))) for: \(sql)")
-        }
+        repo.deleteAll()
     }
 
     // MARK: - Stats

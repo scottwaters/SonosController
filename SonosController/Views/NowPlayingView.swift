@@ -359,8 +359,8 @@ struct NowPlayingView: View {
         .onDisappear { stopProgressTimer() }
         .onChange(of: group.id) {
             vm.group = group
-            vm.displayedArtURL = nil
-            vm.radioTrackArtURL = nil
+            vm.art.displayedArtURL = nil
+            vm.art.radioTrackArtURL = nil
             startProgressTimer()
             syncFromManager()
             Task { await fetchCurrentState() }
@@ -381,7 +381,7 @@ struct NowPlayingView: View {
         }
         .sheet(isPresented: $showExpandedArt) {
             ExpandedArtView(
-                artURL: vm.radioTrackArtURL ?? vm.displayedArtURL,
+                artURL: vm.art.radioTrackArtURL ?? vm.art.displayedArtURL,
                 title: trackMetadata.title,
                 artist: trackMetadata.artist,
                 album: trackMetadata.album,
@@ -421,9 +421,9 @@ struct NowPlayingView: View {
 
     private var albumArtView: some View {
         return ZStack(alignment: .bottomTrailing) {
-            if let trackArt = vm.radioTrackArtURL, !trackMetadata.stationName.isEmpty {
+            if let trackArt = vm.art.radioTrackArtURL, !trackMetadata.stationName.isEmpty {
                 CachedAsyncImage(url: trackArt, cornerRadius: 8)
-            } else if let url = vm.displayedArtURL {
+            } else if let url = vm.art.displayedArtURL {
                 CachedAsyncImage(url: url, cornerRadius: 8)
             } else {
                 RoundedRectangle(cornerRadius: 8)
@@ -440,7 +440,7 @@ struct NowPlayingView: View {
                             .foregroundStyle(.white.opacity(0.6))
                     }
             }
-            if vm.radioTrackArtURL != nil, let stationArt = vm.radioStationArtURL {
+            if vm.art.radioTrackArtURL != nil, let stationArt = vm.art.radioStationArtURL {
                 CachedAsyncImage(url: stationArt, cornerRadius: 4)
                     .frame(width: 36, height: 36)
                     .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
@@ -448,37 +448,37 @@ struct NowPlayingView: View {
             }
         }
         .onAppear {
-            vm.loadPersistedArtOverride()
-            vm.searchWebArtIfNeeded()
-            vm.updateDisplayedArt()
-            vm.searchRadioTrackArt()
+            vm.art.loadPersistedArtOverride(trackMetadata: trackMetadata, group: group)
+            vm.art.searchWebArtIfNeeded(trackMetadata: trackMetadata, displayArtist: vm.displayArtist, group: group)
+            vm.art.updateDisplayedArt(trackMetadata: trackMetadata, group: group)
+            vm.art.searchRadioTrackArt(trackMetadata: trackMetadata)
         }
         .onReceive(sonosManager.$groupTrackMetadata) { newMeta in
-            // Force art update whenever metadata changes
             let meta = newMeta[group.coordinatorID]
             let artURI = meta?.albumArtURI
-            // If speaker provided art, use it directly
             if let art = artURI, !art.isEmpty, let url = URL(string: art) {
-                if vm.displayedArtURL != url && !vm.forceWebArt {
-                    vm.displayedArtURL = url
+                if vm.art.displayedArtURL != url && !vm.art.forceWebArt {
+                    vm.art.displayedArtURL = url
                 }
             }
-            vm.searchWebArtIfNeeded()
-            vm.updateDisplayedArt()
-            vm.searchRadioTrackArt()
+            vm.art.searchWebArtIfNeeded(trackMetadata: trackMetadata, displayArtist: vm.displayArtist, group: group)
+            vm.art.updateDisplayedArt(trackMetadata: trackMetadata, group: group)
+            vm.art.searchRadioTrackArt(trackMetadata: trackMetadata)
         }
             .contextMenu {
-                Button(L10n.refreshArtwork) { vm.forceITunesArtSearch() }
-                if vm.webArtURL != nil || trackMetadata.albumArtURI != nil {
+                Button(L10n.refreshArtwork) {
+                    vm.art.forceITunesArtSearch(trackMetadata: trackMetadata, displayArtist: vm.displayArtist, group: group)
+                }
+                if vm.art.webArtURL != nil || trackMetadata.albumArtURI != nil {
                     Button(L10n.clearArtwork) {
                         let searchTerm = !trackMetadata.title.isEmpty ? trackMetadata.title :
                                          !trackMetadata.stationName.isEmpty ? trackMetadata.stationName : ""
                         if !searchTerm.isEmpty {
                             UserDefaults.standard.removeObject(forKey: "\(UDKey.artOverridePrefix)\(searchTerm.lowercased())")
                         }
-                        vm.webArtURL = nil
-                        vm.lastArtSearchKey = ""
-                        vm.forceWebArt = false
+                        vm.art.webArtURL = nil
+                        vm.art.lastArtSearchKey = ""
+                        vm.art.forceWebArt = false
                     }
                 }
             }
