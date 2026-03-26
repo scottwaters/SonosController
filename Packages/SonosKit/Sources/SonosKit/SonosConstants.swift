@@ -157,6 +157,12 @@ public enum UDKey {
     public static let classicShuffleEnabled = "classicShuffleEnabled"
 }
 
+// MARK: - Notifications
+
+public extension Notification.Name {
+    static let queueChanged = Notification.Name("sonosQueueChanged")
+}
+
 // MARK: - App Support Directory
 
 public enum AppPaths {

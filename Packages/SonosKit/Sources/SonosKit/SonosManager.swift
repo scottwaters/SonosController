@@ -1088,11 +1088,15 @@ public class SonosManager: ObservableObject {
                 meta = XMLResponseParser.xmlUnescape(meta)
             }
             sonosDebugLog("[QUEUE] Adding URI to queue: \(uri.prefix(60)) meta=\(meta.isEmpty ? "empty" : "\(meta.count) chars") playNext=\(playNext) atPos=\(atPosition)")
-            return try await contentDirectory.addURIToQueue(device: coordinator, uri: uri, metadata: meta, desiredFirstTrackNumberEnqueued: atPosition, enqueueAsNext: playNext)
+            let result = try await contentDirectory.addURIToQueue(device: coordinator, uri: uri, metadata: meta, desiredFirstTrackNumberEnqueued: atPosition, enqueueAsNext: playNext)
+            NotificationCenter.default.post(name: .queueChanged, object: nil)
+            return result
         } else if item.isContainer {
             let containerURI = makeContainerURI(item)
             sonosDebugLog("[QUEUE] Adding container to queue: \(containerURI.prefix(60))")
-            return try await contentDirectory.addURIToQueue(device: coordinator, uri: containerURI, desiredFirstTrackNumberEnqueued: atPosition, enqueueAsNext: playNext)
+            let result = try await contentDirectory.addURIToQueue(device: coordinator, uri: containerURI, desiredFirstTrackNumberEnqueued: atPosition, enqueueAsNext: playNext)
+            NotificationCenter.default.post(name: .queueChanged, object: nil)
+            return result
         }
         sonosDebugLog("[QUEUE] Cannot add to queue: no URI for '\(item.title)' objectID=\(item.objectID)")
         return 0

@@ -26,13 +26,11 @@ struct QueueView: View {
         }
         .onAppear { Task { await vm.loadQueue() } }
         .onChange(of: vm.group.id) { Task { await vm.loadQueue() } }
-        .onReceive(sonosManager.$groupTrackMetadata) { newMeta in
+        .onReceive(sonosManager.$groupTrackMetadata) { _ in
             vm.updateCurrentTrack()
-            // Reload queue if size changed (e.g. track added from browse)
-            if let meta = newMeta[vm.group.coordinatorID],
-               meta.queueSize > 0, meta.queueSize != vm.totalTracks {
-                Task { await vm.loadQueue() }
-            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .queueChanged)) { _ in
+            Task { await vm.loadQueue() }
         }
         .alert("Save as Playlist", isPresented: $showSavePlaylist) {
             TextField("Playlist name", text: $newPlaylistName)
