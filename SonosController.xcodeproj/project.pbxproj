@@ -36,6 +36,7 @@
 		A10032 /* NowPlayingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10032; };
 		A10033 /* QueueViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10033; };
 		A10034 /* SliderPopup.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10034; };
+		A10035 /* BrowseViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10035; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -68,6 +69,7 @@
 		B10030 /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		B10031 /* MusicServicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicServicesView.swift; sourceTree = "<group>"; };
 		B10034 /* SliderPopup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SliderPopup.swift; sourceTree = "<group>"; };
+		B10035 /* BrowseViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseViewModel.swift; sourceTree = "<group>"; };
 		B10032 /* NowPlayingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingViewModel.swift; sourceTree = "<group>"; };
 		B10033 /* QueueViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueViewModel.swift; sourceTree = "<group>"; };
 		B10020 /* SonosController.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SonosController.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -112,6 +114,7 @@
 			children = (
 				B10032 /* NowPlayingViewModel.swift */,
 				B10033 /* QueueViewModel.swift */,
+				B10035 /* BrowseViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -254,6 +257,7 @@
 				A10032 /* NowPlayingViewModel.swift in Sources */,
 				A10033 /* QueueViewModel.swift in Sources */,
 				A10034 /* SliderPopup.swift in Sources */,
+				A10035 /* BrowseViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
