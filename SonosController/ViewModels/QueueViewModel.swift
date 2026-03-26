@@ -30,7 +30,25 @@ final class QueueViewModel: ObservableObject {
     func updateCurrentTrack() {
         guard !isPlayingStation else { return }
         let meta = sonosManager.groupTrackMetadata[group.coordinatorID]
-        if let trackNum = meta?.trackNumber, trackNum > 0, trackNum != currentTrack {
+        guard let trackNum = meta?.trackNumber, trackNum > 0 else { return }
+
+        // When shuffle is on, trackNumber from GetPositionInfo is the original queue position
+        // but the speaker plays a different track. Match by title instead.
+        let isShuffled = sonosManager.groupPlayModes[group.coordinatorID]?.isShuffled ?? false
+        if isShuffled, let title = meta?.title, !title.isEmpty {
+            if let match = queueItems.first(where: { $0.title == title && $0.artist == (meta?.artist ?? "") }) {
+                if match.id != currentTrack { currentTrack = match.id }
+                return
+            }
+            // Fallback: title only match
+            if let match = queueItems.first(where: { $0.title == title }) {
+                if match.id != currentTrack { currentTrack = match.id }
+                return
+            }
+        }
+
+        // Non-shuffle: use track number directly
+        if trackNum != currentTrack {
             currentTrack = trackNum
         }
     }
