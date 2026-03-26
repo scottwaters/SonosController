@@ -18,6 +18,14 @@ final class QueueViewModel: ObservableObject {
         self.group = group
     }
 
+    /// Updates current track number from transport metadata
+    func updateCurrentTrack() {
+        let meta = sonosManager.groupTrackMetadata[group.coordinatorID]
+        if let trackNum = meta?.trackNumber, trackNum > 0, trackNum != currentTrack {
+            currentTrack = trackNum
+        }
+    }
+
     func loadQueue() async {
         isLoading = true
         do {

@@ -12,6 +12,8 @@ struct QueueView: View {
     @State private var showSavePlaylist = false
     @State private var newPlaylistName = ""
 
+    @EnvironmentObject private var sonosManager: SonosManager
+
     init(group: SonosGroup, sonosManager: SonosManager) {
         _vm = StateObject(wrappedValue: QueueViewModel(sonosManager: sonosManager, group: group))
     }
@@ -24,6 +26,9 @@ struct QueueView: View {
         }
         .onAppear { Task { await vm.loadQueue() } }
         .onChange(of: vm.group.id) { Task { await vm.loadQueue() } }
+        .onReceive(sonosManager.$groupTrackMetadata) { _ in
+            vm.updateCurrentTrack()
+        }
         .alert("Save as Playlist", isPresented: $showSavePlaylist) {
             TextField("Playlist name", text: $newPlaylistName)
             Button("Cancel", role: .cancel) { newPlaylistName = "" }
@@ -104,6 +109,7 @@ struct QueueView: View {
     }
 
     private var queueList: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(Array(vm.queueItems.enumerated()), id: \.element.id) { index, item in
@@ -115,7 +121,9 @@ struct QueueView: View {
                                 .padding(.horizontal, 12)
                         }
 
-                        QueueItemRow(item: item, isCurrentTrack: item.id == vm.currentTrack)
+                        QueueItemRow(item: item, isCurrentTrack: item.id == vm.currentTrack,
+                                     isPlaying: item.id == vm.currentTrack && vm.sonosManager.groupTransportStates[vm.group.coordinatorID]?.isPlaying == true)
+                            .id(item.id)
                             .contentShape(Rectangle())
                             .onTapGesture { Task { await vm.playTrack(item.id) } }
                             .contextMenu {
@@ -141,6 +149,12 @@ struct QueueView: View {
                         dropTargetIndex: $dropTargetIndex
                     ))
             }
+        }
+        .onChange(of: vm.currentTrack) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(vm.currentTrack, anchor: .center)
+            }
+        }
         }
     }
 
@@ -196,11 +210,21 @@ struct QueueDropDelegate: DropDelegate {
 struct QueueItemRow: View {
     let item: QueueItem
     let isCurrentTrack: Bool
+    var isPlaying: Bool = false
 
     var body: some View {
         HStack(spacing: 12) {
-            CachedAsyncImage(url: item.albumArtURI.flatMap { URL(string: $0) })
-                .frame(width: 36, height: 36)
+            ZStack {
+                CachedAsyncImage(url: item.albumArtURI.flatMap { URL(string: $0) })
+                    .frame(width: 36, height: 36)
+                if isPlaying {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(.black.opacity(0.4))
+                        .frame(width: 36, height: 36)
+                    NowPlayingBars()
+                        .frame(width: 16, height: 14)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
@@ -223,5 +247,28 @@ struct QueueItemRow: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 12)
         .background(isCurrentTrack ? Color.accentColor.opacity(0.1) : Color.clear)
+    }
+}
+
+// MARK: - Animated Now Playing Bars
+
+private struct NowPlayingBars: View {
+    @State private var animate = false
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<3, id: \.self) { i in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(.white)
+                    .frame(width: 3)
+                    .scaleEffect(y: animate ? CGFloat.random(in: 0.3...1.0) : 0.4, anchor: .bottom)
+                    .animation(
+                        .easeInOut(duration: 0.4 + Double(i) * 0.15)
+                        .repeatForever(autoreverses: true),
+                        value: animate
+                    )
+            }
+        }
+        .onAppear { animate = true }
     }
 }
