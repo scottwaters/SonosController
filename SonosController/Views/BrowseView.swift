@@ -531,7 +531,7 @@ struct BrowseListView: View {
                 loadedCount = result.count
             }
         } catch { sonosDebugLog("[BROWSE] Container art browse failed: \(error)")
-            errorMessage = error.localizedDescription
+            errorMessage = AppError.from(error as? SOAPError ?? SOAPError.networkError(error)).errorDescription
         }
         isLoading = false
 
@@ -568,10 +568,10 @@ struct BrowseListView: View {
                     playbackError = "\(L10n.couldNotPlay) \"\(item.title)\": \(L10n.error_) \(code)"
                 }
             default:
-                playbackError = "\(L10n.couldNotPlay) \"\(item.title)\": \(error.localizedDescription)"
+                let appErr = (error as? SOAPError).map(AppError.from) ?? .unknown(error); playbackError = "\(L10n.couldNotPlay) \"\(item.title)\": \(appErr.errorDescription ?? error.localizedDescription)"
             }
         } catch { sonosDebugLog("[BROWSE] Container art browse failed: \(error)")
-            playbackError = "\(L10n.couldNotPlay) \"\(item.title)\": \(error.localizedDescription)"
+            let appErr = (error as? SOAPError).map(AppError.from) ?? .unknown(error); playbackError = "\(L10n.couldNotPlay) \"\(item.title)\": \(appErr.errorDescription ?? error.localizedDescription)"
         }
     }
 

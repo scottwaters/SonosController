@@ -140,6 +140,22 @@ public enum Timing {
     public static let subscriptionRenewalFraction: Double = 0.8
 }
 
+// MARK: - UserDefaults Keys
+
+public enum UDKey {
+    public static let startupMode = "startupMode"
+    public static let communicationMode = "communicationMode"
+    public static let appearanceMode = "appearanceMode"
+    public static let appLanguage = "appLanguage"
+    public static let lastSelectedGroupID = "lastSelectedGroupID"
+    public static let menuBarEnabled = "menuBarEnabled"
+    public static let playHistoryEnabled = "playHistoryEnabled"
+    public static let playHistoryEnabledSet = "playHistoryEnabledSet"
+    public static let smapiEnabled = "smapiEnabled"
+    public static let imageCacheMaxSizeMB = "imageCacheMaxSizeMB"
+    public static let imageCacheMaxAgeDays = "imageCacheMaxAgeDays"
+}
+
 // MARK: - App Support Directory
 
 public enum AppPaths {

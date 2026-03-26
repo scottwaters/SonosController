@@ -13,6 +13,8 @@ public final class ImageCache: ImageCacheProtocol {
     private let memoryCache = NSCache<NSString, NSImage>()
     private let diskCacheURL: URL
     private let fileManager = FileManager.default
+    private var cachedDiskUsage: Int?
+    private var cachedFileCount: Int?
 
     private static let maxSizeMBKey = "imageCacheMaxSizeMB"
     private static let maxAgeDaysKey = "imageCacheMaxAgeDays"
@@ -21,21 +23,21 @@ public final class ImageCache: ImageCacheProtocol {
 
     public var maxSizeMB: Int {
         get {
-            let val = UserDefaults.standard.integer(forKey: Self.maxSizeMBKey)
+            let val = UserDefaults.standard.integer(forKey: UDKey.imageCacheMaxSizeMB)
             return val > 0 ? val : Self.defaultMaxSizeMB
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: Self.maxSizeMBKey)
+            UserDefaults.standard.set(newValue, forKey: UDKey.imageCacheMaxSizeMB)
         }
     }
 
     public var maxAgeDays: Int {
         get {
-            let val = UserDefaults.standard.integer(forKey: Self.maxAgeDaysKey)
+            let val = UserDefaults.standard.integer(forKey: UDKey.imageCacheMaxAgeDays)
             return val > 0 ? val : Self.defaultMaxAgeDays
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: Self.maxAgeDaysKey)
+            UserDefaults.standard.set(newValue, forKey: UDKey.imageCacheMaxAgeDays)
         }
     }
 
@@ -50,7 +52,7 @@ public final class ImageCache: ImageCacheProtocol {
         memoryCache.totalCostLimit = 50 * 1024 * 1024
 
         // Run eviction on startup in background
-        DispatchQueue.global(qos: .utility).async { [self] in
+        DispatchQueue.global(qos: .utility).async { [weak self] in guard let self else { return };
             evictExpiredAndOversized()
         }
     }
@@ -108,10 +110,13 @@ public final class ImageCache: ImageCacheProtocol {
         let filePath = diskCacheURL.appendingPathComponent(key)
         try? data.write(to: filePath, options: .atomic)
 
+        invalidateDiskStats()
+
         // Periodically evict (roughly every 50 stores)
         if Int.random(in: 0..<50) == 0 {
-            DispatchQueue.global(qos: .utility).async { [self] in
-                evictExpiredAndOversized()
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                guard let self else { return }
+                self.evictExpiredAndOversized()
             }
         }
     }
@@ -119,6 +124,7 @@ public final class ImageCache: ImageCacheProtocol {
     public func clearDisk() {
         try? fileManager.removeItem(at: diskCacheURL)
         try? fileManager.createDirectory(at: diskCacheURL, withIntermediateDirectories: true)
+        invalidateDiskStats()
     }
 
     public func clearMemory() {
@@ -126,6 +132,13 @@ public final class ImageCache: ImageCacheProtocol {
     }
 
     public var diskUsage: Int {
+        if let cached = cachedDiskUsage { return cached }
+        let value = computeDiskUsage()
+        cachedDiskUsage = value
+        return value
+    }
+
+    private func computeDiskUsage() -> Int {
         guard let files = try? fileManager.contentsOfDirectory(at: diskCacheURL, includingPropertiesForKeys: [.fileSizeKey]) else {
             return 0
         }
@@ -144,7 +157,16 @@ public final class ImageCache: ImageCacheProtocol {
     }
 
     public var fileCount: Int {
-        (try? fileManager.contentsOfDirectory(at: diskCacheURL, includingPropertiesForKeys: nil))?.count ?? 0
+        if let cached = cachedFileCount { return cached }
+        let value = (try? fileManager.contentsOfDirectory(at: diskCacheURL, includingPropertiesForKeys: nil))?.count ?? 0
+        cachedFileCount = value
+        return value
+    }
+
+    /// Invalidates cached disk stats (call after store/clear/evict)
+    private func invalidateDiskStats() {
+        cachedDiskUsage = nil
+        cachedFileCount = nil
     }
 
     /// Two-pass eviction: (1) remove files older than maxAge, (2) if still over

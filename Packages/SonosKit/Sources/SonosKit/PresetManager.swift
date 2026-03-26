@@ -19,8 +19,12 @@ public final class PresetManager: ObservableObject {
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(presets) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        do {
+            let data = try JSONEncoder().encode(presets)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            sonosDebugLog("[PRESET] Save failed: \(error)")
+        }
     }
 
     public func addPreset(_ preset: GroupPreset) {

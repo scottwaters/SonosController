@@ -85,7 +85,7 @@ struct RecentlyPlayedView: View {
                 )
             } catch {
                 sonosDebugLog("[RECENT] Play failed: \(error.localizedDescription) uri=\(uri.prefix(80))")
-                playError = "Could not play \"\(entry.stationName.isEmpty ? entry.title : entry.stationName)\": \(error.localizedDescription)"
+                let appErr = (error as? SOAPError).map(AppError.from) ?? .unknown(error); playError = appErr.errorDescription
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { playError = nil }
             }
         }

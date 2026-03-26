@@ -160,7 +160,7 @@ struct ContentView: View {
                 }
             }
             .onChange(of: selectedGroupID) {
-                UserDefaults.standard.set(selectedGroupID, forKey: "lastSelectedGroupID")
+                UserDefaults.standard.set(selectedGroupID, forKey: UDKey.lastSelectedGroupID)
             }
             .onChange(of: sonosManager.groups) {
                 // When groups load/change, try to restore selection if nothing selected
@@ -261,7 +261,7 @@ struct ContentView: View {
     /// Restores last selected group, falling back to coordinator if the group no longer exists
     private func restoreLastSelectedGroup() {
         guard !sonosManager.groups.isEmpty else { return }
-        guard let lastID = UserDefaults.standard.string(forKey: "lastSelectedGroupID") else { return }
+        guard let lastID = UserDefaults.standard.string(forKey: UDKey.lastSelectedGroupID) else { return }
 
         // Exact match — group still exists
         if sonosManager.groups.contains(where: { $0.id == lastID }) {

@@ -25,9 +25,13 @@ public final class PlaylistServiceScanner: ObservableObject {
 
     private func save() {
         // Save immediately — playlist scans are infrequent and data is small
-        let encodable = playlistServices.mapValues { Array($0) }
-        guard let data = try? JSONEncoder().encode(encodable) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        do {
+            let encodable = playlistServices.mapValues { Array($0) }
+            let data = try JSONEncoder().encode(encodable)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            sonosDebugLog("[PLAYLIST-SCAN] Save failed: \(error)")
+        }
     }
 
     /// Scans a playlist's tracks to detect services. Uses cache if available.

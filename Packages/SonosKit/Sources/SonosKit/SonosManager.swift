@@ -207,22 +207,22 @@ public class SonosManager: ObservableObject {
     // MARK: - Settings
 
     @Published public var startupMode: StartupMode {
-        didSet { UserDefaults.standard.set(startupMode.rawValue, forKey: "startupMode") }
+        didSet { UserDefaults.standard.set(startupMode.rawValue, forKey: UDKey.startupMode) }
     }
 
     @Published public var communicationMode: CommunicationMode {
         didSet {
-            UserDefaults.standard.set(communicationMode.rawValue, forKey: "communicationMode")
+            UserDefaults.standard.set(communicationMode.rawValue, forKey: UDKey.communicationMode)
             Task { await switchTransportStrategy() }
         }
     }
 
     @Published public var appearanceMode: AppearanceMode {
-        didSet { UserDefaults.standard.set(appearanceMode.rawValue, forKey: "appearanceMode") }
+        didSet { UserDefaults.standard.set(appearanceMode.rawValue, forKey: UDKey.appearanceMode) }
     }
 
     @Published public var appLanguage: AppLanguage {
-        didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: "appLanguage") }
+        didSet { UserDefaults.standard.set(appLanguage.rawValue, forKey: UDKey.appLanguage) }
     }
 
     @Published public var accentColor: StoredColor {
@@ -283,16 +283,16 @@ public class SonosManager: ObservableObject {
         self.soap = soap
         self.cache = cache
 
-        let savedStartup = UserDefaults.standard.string(forKey: "startupMode") ?? StartupMode.quickStart.rawValue
+        let savedStartup = UserDefaults.standard.string(forKey: UDKey.startupMode) ?? StartupMode.quickStart.rawValue
         self.startupMode = StartupMode(rawValue: savedStartup) ?? .quickStart
 
-        let savedComms = UserDefaults.standard.string(forKey: "communicationMode") ?? CommunicationMode.hybridEventFirst.rawValue
+        let savedComms = UserDefaults.standard.string(forKey: UDKey.communicationMode) ?? CommunicationMode.hybridEventFirst.rawValue
         self.communicationMode = CommunicationMode(rawValue: savedComms) ?? .hybridEventFirst
 
-        let savedAppearance = UserDefaults.standard.string(forKey: "appearanceMode") ?? AppearanceMode.system.rawValue
+        let savedAppearance = UserDefaults.standard.string(forKey: UDKey.appearanceMode) ?? AppearanceMode.system.rawValue
         self.appearanceMode = AppearanceMode(rawValue: savedAppearance) ?? .system
 
-        let savedLang = UserDefaults.standard.string(forKey: "appLanguage") ?? AppLanguage.english.rawValue
+        let savedLang = UserDefaults.standard.string(forKey: UDKey.appLanguage) ?? AppLanguage.english.rawValue
         self.appLanguage = AppLanguage(rawValue: savedLang) ?? .english
 
         self.accentColor = StoredColor.load(from: "accentColor", default: .system)

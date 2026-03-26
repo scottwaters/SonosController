@@ -12,9 +12,9 @@ final class MenuBarController {
     var sonosManager: SonosManager?
 
     var isEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "menuBarEnabled") }
+        get { UserDefaults.standard.bool(forKey: UDKey.menuBarEnabled) }
         set {
-            UserDefaults.standard.set(newValue, forKey: "menuBarEnabled")
+            UserDefaults.standard.set(newValue, forKey: UDKey.menuBarEnabled)
             if newValue { show() } else { hide() }
         }
     }
@@ -74,7 +74,7 @@ struct MenuBarPlayerView: View {
     }
 
     private func syncFromMainUI() {
-        if let lastID = UserDefaults.standard.string(forKey: "lastSelectedGroupID"),
+        if let lastID = UserDefaults.standard.string(forKey: UDKey.lastSelectedGroupID),
            sonosManager.groups.contains(where: { $0.id == lastID }) {
             selectedGroupID = lastID
         }
@@ -107,7 +107,7 @@ struct MenuBarPlayerView: View {
                 }
                 .labelsHidden()
                 .onChange(of: selectedGroupID) {
-                    UserDefaults.standard.set(selectedGroupID, forKey: "lastSelectedGroupID")
+                    UserDefaults.standard.set(selectedGroupID, forKey: UDKey.lastSelectedGroupID)
                 }
             }
 

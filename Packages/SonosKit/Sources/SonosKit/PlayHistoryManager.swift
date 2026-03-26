@@ -6,8 +6,8 @@ public final class PlayHistoryManager: ObservableObject {
     @Published public var entries: [PlayHistoryEntry] = []
 
     public var isEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "playHistoryEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "playHistoryEnabled"); objectWillChange.send() }
+        get { UserDefaults.standard.bool(forKey: UDKey.playHistoryEnabled) }
+        set { UserDefaults.standard.set(newValue, forKey: UDKey.playHistoryEnabled); objectWillChange.send() }
     }
 
     private let fileURL: URL
@@ -19,9 +19,9 @@ public final class PlayHistoryManager: ObservableObject {
         self.fileURL = AppPaths.appSupportDirectory.appendingPathComponent("play_history.json")
 
         // Default to enabled
-        if !UserDefaults.standard.bool(forKey: "playHistoryEnabledSet") {
-            UserDefaults.standard.set(true, forKey: "playHistoryEnabled")
-            UserDefaults.standard.set(true, forKey: "playHistoryEnabledSet")
+        if !UserDefaults.standard.bool(forKey: UDKey.playHistoryEnabledSet) {
+            UserDefaults.standard.set(true, forKey: UDKey.playHistoryEnabled)
+            UserDefaults.standard.set(true, forKey: UDKey.playHistoryEnabledSet)
         }
 
         load()
@@ -41,8 +41,12 @@ public final class PlayHistoryManager: ObservableObject {
             if self.entries.count > Self.maxEntries {
                 self.entries = Array(self.entries.suffix(Self.maxEntries))
             }
-            guard let data = try? JSONEncoder().encode(self.entries) else { return }
-            try? data.write(to: self.fileURL, options: .atomic)
+            do {
+                let data = try JSONEncoder().encode(self.entries)
+                try data.write(to: self.fileURL, options: .atomic)
+            } catch {
+                sonosDebugLog("[HISTORY] Save failed: \(error)")
+            }
         }
     }
 
@@ -74,7 +78,11 @@ public final class PlayHistoryManager: ObservableObject {
     public func clearHistory() {
         entries.removeAll()
         lastLoggedTrack.removeAll()
-        try? FileManager.default.removeItem(at: fileURL)
+        do {
+            try FileManager.default.removeItem(at: fileURL)
+        } catch {
+            sonosDebugLog("[HISTORY] Clear failed: \(error)")
+        }
     }
 
     // MARK: - Stats

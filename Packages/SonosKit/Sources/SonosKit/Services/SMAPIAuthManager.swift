@@ -12,8 +12,8 @@ public final class SMAPIAuthManager: ObservableObject {
     @Published public var authError: String?
 
     public var isEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "smapiEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "smapiEnabled"); objectWillChange.send() }
+        get { UserDefaults.standard.bool(forKey: UDKey.smapiEnabled) }
+        set { UserDefaults.standard.set(newValue, forKey: UDKey.smapiEnabled); objectWillChange.send() }
     }
 
     private var deviceID = ""
@@ -59,15 +59,17 @@ public final class SMAPIAuthManager: ObservableObject {
     /// Known services that don't support third-party AppLink auth
     private static let unsupportedAppLink: Set<Int> = [
         204, // Apple Music — requires native iOS/macOS SDK for OAuth
+        333, // TuneIn (New) — auth polling returns server errors; use existing Sonos account instead
+        254, // TuneIn — Anonymous auth, doesn't need AppLink
     ]
 
-    /// Services that support authentication and aren't already authenticated
+    /// Services that support authentication and aren't already authenticated, sorted alphabetically
     public var authenticatableServices: [SMAPIServiceDescriptor] {
         availableServices.filter { svc in
             (svc.authType == "AppLink" || svc.authType == "DeviceLink") &&
             tokenStore.authenticatedServices[svc.id] == nil &&
             !Self.unsupportedAppLink.contains(svc.id)
-        }
+        }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Discovers account serial numbers (sn) from existing favorites
@@ -101,9 +103,12 @@ public final class SMAPIAuthManager: ObservableObject {
         serviceSerialNumbers[serviceID] ?? 0
     }
 
-    /// Services that are already authenticated
+    /// Services that are already authenticated (with valid tokens), sorted alphabetically
     public var authenticatedServiceList: [SMAPIServiceDescriptor] {
-        availableServices.filter { tokenStore.authenticatedServices[$0.id] != nil }
+        availableServices.filter { svc in
+            guard let stored = tokenStore.getToken(for: svc.id) else { return false }
+            return !stored.authToken.isEmpty
+        }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     // MARK: - Authentication Flow

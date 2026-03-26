@@ -232,7 +232,7 @@ struct ServiceBrowseView: View {
             )
             items = result
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = (error as? SMAPIError).map(AppError.from)?.errorDescription ?? error.localizedDescription
         }
         isLoading = false
     }
@@ -251,7 +251,7 @@ struct ServiceBrowseView: View {
                 items = result
                 breadcrumbs.append(("Search: \(query)", "search:\(query)"))
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = (error as? SMAPIError).map(AppError.from)?.errorDescription ?? error.localizedDescription
             }
             isLoading = false
         }
