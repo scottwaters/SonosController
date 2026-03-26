@@ -123,7 +123,7 @@ struct ContentView: View {
 
                             if showQueue {
                                 Divider()
-                                QueueView(group: group)
+                                QueueView(group: group, sonosManager: sonosManager)
                                     .frame(width: queueWidth(totalWidth: geo.size.width))
                             }
                         }

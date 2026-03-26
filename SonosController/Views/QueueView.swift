@@ -1,133 +1,29 @@
+/// QueueView.swift — Queue panel displaying the current play queue.
+///
+/// Thin view layer — all business logic lives in QueueViewModel.
+/// Supports drag-drop reordering and cross-view drag from browse panel.
 import SwiftUI
 import SonosKit
 import UniformTypeIdentifiers
 
 struct QueueView: View {
-    @EnvironmentObject var sonosManager: SonosManager
-    let group: SonosGroup
-
-    @State private var queueItems: [QueueItem] = []
-    @State private var currentTrack: Int = 0
-    @State private var totalTracks: Int = 0
-    @State private var isLoading = true
+    @StateObject private var vm: QueueViewModel
     @State private var dropTargetIndex: Int?
     @State private var showSavePlaylist = false
     @State private var newPlaylistName = ""
-    @State private var saveMessage: String?
+
+    init(group: SonosGroup, sonosManager: SonosManager) {
+        _vm = StateObject(wrappedValue: QueueViewModel(sonosManager: sonosManager, group: group))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(L10n.queue)
-                    .font(.headline)
-                Spacer()
-                Text("\(totalTracks) \(L10n.tracks)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button {
-                    showSavePlaylist = true
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .tooltip("Save as Playlist")
-                .disabled(queueItems.isEmpty)
-
-                Button {
-                    Task { await clearQueue() }
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-                .tooltip(L10n.clearQueue)
-                .disabled(queueItems.isEmpty)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-
+            headerBar
             Divider()
-
-            if isLoading {
-                ProgressView()
-                    .frame(maxHeight: .infinity)
-            } else if queueItems.isEmpty {
-                VStack(spacing: 8) {
-                    Text(L10n.queueIsEmpty)
-                        .foregroundStyle(.secondary)
-                    Text("Drag tracks here to add")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onDrop(of: [.text], isTargeted: nil) { _ in
-                    guard let item = sonosManager.draggedBrowseItem else { return false }
-                    sonosManager.draggedBrowseItem = nil
-                    Task {
-                        do { try await sonosManager.addBrowseItemToQueue(item, in: group) } catch { ErrorHandler.shared.handle(error, context: "QUEUE") }
-                        await loadQueue()
-                    }
-                    return true
-                }
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(queueItems.enumerated()), id: \.element.id) { index, item in
-                            VStack(spacing: 0) {
-                                // Drop indicator above this item
-                                if dropTargetIndex == index {
-                                    Rectangle()
-                                        .fill(Color.accentColor)
-                                        .frame(height: 2)
-                                        .padding(.horizontal, 12)
-                                }
-
-                                QueueItemRow(item: item, isCurrentTrack: item.id == currentTrack)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        Task { await playTrack(item.id) }
-                                    }
-                                    .contextMenu {
-                                        Button(L10n.play) { Task { await playTrack(item.id) } }
-                                        Divider()
-                                        Button(L10n.removeFromQueue) { Task { await removeTrack(item.id) } }
-                                    }
-                                    .onDrag {
-                                        NSItemProvider(object: "\(item.id)" as NSString)
-                                    }
-                                    .onDrop(of: [.text], delegate: QueueDropDelegate(
-                                        targetIndex: index,
-                                        queueItems: queueItems,
-                                        dropTargetIndex: $dropTargetIndex,
-                                        sonosManager: sonosManager,
-                                        group: group,
-                                        reloadQueue: { await loadQueue() }
-                                    ))
-
-                                Divider().padding(.leading, 60)
-                            }
-                        }
-
-                        // Drop zone at bottom of queue
-                        Rectangle()
-                            .fill(dropTargetIndex == queueItems.count ? Color.accentColor.opacity(0.3) : Color.clear)
-                            .frame(height: 30)
-                            .onDrop(of: [.text], delegate: QueueDropDelegate(
-                                targetIndex: queueItems.count,
-                                queueItems: queueItems,
-                                dropTargetIndex: $dropTargetIndex,
-                                sonosManager: sonosManager,
-                                group: group,
-                                reloadQueue: { await loadQueue() }
-                            ))
-                    }
-                }
-            }
+            content
         }
-        .onAppear { Task { await loadQueue() } }
-        .onChange(of: group.id) { Task { await loadQueue() } }
+        .onAppear { Task { await vm.loadQueue() } }
+        .onChange(of: vm.group.id) { Task { await vm.loadQueue() } }
         .alert("Save as Playlist", isPresented: $showSavePlaylist) {
             TextField("Playlist name", text: $newPlaylistName)
             Button("Cancel", role: .cancel) { newPlaylistName = "" }
@@ -135,19 +31,11 @@ struct QueueView: View {
                 let name = newPlaylistName.trimmingCharacters(in: .whitespaces)
                 guard !name.isEmpty else { return }
                 newPlaylistName = ""
-                Task {
-                    do {
-                        _ = try await sonosManager.saveQueueAsPlaylist(group: group, title: name)
-                        saveMessage = "Saved as \"\(name)\""
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { saveMessage = nil }
-                    } catch {
-                        sonosDebugLog("[QUEUE] Save as playlist failed: \(error)")
-                    }
-                }
+                Task { await vm.saveAsPlaylist(name: name) }
             }
         }
         .overlay(alignment: .bottom) {
-            if let msg = saveMessage {
+            if let msg = vm.saveMessage {
                 Text(msg)
                     .font(.caption)
                     .foregroundStyle(.white)
@@ -160,46 +48,107 @@ struct QueueView: View {
         }
     }
 
-    private func loadQueue() async {
-        isLoading = true
-        do {
-            let (items, total) = try await sonosManager.getQueue(group: group)
-            queueItems = items
-            totalTracks = total
-            let posInfo = try await sonosManager.getPositionInfo(group: group)
-            currentTrack = posInfo.trackNumber
-        } catch {
-            sonosDebugLog("[QUEUE] Load queue failed: \(error)")
+    // MARK: - Subviews
+
+    private var headerBar: some View {
+        HStack {
+            Text(L10n.queue)
+                .font(.headline)
+            Spacer()
+            Text("\(vm.totalTracks) \(L10n.tracks)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button { showSavePlaylist = true } label: {
+                Image(systemName: "square.and.arrow.down").font(.caption)
+            }
+            .buttonStyle(.plain)
+            .tooltip("Save as Playlist")
+            .disabled(vm.queueItems.isEmpty)
+
+            Button { Task { await vm.clearQueue() } } label: {
+                Image(systemName: "trash").font(.caption)
+            }
+            .buttonStyle(.plain)
+            .tooltip(L10n.clearQueue)
+            .disabled(vm.queueItems.isEmpty)
         }
-        isLoading = false
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
-    private func playTrack(_ trackNumber: Int) async {
-        do {
-            try await sonosManager.playTrackFromQueue(group: group, trackNumber: trackNumber)
-            currentTrack = trackNumber
-        } catch {
-            sonosDebugLog("[QUEUE] Play track failed: \(error)")
+    @ViewBuilder
+    private var content: some View {
+        if vm.isLoading {
+            ProgressView()
+                .frame(maxHeight: .infinity)
+        } else if vm.queueItems.isEmpty {
+            emptyState
+        } else {
+            queueList
         }
     }
 
-    private func removeTrack(_ trackIndex: Int) async {
-        do {
-            try await sonosManager.removeFromQueue(group: group, trackIndex: trackIndex)
-            await loadQueue()
-        } catch {
-            sonosDebugLog("[QUEUE] Remove track failed: \(error)")
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Text(L10n.queueIsEmpty)
+                .foregroundStyle(.secondary)
+            Text("Drag tracks here to add")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onDrop(of: [.text], isTargeted: nil) { _ in
+            handleBrowseDrop(atPosition: 0)
         }
     }
 
-    private func clearQueue() async {
-        do {
-            try await sonosManager.clearQueue(group: group)
-            queueItems = []
-            totalTracks = 0
-        } catch {
-            sonosDebugLog("[QUEUE] Clear queue failed: \(error)")
+    private var queueList: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(vm.queueItems.enumerated()), id: \.element.id) { index, item in
+                    VStack(spacing: 0) {
+                        if dropTargetIndex == index {
+                            Rectangle()
+                                .fill(Color.accentColor)
+                                .frame(height: 2)
+                                .padding(.horizontal, 12)
+                        }
+
+                        QueueItemRow(item: item, isCurrentTrack: item.id == vm.currentTrack)
+                            .contentShape(Rectangle())
+                            .onTapGesture { Task { await vm.playTrack(item.id) } }
+                            .contextMenu {
+                                Button(L10n.play) { Task { await vm.playTrack(item.id) } }
+                                Divider()
+                                Button(L10n.removeFromQueue) { Task { await vm.removeTrack(item.id) } }
+                            }
+                            .onDrag { NSItemProvider(object: "\(item.id)" as NSString) }
+                            .onDrop(of: [.text], delegate: QueueDropDelegate(
+                                targetIndex: index, vm: vm,
+                                dropTargetIndex: $dropTargetIndex
+                            ))
+
+                        Divider().padding(.leading, 60)
+                    }
+                }
+
+                Rectangle()
+                    .fill(dropTargetIndex == vm.queueItems.count ? Color.accentColor.opacity(0.3) : Color.clear)
+                    .frame(height: 30)
+                    .onDrop(of: [.text], delegate: QueueDropDelegate(
+                        targetIndex: vm.queueItems.count, vm: vm,
+                        dropTargetIndex: $dropTargetIndex
+                    ))
+            }
         }
+    }
+
+    private func handleBrowseDrop(atPosition: Int) -> Bool {
+        guard let item = vm.sonosManager.draggedBrowseItem else { return false }
+        vm.sonosManager.draggedBrowseItem = nil
+        Task { await vm.addBrowseItem(item, atPosition: atPosition) }
+        return true
     }
 }
 
@@ -207,38 +156,21 @@ struct QueueView: View {
 
 struct QueueDropDelegate: DropDelegate {
     let targetIndex: Int
-    let queueItems: [QueueItem]
+    let vm: QueueViewModel
     @Binding var dropTargetIndex: Int?
-    let sonosManager: SonosManager
-    let group: SonosGroup
-    let reloadQueue: () async -> Void
 
-    func dropEntered(info: DropInfo) {
-        dropTargetIndex = targetIndex
-    }
-
-    func dropExited(info: DropInfo) {
-        if dropTargetIndex == targetIndex {
-            dropTargetIndex = nil
-        }
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
+    func dropEntered(info: DropInfo) { dropTargetIndex = targetIndex }
+    func dropExited(info: DropInfo) { if dropTargetIndex == targetIndex { dropTargetIndex = nil } }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
 
     func performDrop(info: DropInfo) -> Bool {
         dropTargetIndex = nil
 
-        // Check for browse item drag (cross-view)
-        if let browseItem = sonosManager.draggedBrowseItem {
-            sonosManager.draggedBrowseItem = nil
-            // 1-based insert position, 0 = append to end
-            let insertAt = targetIndex < queueItems.count ? queueItems[targetIndex].id : 0
-            Task { @MainActor in
-                do { try await sonosManager.addBrowseItemToQueue(browseItem, in: group, atPosition: insertAt) } catch { ErrorHandler.shared.handle(error, context: "QUEUE") }
-                await reloadQueue()
-            }
+        // Browse item drag (cross-view)
+        if let browseItem = vm.sonosManager.draggedBrowseItem {
+            vm.sonosManager.draggedBrowseItem = nil
+            let insertAt = targetIndex < vm.queueItems.count ? vm.queueItems[targetIndex].id : 0
+            Task { @MainActor in await vm.addBrowseItem(browseItem, atPosition: insertAt) }
             return true
         }
 
@@ -247,16 +179,13 @@ struct QueueDropDelegate: DropDelegate {
         provider.loadObject(ofClass: NSString.self) { object, _ in
             guard let str = object as? String, let fromTrack = Int(str) else { return }
             let insertBefore: Int
-            if targetIndex < queueItems.count {
-                insertBefore = queueItems[targetIndex].id
+            if targetIndex < vm.queueItems.count {
+                insertBefore = vm.queueItems[targetIndex].id
             } else {
-                insertBefore = (queueItems.last?.id ?? 0) + 1
+                insertBefore = (vm.queueItems.last?.id ?? 0) + 1
             }
             guard fromTrack != insertBefore else { return }
-            Task { @MainActor in
-                do { try await sonosManager.moveTrackInQueue(group: group, from: fromTrack, to: insertBefore) } catch { ErrorHandler.shared.handle(error, context: "QUEUE") }
-                await reloadQueue()
-            }
+            Task { @MainActor in await vm.moveTrack(from: fromTrack, to: insertBefore) }
         }
         return true
     }
