@@ -208,12 +208,10 @@ struct NowPlayingView: View {
                 // Seek slider — hidden for streams with no duration
                 if trackMetadata.duration > 0 {
                     VStack(spacing: 4) {
-                        Slider(
-                            value: Binding(
-                                get: { vm.smoothPosition },
-                                set: { vm.smoothPosition = $0 }
-                            ),
-                            in: 0...trackMetadata.duration
+                        SliderWithPopup(
+                            value: Binding(get: { vm.smoothPosition }, set: { vm.smoothPosition = $0 }),
+                            range: 0...trackMetadata.duration,
+                            format: { formatTime($0) }
                         ) { editing in
                             vm.isDraggingSeek = editing
                             if !editing {
@@ -311,7 +309,10 @@ struct NowPlayingView: View {
                     }
                     .buttonStyle(.plain)
 
-                    Slider(value: Binding(get: { vm.volume }, set: { vm.volume = $0 }), in: 0...100) { editing in
+                    SliderWithPopup(
+                        value: Binding(get: { vm.volume }, set: { vm.volume = $0 }),
+                        range: 0...100
+                    ) { editing in
                         if !editing {
                             vm.setVolume()
                             vm.commitVolume()

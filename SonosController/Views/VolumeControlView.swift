@@ -48,7 +48,7 @@ struct VolumeControlView: View {
                         .frame(width: 80, alignment: .leading)
                         .lineLimit(1)
 
-                    Slider(
+                    SliderWithPopup(
                         value: Binding(
                             get: { speakerVolumes[member.id] ?? 0 },
                             set: { newVal in
@@ -57,7 +57,7 @@ struct VolumeControlView: View {
                                 }
                             }
                         ),
-                        in: 0...100
+                        range: 0...100
                     ) { editing in
                         if !editing {
                             Task { await setVolume(device: member) }
