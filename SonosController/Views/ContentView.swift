@@ -37,8 +37,33 @@ struct ContentView: View {
         return max(250, min(available, 400))
     }
 
+    @ObservedObject private var errorHandler = ErrorHandler.shared
+
     var body: some View {
         VStack(spacing: 0) {
+            // Error banner
+            if errorHandler.showError, let errorMsg = errorHandler.currentError {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(.red)
+                    Text(errorMsg)
+                        .font(.caption)
+                        .lineLimit(2)
+                    Spacer()
+                    Button {
+                        errorHandler.dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.red.opacity(0.1))
+            }
+
             // Stale data / cache banner
             if let message = sonosManager.staleMessage {
                 HStack(spacing: 8) {
@@ -264,7 +289,11 @@ struct ContentView: View {
             for member in group.members {
                 guard !seen.contains(member.id) else { continue }
                 seen.insert(member.id)
-                try? await sonosManager.setMute(device: member, muted: muted)
+                do {
+                    try await sonosManager.setMute(device: member, muted: muted)
+                } catch {
+                    ErrorHandler.shared.handle(error, context: "MUTE")
+                }
             }
         }
     }

@@ -426,7 +426,9 @@ struct BrowseListView: View {
                 let newName = renameText.trimmingCharacters(in: .whitespaces)
                 guard !newName.isEmpty, newName != item.title else { return }
                 Task {
-                    try? await sonosManager.renamePlaylist(playlistID: item.objectID, oldTitle: item.title, newTitle: newName)
+                    await ErrorHandler.shared.handleAsync("PLAYLIST", userFacing: true) {
+                        try await sonosManager.renamePlaylist(playlistID: item.objectID, oldTitle: item.title, newTitle: newName)
+                    }
                     await loadItems()
                 }
             }
@@ -436,7 +438,9 @@ struct BrowseListView: View {
             Button("Delete", role: .destructive) {
                 guard let item = deleteItem else { return }
                 Task {
-                    try? await sonosManager.deletePlaylist(playlistID: item.objectID)
+                    await ErrorHandler.shared.handleAsync("PLAYLIST", userFacing: true) {
+                        try await sonosManager.deletePlaylist(playlistID: item.objectID)
+                    }
                     await loadItems()
                 }
             }
@@ -465,7 +469,7 @@ struct BrowseListView: View {
                     Menu("Add to Playlist") {
                         ForEach(playlists) { playlist in
                             Button(playlist.title) {
-                                Task { try? await sonosManager.addToPlaylist(playlistID: playlist.objectID, item: item) }
+                                Task { await ErrorHandler.shared.handleAsync("PLAYLIST", userFacing: true) { try await sonosManager.addToPlaylist(playlistID: playlist.objectID, item: item) } }
                             }
                         }
                     }

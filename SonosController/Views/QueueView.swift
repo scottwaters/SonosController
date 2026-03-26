@@ -66,7 +66,7 @@ struct QueueView: View {
                     guard let item = sonosManager.draggedBrowseItem else { return false }
                     sonosManager.draggedBrowseItem = nil
                     Task {
-                        try? await sonosManager.addBrowseItemToQueue(item, in: group)
+                        do { try await sonosManager.addBrowseItemToQueue(item, in: group) } catch { ErrorHandler.shared.handle(error, context: "QUEUE") }
                         await loadQueue()
                     }
                     return true
@@ -236,7 +236,7 @@ struct QueueDropDelegate: DropDelegate {
             // 1-based insert position, 0 = append to end
             let insertAt = targetIndex < queueItems.count ? queueItems[targetIndex].id : 0
             Task { @MainActor in
-                try? await sonosManager.addBrowseItemToQueue(browseItem, in: group, atPosition: insertAt)
+                do { try await sonosManager.addBrowseItemToQueue(browseItem, in: group, atPosition: insertAt) } catch { ErrorHandler.shared.handle(error, context: "QUEUE") }
                 await reloadQueue()
             }
             return true
@@ -254,7 +254,7 @@ struct QueueDropDelegate: DropDelegate {
             }
             guard fromTrack != insertBefore else { return }
             Task { @MainActor in
-                try? await sonosManager.moveTrackInQueue(group: group, from: fromTrack, to: insertBefore)
+                do { try await sonosManager.moveTrackInQueue(group: group, from: fromTrack, to: insertBefore) } catch { ErrorHandler.shared.handle(error, context: "QUEUE") }
                 await reloadQueue()
             }
         }

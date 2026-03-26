@@ -63,11 +63,11 @@ struct RoomListView: View {
         // Play / Pause
         if isPlaying {
             Button("Pause") {
-                Task { try? await sonosManager.pause(group: group) }
+                Task { await ErrorHandler.shared.handleAsync("PLAYBACK") { try await sonosManager.pause(group: group) } }
             }
         } else {
             Button("Play") {
-                Task { try? await sonosManager.play(group: group) }
+                Task { await ErrorHandler.shared.handleAsync("PLAYBACK") { try await sonosManager.play(group: group) } }
             }
         }
 
@@ -78,7 +78,7 @@ struct RoomListView: View {
         Button(allMuted ? "Unmute" : "Mute") {
             Task {
                 for member in group.members {
-                    try? await sonosManager.setMute(device: member, muted: !allMuted)
+                    try? await sonosManager.setMute(device: member, muted: !allMuted) // fire-and-forget OK
                 }
             }
         }
@@ -94,7 +94,7 @@ struct RoomListView: View {
             Button("Ungroup All") {
                 Task {
                     for member in group.members where member.id != group.coordinatorID {
-                        try? await sonosManager.ungroupDevice(member)
+                        try? await sonosManager.ungroupDevice(member) // fire-and-forget OK
                     }
                 }
             }
