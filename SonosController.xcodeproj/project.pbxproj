@@ -33,6 +33,8 @@
 		A10029 /* RecentlyPlayedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10029; };
 		A10030 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030; };
 		A10031 /* MusicServicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10031; };
+		A10032 /* NowPlayingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10032; };
+		A10033 /* QueueViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10033; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -64,6 +66,8 @@
 		B10029 /* RecentlyPlayedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentlyPlayedView.swift; sourceTree = "<group>"; };
 		B10030 /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		B10031 /* MusicServicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicServicesView.swift; sourceTree = "<group>"; };
+		B10032 /* NowPlayingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingViewModel.swift; sourceTree = "<group>"; };
+		B10033 /* QueueViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueViewModel.swift; sourceTree = "<group>"; };
 		B10020 /* SonosController.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SonosController.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -93,11 +97,21 @@
 			children = (
 				B10001 /* SonosControllerApp.swift */,
 				E10002 /* Views */,
+				E10003 /* ViewModels */,
 				B10005 /* Assets.xcassets */,
 				B10006 /* Info.plist */,
 				B10007 /* SonosController.entitlements */,
 			);
 			path = SonosController;
+			sourceTree = "<group>";
+		};
+		E10003 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				B10032 /* NowPlayingViewModel.swift */,
+				B10033 /* QueueViewModel.swift */,
+			);
+			path = ViewModels;
 			sourceTree = "<group>";
 		};
 		E10002 /* Views */ = {
@@ -234,6 +248,8 @@
 				A10029 /* RecentlyPlayedView.swift in Sources */,
 				A10030 /* MenuBarController.swift in Sources */,
 				A10031 /* MusicServicesView.swift in Sources */,
+				A10032 /* NowPlayingViewModel.swift in Sources */,
+				A10033 /* QueueViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
