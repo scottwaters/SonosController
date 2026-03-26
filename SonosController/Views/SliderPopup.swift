@@ -13,8 +13,7 @@ struct SliderWithPopup: View {
     var body: some View {
         Slider(
             value: $value,
-            in: range,
-            step: step ?? 1
+            in: range
         ) { editing in
             isDragging = editing
             onEditingChanged?(editing)
