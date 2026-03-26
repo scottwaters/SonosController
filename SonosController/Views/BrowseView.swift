@@ -109,6 +109,7 @@ struct BrowseView: View {
                         title: current.title,
                         objectID: current.objectID,
                         group: group,
+                        sonosManager: sonosManager,
                         onNavigate: { dest in
                             breadcrumbs.append(dest)
                         }
@@ -233,79 +234,36 @@ struct BrowseSectionsView: View {
 struct BrowseListView: View {
     @EnvironmentObject var sonosManager: SonosManager
     @EnvironmentObject var playlistScanner: PlaylistServiceScanner
-    let title: String
-    let objectID: String
-    let group: SonosGroup?
+    @State private var vm: BrowseViewModel
     let onNavigate: (BrowseDestination) -> Void
 
-    @State private var items: [BrowseItem] = []
-    @State private var totalItems = 0
-    @State private var showRenameAlert = false
-    @State private var renameItem: BrowseItem?
-    @State private var renameText = ""
-    @State private var showDeleteConfirm = false
-    @State private var deleteItem: BrowseItem?
-    @State private var playlists: [BrowseItem] = []
-    @State private var isLoading = true
-    @State private var loadedCount = 0
-    @State private var errorMessage: String?
-    @State private var selectedFilter: String? = nil
-    @State private var playbackError: String? = nil
-
-    private let pageSize = 100
-    private var isSearch: Bool { objectID.hasPrefix("SEARCH:") }
-
-    /// Whether this view should show service filters
-    private var showsFilters: Bool {
-        objectID == "FV:2" || objectID.hasPrefix("SQ:") || objectID == "SQ:"
+    init(title: String, objectID: String, group: SonosGroup?, sonosManager: SonosManager, onNavigate: @escaping (BrowseDestination) -> Void) {
+        self.onNavigate = onNavigate
+        _vm = State(wrappedValue: BrowseViewModel(sonosManager: sonosManager, objectID: objectID, title: title, group: group))
     }
 
-    /// Unique service labels from loaded items
-    private var availableFilters: [String] {
-        var seen = Set<String>()
-        var filters: [String] = []
-        for item in items {
-            if let label = serviceLabel(for: item), !seen.contains(label) {
-                seen.insert(label)
-                filters.append(label)
-            }
-        }
-        return filters.sorted()
-    }
-
-    /// Items filtered by selected service
-    private var filteredItems: [BrowseItem] {
-        guard let filter = selectedFilter else { return items }
-        return items.filter { serviceLabel(for: $0) == filter }
-    }
-
-    /// Determines the service label for an item
-    private func serviceLabel(for item: BrowseItem) -> String? {
-        // URI content check first — most reliable
-        if let uri = item.resourceURI,
-           let name = sonosManager.detectServiceName(fromURI: uri) {
-            return name
-        }
-        if let desc = item.serviceDescriptor,
-           let name = sonosManager.musicServiceName(fromDescriptor: desc) {
-            return name
-        }
-        if let meta = item.resourceMetadata,
-           let name = sonosManager.musicServiceName(fromDescriptor: meta) {
-            return name
-        }
-        if item.objectID.hasPrefix("SQ:") { return ServiceName.sonosPlaylist }
-        if item.objectID.hasPrefix("A:") || item.objectID.hasPrefix("S:") { return ServiceName.musicLibrary }
-        if item.objectID.hasPrefix("R:") { return ServiceName.radio }
-        return nil
-    }
+    // Accessors — keep body code unchanged
+    private var objectID: String { vm.objectID }
+    private var group: SonosGroup? { vm.group }
+    private var items: [BrowseItem] { vm.items }
+    private var totalItems: Int { vm.totalItems }
+    private var isLoading: Bool { vm.isLoading }
+    private var loadedCount: Int { vm.loadedCount }
+    private var errorMessage: String? { vm.errorMessage }
+    private var selectedFilter: String? { vm.selectedFilter }
+    private var playbackError: String? { vm.playbackError }
+    private var playlists: [BrowseItem] { vm.playlists }
+    private var showsFilters: Bool { vm.showsFilters }
+    private var availableFilters: [String] { vm.availableFilters }
+    private var filteredItems: [BrowseItem] { vm.filteredItems }
+    private func serviceLabel(for item: BrowseItem) -> String? { vm.serviceLabel(for: item) }
 
     var body: some View {
         Group {
-            if isLoading && items.isEmpty {
+            if vm.isLoading && vm.items.isEmpty {
                 ProgressView(L10n.loading)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let error = errorMessage, items.isEmpty {
+            } else if let error = vm.errorMessage, vm.items.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.title)
@@ -315,7 +273,7 @@ struct BrowseListView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if items.isEmpty {
+            } else if vm.items.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "tray")
                         .font(.title)
@@ -327,7 +285,7 @@ struct BrowseListView: View {
             } else {
                 VStack(spacing: 0) {
                     // Playback error banner
-                    if let error = playbackError {
+                    if let error = vm.playbackError {
                         HStack(spacing: 6) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
@@ -337,7 +295,7 @@ struct BrowseListView: View {
                                 .lineLimit(2)
                             Spacer()
                             Button {
-                                playbackError = nil
+                                vm.playbackError = nil
                             } label: {
                                 Image(systemName: "xmark")
                                     .font(.caption2)
@@ -351,15 +309,15 @@ struct BrowseListView: View {
                     }
 
                     // Service filter bar
-                    if showsFilters && availableFilters.count > 1 {
+                    if vm.showsFilters && vm.availableFilters.count > 1 {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) {
-                                FilterChip(label: L10n.all, isSelected: selectedFilter == nil) {
-                                    selectedFilter = nil
+                                FilterChip(label: L10n.all, isSelected: vm.selectedFilter == nil) {
+                                    vm.selectedFilter = nil
                                 }
-                                ForEach(availableFilters, id: \.self) { filter in
-                                    FilterChip(label: filter, isSelected: selectedFilter == filter) {
-                                        selectedFilter = selectedFilter == filter ? nil : filter
+                                ForEach(vm.availableFilters, id: \.self) { filter in
+                                    FilterChip(label: filter, isSelected: vm.selectedFilter == filter) {
+                                        vm.selectedFilter = vm.selectedFilter == filter ? nil : filter
                                     }
                                 }
                             }
@@ -372,7 +330,7 @@ struct BrowseListView: View {
 
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            ForEach(filteredItems) { item in
+                            ForEach(vm.filteredItems) { item in
                                 Button {
                                     handleTap(item)
                                 } label: {
@@ -401,9 +359,9 @@ struct BrowseListView: View {
                                 Divider().padding(.leading, 64)
                         }
 
-                        if loadedCount < totalItems {
-                            Button("\(L10n.loadMore) (\(loadedCount) \(L10n.of) \(totalItems))...") {
-                                Task { await loadMore() }
+                        if vm.loadedCount < vm.totalItems {
+                            Button("\(L10n.loadMore) (\(vm.loadedCount) \(L10n.of) \(vm.totalItems))...") {
+                                Task { await vm.loadMore() }
                             }
                             .frame(maxWidth: .infinity)
                             .foregroundStyle(.secondary)
@@ -415,37 +373,25 @@ struct BrowseListView: View {
             }
         }
         .onAppear {
-            Task { await loadItems() }
-            Task { await loadPlaylists() }
-        }
-        .alert("Rename Playlist", isPresented: $showRenameAlert) {
-            TextField("Name", text: $renameText)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") {
-                guard let item = renameItem else { return }
-                let newName = renameText.trimmingCharacters(in: .whitespaces)
-                guard !newName.isEmpty, newName != item.title else { return }
-                Task {
-                    await ErrorHandler.shared.handleAsync("PLAYLIST", userFacing: true) {
-                        try await sonosManager.renamePlaylist(playlistID: item.objectID, oldTitle: item.title, newTitle: newName)
-                    }
-                    await loadItems()
+            Task {
+                await vm.loadItems()
+                let sqItems = vm.items.filter { $0.objectID.hasPrefix("SQ:") }
+                if !sqItems.isEmpty {
+                    playlistScanner.backgroundScan(playlists: sqItems, using: sonosManager)
                 }
             }
+            Task { await vm.loadPlaylists() }
         }
-        .alert("Delete Playlist?", isPresented: $showDeleteConfirm) {
+        .alert("Rename Playlist", isPresented: Binding(get: { vm.showRenameAlert }, set: { vm.showRenameAlert = $0 })) {
+            TextField("Name", text: Binding(get: { vm.renameText }, set: { vm.renameText = $0 }))
             Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                guard let item = deleteItem else { return }
-                Task {
-                    await ErrorHandler.shared.handleAsync("PLAYLIST", userFacing: true) {
-                        try await sonosManager.deletePlaylist(playlistID: item.objectID)
-                    }
-                    await loadItems()
-                }
-            }
+            Button("Rename") { Task { await vm.renamePlaylist() } }
+        }
+        .alert("Delete Playlist?", isPresented: Binding(get: { vm.showDeleteConfirm }, set: { vm.showDeleteConfirm = $0 })) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { Task { await vm.deletePlaylist() } }
         } message: {
-            Text("Are you sure you want to delete \"\(deleteItem?.title ?? "")\"?")
+            Text("Are you sure you want to delete \"\(vm.deleteItem?.title ?? "")\"?")
         }
     }
 
@@ -454,22 +400,20 @@ struct BrowseListView: View {
         if let group = group {
             if item.isPlayable {
                 Button(L10n.playNow) {
-                    Task { await play(item, in: group) }
+                    Task { await vm.play(item) }
                 }
                 Button(L10n.playNext) {
-                    Task { await addToQueue(item, in: group, playNext: true) }
+                    Task { await vm.addToQueue(item, playNext: true) }
                 }
                 Button(L10n.addToQueue) {
-                    Task { await addToQueue(item, in: group) }
+                    Task { await vm.addToQueue(item) }
                 }
-
-                // Add to Playlist submenu (for playable non-container items)
-                if !playlists.isEmpty {
+                if !vm.playlists.isEmpty {
                     Divider()
                     Menu("Add to Playlist") {
-                        ForEach(playlists) { playlist in
+                        ForEach(vm.playlists) { playlist in
                             Button(playlist.title) {
-                                Task { await ErrorHandler.shared.handleAsync("PLAYLIST", userFacing: true) { try await sonosManager.addToPlaylist(playlistID: playlist.objectID, item: item) } }
+                                Task { await vm.addToPlaylist(playlistID: playlist.objectID, item: item) }
                             }
                         }
                     }
@@ -481,18 +425,16 @@ struct BrowseListView: View {
                     onNavigate(BrowseDestination(title: item.title, objectID: item.objectID))
                 }
             }
-
-            // Playlist management (rename/delete for SQ: containers)
             if item.objectID.hasPrefix("SQ:") && item.isContainer && objectID == "SQ:" {
                 Divider()
                 Button("Rename Playlist") {
-                    renameItem = item
-                    renameText = item.title
-                    showRenameAlert = true
+                    vm.renameItem = item
+                    vm.renameText = item.title
+                    vm.showRenameAlert = true
                 }
                 Button("Delete Playlist", role: .destructive) {
-                    deleteItem = item
-                    showDeleteConfirm = true
+                    vm.deleteItem = item
+                    vm.showDeleteConfirm = true
                 }
             }
         }
@@ -500,113 +442,12 @@ struct BrowseListView: View {
 
     private func handleTap(_ item: BrowseItem) {
         if item.isContainer {
-            // On-demand rescan when opening a playlist
             if item.objectID.hasPrefix("SQ:") {
                 Task { await playlistScanner.scanPlaylist(objectID: item.objectID, using: sonosManager, force: true) }
             }
             onNavigate(BrowseDestination(title: item.title, objectID: item.objectID))
         } else if let group = group {
-            Task { await play(item, in: group) }
-        }
-    }
-
-    private func loadItems() async {
-        isLoading = true
-        errorMessage = nil
-        do {
-            if isSearch {
-                let query = String(objectID.dropFirst("SEARCH:".count))
-                async let artistResults = sonosManager.search(query: query, in: "A:ALBUMARTIST", count: 20)
-                async let albumResults = sonosManager.search(query: query, in: "A:ALBUM", count: 20)
-                async let trackResults = sonosManager.search(query: query, in: "A:TRACKS", count: 30)
-
-                let (artists, albums, tracks) = try await (artistResults, albumResults, trackResults)
-                items = artists.items + albums.items + tracks.items
-                totalItems = items.count
-                loadedCount = items.count
-            } else {
-                let (result, total) = try await sonosManager.browse(objectID: objectID, start: 0, count: pageSize)
-                items = result
-                totalItems = total
-                loadedCount = result.count
-            }
-        } catch { sonosDebugLog("[BROWSE] Container art browse failed: \(error)")
-            errorMessage = AppError.from(error as? SOAPError ?? SOAPError.networkError(error)).errorDescription
-        }
-        isLoading = false
-
-        // Trigger background scan for playlists in this list
-        let playlists = items.filter { $0.objectID.hasPrefix("SQ:") }
-        if !playlists.isEmpty {
-            playlistScanner.backgroundScan(playlists: playlists, using: sonosManager)
-        }
-    }
-
-    private func loadMore() async {
-        guard !isSearch else { return }
-        do {
-            let (result, _) = try await sonosManager.browse(objectID: objectID, start: loadedCount, count: pageSize)
-            items.append(contentsOf: result)
-            loadedCount += result.count
-        } catch { sonosDebugLog("[BROWSE] Container art browse failed: \(error)")
-            sonosDebugLog("[BROWSE] Load more failed: \(error)")
-        }
-    }
-
-    private func play(_ item: BrowseItem, in group: SonosGroup) async {
-        playbackError = nil
-        do {
-            try await sonosManager.playBrowseItem(item, in: group)
-            playbackError = nil
-        } catch let error as SOAPError {
-            switch error {
-            case .soapFault(let code, _):
-                if code == "402" || code == "714" || code == "800" {
-                    let serviceName = item.resourceURI.flatMap { sonosManager.detectServiceName(fromURI: $0) } ?? "the streaming service"
-                    playbackError = "\(L10n.couldNotPlay) \"\(item.title)\" — \(serviceName) \(L10n.mayRequireSignIn)"
-                } else {
-                    playbackError = "\(L10n.couldNotPlay) \"\(item.title)\": \(L10n.error_) \(code)"
-                }
-            default:
-                let appErr = (error as? SOAPError).map(AppError.from) ?? .unknown(error); playbackError = "\(L10n.couldNotPlay) \"\(item.title)\": \(appErr.errorDescription ?? error.localizedDescription)"
-            }
-        } catch { sonosDebugLog("[BROWSE] Container art browse failed: \(error)")
-            let appErr = (error as? SOAPError).map(AppError.from) ?? .unknown(error); playbackError = "\(L10n.couldNotPlay) \"\(item.title)\": \(appErr.errorDescription ?? error.localizedDescription)"
-        }
-    }
-
-    private func loadPlaylists() async {
-        do {
-            let (result, _) = try await sonosManager.browse(objectID: "SQ:", start: 0, count: 100)
-            playlists = result.filter { $0.isContainer }
-        } catch { sonosDebugLog("[BROWSE] Container art browse failed: \(error)")
-            sonosDebugLog("[BROWSE] Load playlists failed: \(error)")
-        }
-    }
-
-    private func addToQueue(_ item: BrowseItem, in group: SonosGroup, playNext: Bool = false) async {
-        do {
-            try await sonosManager.addBrowseItemToQueue(item, in: group, playNext: playNext)
-        } catch { sonosDebugLog("[BROWSE] Container art browse failed: \(error)")
-            sonosDebugLog("[QUEUE] addToQueue failed: \(error.localizedDescription) for '\(item.title)' uri=\(item.resourceURI ?? "nil")")
-        }
-    }
-
-    private func playContainer(in group: SonosGroup) async {
-        let containerItem = BrowseItem(id: objectID, title: title, itemClass: .container)
-        do {
-            try await sonosManager.playBrowseItem(containerItem, in: group)
-        } catch { sonosDebugLog("[BROWSE] Container art browse failed: \(error)")
-            sonosDebugLog("[BROWSE] Play container failed: \(error)")
-        }
-    }
-
-    private func addContainerToQueue(in group: SonosGroup) async {
-        let containerItem = BrowseItem(id: objectID, title: title, itemClass: .container)
-        do {
-            try await sonosManager.addBrowseItemToQueue(containerItem, in: group)
-        } catch { sonosDebugLog("[BROWSE] Container art browse failed: \(error)")
-            sonosDebugLog("[BROWSE] Add container to queue failed: \(error)")
+            Task { await vm.play(item) }
         }
     }
 }
