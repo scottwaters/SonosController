@@ -81,6 +81,8 @@ public final class PlayHistoryManager: ObservableObject {
         guard isEnabled else { return }
         guard transportState == .playing else { return }
         guard !metadata.title.isEmpty else { return }
+        // Don't log radio ad breaks (no real track info)
+        guard !metadata.isAdBreak else { return }
 
         // Normalize whitespace for dedup (radio streams often vary trailing spaces)
         let normTitle = metadata.title.trimmingCharacters(in: .whitespaces)

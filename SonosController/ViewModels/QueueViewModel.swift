@@ -53,7 +53,9 @@ final class QueueViewModel: ObservableObject {
     }
 
     func loadQueue() async {
-        isLoading = true
+        // Only show loading spinner on first load — reloads keep current items visible
+        let isFirstLoad = queueItems.isEmpty && isLoading
+        if isFirstLoad { isLoading = true }
         do {
             let (items, total) = try await sonosManager.getQueue(group: group, start: 0, count: 100)
             queueItems = items
