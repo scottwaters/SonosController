@@ -23,12 +23,7 @@ final class ArtResolver {
 
     private weak var playHistoryManager: PlayHistoryManager?
 
-    init(sonosManager: any NowPlayingServices) {
-        // ArtResolver only needs the play history manager for artwork updates
-        self.playHistoryManager = (sonosManager as? SonosManager)?.playHistoryManager
-    }
-
-    init(playHistoryManager: PlayHistoryManager?) {
+    init(playHistoryManager: PlayHistoryManager? = nil) {
         self.playHistoryManager = playHistoryManager
     }
 

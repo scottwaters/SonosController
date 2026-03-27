@@ -165,24 +165,37 @@ public protocol MusicServiceDetectionProtocol {
 
 @MainActor
 public protocol TransportStateProviding {
-    var groupTransportStates: [String: TransportState] { get set }
-    var groupTrackMetadata: [String: TrackMetadata] { get set }
-    var groupPlayModes: [String: PlayMode] { get set }
-    var groupPositions: [String: TimeInterval] { get set }
-    var groupDurations: [String: TimeInterval] { get set }
-    var deviceVolumes: [String: Int] { get set }
-    var deviceMutes: [String: Bool] { get set }
-    var awaitingPlayback: [String: Bool] { get set }
-    var discoveredArtURLs: [String: String] { get set }
-    var lastPlayedFavoriteID: String? { get set }
+    // MARK: Read-only state access
+    var groupTransportStates: [String: TransportState] { get }
+    var groupTrackMetadata: [String: TrackMetadata] { get }
+    var groupPlayModes: [String: PlayMode] { get }
+    var groupPositions: [String: TimeInterval] { get }
+    var groupDurations: [String: TimeInterval] { get }
+    var deviceVolumes: [String: Int] { get }
+    var deviceMutes: [String: Bool] { get }
+    var awaitingPlayback: [String: Bool] { get }
+    var discoveredArtURLs: [String: String] { get }
+    var lastPlayedFavoriteID: String? { get }
     var draggedBrowseItem: BrowseItem? { get set }
     var groups: [SonosGroup] { get }
 
+    // MARK: State mutation (encapsulated — ViewModels use these instead of direct dict assignment)
+    func updateTransportState(_ groupID: String, state: TransportState)
+    func updatePlayMode(_ groupID: String, mode: PlayMode)
+    func updateDeviceVolume(_ deviceID: String, volume: Int)
+    func updateDeviceMute(_ deviceID: String, muted: Bool)
+    func updateAwaitingPlayback(_ groupID: String, awaiting: Bool)
+
+    // MARK: Grace periods
     func setTransportGrace(groupID: String, duration: TimeInterval)
     func setModeGrace(groupID: String, duration: TimeInterval)
     func setPositionGrace(coordinatorID: String, duration: TimeInterval)
+
+    // MARK: Art cache
     func cacheArtURL(_ artURL: String, forURI uri: String, title: String, itemID: String)
     func lookupCachedArt(uri: String?, title: String) -> String?
+
+    // MARK: Metadata update (with merge logic)
     func transportDidUpdateTrackMetadata(_ groupID: String, metadata: TrackMetadata)
 }
 

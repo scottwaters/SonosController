@@ -1420,5 +1420,25 @@ extension SonosManager: BrowsingServiceProtocol {}
 extension SonosManager: GroupingServiceProtocol {}
 extension SonosManager: AlarmServiceProtocol {}
 extension SonosManager: MusicServiceDetectionProtocol {}
-extension SonosManager: TransportStateProviding {}
+extension SonosManager: TransportStateProviding {
+    public func updateTransportState(_ groupID: String, state: TransportState) {
+        groupTransportStates[groupID] = state
+    }
+
+    public func updatePlayMode(_ groupID: String, mode: PlayMode) {
+        groupPlayModes[groupID] = mode
+    }
+
+    public func updateDeviceVolume(_ deviceID: String, volume: Int) {
+        deviceVolumes[deviceID] = volume
+    }
+
+    public func updateDeviceMute(_ deviceID: String, muted: Bool) {
+        deviceMutes[deviceID] = muted
+    }
+
+    public func updateAwaitingPlayback(_ groupID: String, awaiting: Bool) {
+        awaitingPlayback[groupID] = awaiting
+    }
+}
 extension SonosManager: ArtCacheProtocol {}

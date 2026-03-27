@@ -56,6 +56,27 @@ public struct TrackMetadata: Equatable {
 
     public var trackURI: String?
 
+    /// Enriches metadata from GetMediaInfo's CurrentURIMetaData DIDL.
+    /// Extracts station name, title, and album art for radio/streaming sources.
+    /// Used by TransportStrategy and NowPlayingViewModel to avoid duplicated enrichment logic.
+    public mutating func enrichFromMediaInfo(_ mediaInfo: [String: String], device: SonosDevice) {
+        guard let rawDIDL = mediaInfo["CurrentURIMetaData"], !rawDIDL.isEmpty,
+              rawDIDL != "NOT_IMPLEMENTED" else { return }
+        let didl = rawDIDL.contains("&lt;") ? XMLResponseParser.xmlUnescape(rawDIDL) : rawDIDL
+        guard let parsed = XMLResponseParser.parseDIDLMetadata(didl) else { return }
+        let currentURI = mediaInfo["CurrentURI"] ?? ""
+        if URIPrefix.isRadio(currentURI), !parsed.title.isEmpty {
+            stationName = parsed.title
+        }
+        if title.isEmpty {
+            title = parsed.title
+        }
+        let artURI = device.makeAbsoluteURL(parsed.albumArtURI)
+        if !artURI.isEmpty {
+            albumArtURI = artURI
+        }
+    }
+
     public static func parseTimeString(_ time: String) -> TimeInterval {
         let parts = time.split(separator: ":").compactMap { Double($0) }
         switch parts.count {

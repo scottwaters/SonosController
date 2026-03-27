@@ -198,7 +198,7 @@ struct MenuBarPlayerView: View {
                         guard let group = selectedGroup else { return }
                         let intVol = Int(newVol)
                         for member in group.members {
-                            sonosManager.deviceVolumes[member.id] = intVol
+                            sonosManager.updateDeviceVolume(member.id, volume: intVol)
                             Task { try? await sonosManager.setVolume(device: member, volume: intVol) }
                         }
                     }

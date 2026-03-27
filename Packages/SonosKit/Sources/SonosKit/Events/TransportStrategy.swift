@@ -314,18 +314,8 @@ public final class HybridEventFirstTransport: TransportStrategy, @unchecked Send
                 if let position = try? await avTransport.getPositionInfo(device: device) {
                     var enriched = position
                     enriched.trackURI = event.currentTrackURI ?? position.trackURI
-                    // Enrich with station name
-                    if let mediaInfo = try? await avTransport.getMediaInfo(device: device),
-                       let rawDIDL = mediaInfo["CurrentURIMetaData"], !rawDIDL.isEmpty,
-                       rawDIDL != "NOT_IMPLEMENTED" {
-                        let didl = rawDIDL.contains("&lt;") ? XMLResponseParser.xmlUnescape(rawDIDL) : rawDIDL
-                        if let parsed = XMLResponseParser.parseDIDLMetadata(didl) {
-                            let currentURI = mediaInfo["CurrentURI"] ?? ""
-                            let isRadio = URIPrefix.isRadio(currentURI)
-                            if isRadio && !parsed.title.isEmpty {
-                                enriched.stationName = parsed.title
-                            }
-                        }
+                    if let mediaInfo = try? await avTransport.getMediaInfo(device: device) {
+                        enriched.enrichFromMediaInfo(mediaInfo, device: device)
                     }
                     await delegate.transportDidUpdateTrackMetadata(group.coordinatorID, metadata: enriched)
                 }
@@ -386,28 +376,10 @@ public final class HybridEventFirstTransport: TransportStrategy, @unchecked Send
 
                 let (state, position, mode) = try await (stateResult, positionResult, modeResult)
 
-                // Enrich with station name for radio/streaming
                 var enrichedPosition = position
-                if state.isActive {
-                    if let mediaInfo = try? await avTransport.getMediaInfo(device: coordinator),
-                       let rawDIDL = mediaInfo["CurrentURIMetaData"], !rawDIDL.isEmpty,
-                       rawDIDL != "NOT_IMPLEMENTED" {
-                        let didl = rawDIDL.contains("&lt;") ? XMLResponseParser.xmlUnescape(rawDIDL) : rawDIDL
-                        if let parsed = XMLResponseParser.parseDIDLMetadata(didl) {
-                            let currentURI = mediaInfo["CurrentURI"] ?? ""
-                            let isRadio = URIPrefix.isRadio(currentURI)
-                            if isRadio && !parsed.title.isEmpty {
-                                enrichedPosition.stationName = parsed.title
-                            }
-                            if enrichedPosition.title.isEmpty {
-                                enrichedPosition.title = parsed.title
-                            }
-                            if !parsed.albumArtURI.isEmpty {
-                                let artURI = coordinator.makeAbsoluteURL(parsed.albumArtURI)
-                                enrichedPosition.albumArtURI = artURI
-                            }
-                        }
-                    }
+                if state.isActive,
+                   let mediaInfo = try? await avTransport.getMediaInfo(device: coordinator) {
+                    enrichedPosition.enrichFromMediaInfo(mediaInfo, device: coordinator)
                 }
 
                 await delegate.transportDidUpdateState(group.coordinatorID, state: state)
@@ -450,28 +422,10 @@ public final class HybridEventFirstTransport: TransportStrategy, @unchecked Send
 
                 let (state, position, mode) = try await (stateResult, positionResult, modeResult)
 
-                // Enrich metadata with station name from GetMediaInfo for radio/streaming
                 var enrichedPosition = position
-                if state.isActive {
-                    if let mediaInfo = try? await avTransport.getMediaInfo(device: coordinator),
-                       let rawDIDL = mediaInfo["CurrentURIMetaData"], !rawDIDL.isEmpty,
-                       rawDIDL != "NOT_IMPLEMENTED" {
-                        let didl = rawDIDL.contains("&lt;") ? XMLResponseParser.xmlUnescape(rawDIDL) : rawDIDL
-                        if let parsed = XMLResponseParser.parseDIDLMetadata(didl) {
-                            let currentURI = mediaInfo["CurrentURI"] ?? ""
-                            let isRadio = URIPrefix.isRadio(currentURI)
-                            if isRadio && !parsed.title.isEmpty {
-                                enrichedPosition.stationName = parsed.title
-                            }
-                            if enrichedPosition.title.isEmpty {
-                                enrichedPosition.title = parsed.title
-                            }
-                            if !parsed.albumArtURI.isEmpty {
-                                let artURI = coordinator.makeAbsoluteURL(parsed.albumArtURI)
-                                enrichedPosition.albumArtURI = artURI
-                            }
-                        }
-                    }
+                if state.isActive,
+                   let mediaInfo = try? await avTransport.getMediaInfo(device: coordinator) {
+                    enrichedPosition.enrichFromMediaInfo(mediaInfo, device: coordinator)
                 }
 
                 await delegate.transportDidUpdateState(group.coordinatorID, state: state)

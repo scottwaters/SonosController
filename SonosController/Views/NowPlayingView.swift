@@ -23,9 +23,9 @@ struct NowPlayingView: View {
     @State private var vm: NowPlayingViewModel
     let group: SonosGroup
 
-    init(group: SonosGroup, sonosManager: SonosManager) {
+    init(group: SonosGroup, sonosManager: SonosManager, playHistoryManager: PlayHistoryManager? = nil) {
         self.group = group
-        _vm = State(wrappedValue: NowPlayingViewModel(sonosManager: sonosManager, group: group))
+        _vm = State(wrappedValue: NowPlayingViewModel(sonosManager: sonosManager, group: group, playHistoryManager: playHistoryManager))
     }
 
     // Convenience accessors from ViewModel

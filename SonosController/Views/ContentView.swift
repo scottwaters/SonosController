@@ -154,7 +154,7 @@ struct ContentView: View {
                                 Divider()
                             }
 
-                            NowPlayingView(group: group, sonosManager: sonosManager)
+                            NowPlayingView(group: group, sonosManager: sonosManager, playHistoryManager: playHistoryManager)
                                 .frame(minWidth: nowPlayingMinWidth, maxWidth: .infinity)
 
                             if showQueue {
