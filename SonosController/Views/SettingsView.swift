@@ -250,13 +250,8 @@ struct SettingsView: View {
                 }
 
                     settingsSection("Music Services") {
-                        Toggle("Enable Music Services", isOn: Binding(
-                            get: { smapiManager.isEnabled },
-                            set: { smapiManager.isEnabled = $0 }
-                        ))
-                        Text("Browse and search music services (TuneIn, Spotify, etc.) from the sidebar. Some services require authentication.")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                        MusicServicesSettingsSection()
+                            .environmentObject(smapiManager)
                     }
                 }
                 .padding(32)

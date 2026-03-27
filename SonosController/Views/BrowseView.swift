@@ -167,14 +167,12 @@ struct BrowseSectionsView: View {
                 }
             }
 
-            // SMAPI Music Services
+            // Connected Music Services (only authenticated services appear here)
             if smapiManager.isEnabled {
-                let authenticated = smapiManager.authenticatedServiceList
-                let anonymous = smapiManager.availableServices.filter { $0.authType == "Anonymous" }
-                let browseable = authenticated + anonymous
-                if !browseable.isEmpty {
+                let connected = smapiManager.authenticatedServiceList
+                if !connected.isEmpty {
                     Section("Music Services") {
-                        ForEach(browseable, id: \.id) { service in
+                        ForEach(connected, id: \.id) { service in
                             Button {
                                 onNavigate(BrowseDestination(
                                     title: service.name,
