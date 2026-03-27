@@ -402,6 +402,7 @@ struct BrowseListView: View {
                 vm.smapiClient = smapiManager.client
                 vm.smapiToken = smapiManager.tokenStore.getToken(for: sid)
                 vm.smapiDeviceID = smapiManager.tokenStore.authenticatedServices.values.first?.deviceID ?? ""
+                vm.smapiSerialNumber = smapiManager.serialNumber(for: sid)
             }
             Task {
                 await vm.loadItems()

@@ -40,6 +40,7 @@ final class BrowseViewModel {
     var smapiClient: SMAPIClient?
     var smapiToken: SMAPIToken?
     var smapiDeviceID: String = ""
+    var smapiSerialNumber: Int = 0
 
     var isSMAPI: Bool { smapiServiceURI != nil }
     var isSearch: Bool { objectID.hasPrefix("SEARCH:") }
@@ -129,16 +130,42 @@ final class BrowseViewModel {
             result = try await client.getMetadataAnonymous(serviceURI: uri, deviceID: smapiDeviceID, id: browseID, index: 0, count: pageSize)
         }
         // Convert SMAPIMediaItem to BrowseItem for display
+        let sid = smapiServiceID ?? 0
+        let sn = smapiSerialNumber
         items = result.items.map { smapi in
-            BrowseItem(
+            // Build Sonos playback URI from SMAPI item ID + service ID
+            let playURI: String?
+            if !smapi.canBrowse && !smapi.id.isEmpty {
+                if smapi.itemType == "stream" || smapi.itemType == "program" {
+                    playURI = "x-sonosapi-stream:\(smapi.id)?sid=\(sid)&flags=8224&sn=\(sn)"
+                } else if smapi.itemType == "track" {
+                    playURI = "x-sonos-http:\(smapi.id)?sid=\(sid)&flags=8224&sn=\(sn)"
+                } else {
+                    playURI = smapi.uri.isEmpty ? "x-sonosapi-stream:\(smapi.id)?sid=\(sid)&flags=8224&sn=\(sn)" : smapi.uri
+                }
+            } else {
+                playURI = smapi.uri.isEmpty ? nil : smapi.uri
+            }
+
+            // Build DIDL metadata for playback
+            let didlMeta: String?
+            if let uri = playURI, !smapi.canBrowse {
+                didlMeta = """
+                <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="\(smapi.id)" parentID="-1" restricted="true"><dc:title>\(xmlEscape(smapi.title))</dc:title><upnp:class>object.item.audioItem.audioBroadcast</upnp:class><desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">SA_RINCON\(sid * 256 + 7)_X_#Svc\(sid * 256 + 7)-0-Token</desc></item></DIDL-Lite>
+                """
+            } else {
+                didlMeta = nil
+            }
+
+            return BrowseItem(
                 id: smapi.id,
                 title: smapi.title,
                 artist: smapi.artist,
                 album: smapi.album,
                 albumArtURI: smapi.albumArtURI.isEmpty ? nil : smapi.albumArtURI,
                 itemClass: smapi.canBrowse ? .container : .musicTrack,
-                resourceURI: smapi.uri.isEmpty ? nil : smapi.uri,
-                resourceMetadata: smapi.metadata.isEmpty ? nil : smapi.metadata
+                resourceURI: playURI,
+                resourceMetadata: didlMeta
             )
         }
         totalItems = result.total
@@ -228,5 +255,12 @@ final class BrowseViewModel {
         await ErrorHandler.shared.handleAsync("PLAYLIST", userFacing: true) {
             try await sonosManager.addToPlaylist(playlistID: playlistID, item: item)
         }
+    }
+
+    private func xmlEscape(_ str: String) -> String {
+        str.replacingOccurrences(of: "&", with: "&amp;")
+           .replacingOccurrences(of: "<", with: "&lt;")
+           .replacingOccurrences(of: ">", with: "&gt;")
+           .replacingOccurrences(of: "\"", with: "&quot;")
     }
 }
