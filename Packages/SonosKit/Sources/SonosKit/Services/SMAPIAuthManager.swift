@@ -72,31 +72,47 @@ public final class SMAPIAuthManager: ObservableObject {
         }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// Discovers account serial numbers (sn) from existing favorites
+    /// Discovers account serial numbers (sn) from favorites and play history.
+    /// The sn= parameter is assigned by the Sonos system when a service is linked
+    /// and isn't available through any API — the only way to get it is from
+    /// existing content URIs that contain sid= and sn= parameters.
     public func discoverSerialNumbers(using manager: SonosManager) async {
+        var snMap: [Int: Int] = [:]
+
+        // Scan Sonos Favorites
         do {
-            let (items, _) = try await manager.browse(objectID: "FV:2", start: 0, count: 100)
-            var snMap: [Int: Int] = [:]
+            let (items, _) = try await manager.browse(objectID: "FV:2", start: 0, count: 200)
             for item in items {
-                guard let uri = item.resourceURI else { continue }
-                let decoded = (uri.removingPercentEncoding ?? uri).replacingOccurrences(of: "&amp;", with: "&")
-                if let sidMatch = decoded.range(of: "sid="),
-                   let snMatch = decoded.range(of: "sn=") {
-                    let sidStr = String(decoded[sidMatch.upperBound...].prefix(while: { $0.isNumber }))
-                    let snStr = String(decoded[snMatch.upperBound...].prefix(while: { $0.isNumber }))
-                    if let sid = Int(sidStr), let sn = Int(snStr), sn > 0 {
-                        snMap[sid] = sn
-                    }
-                }
-            }
-            if !snMap.isEmpty {
-                serviceSerialNumbers = snMap
-                sonosDebugLog("[SMAPI] Discovered \(snMap.count) service serial numbers: \(snMap)")
-            } else {
-                sonosDebugLog("[SMAPI] No serial numbers found in \(items.count) favorites")
+                extractSN(from: item.resourceURI, into: &snMap)
             }
         } catch {
-            sonosDebugLog("[SMAPI] Failed to discover serial numbers: \(error)")
+            sonosDebugLog("[SMAPI] Failed to scan favorites for serial numbers: \(error)")
+        }
+
+        // Also scan play history URIs as fallback
+        if let history = manager.playHistoryManager {
+            for entry in history.entries.suffix(200) {
+                extractSN(from: entry.sourceURI, into: &snMap)
+            }
+        }
+
+        if !snMap.isEmpty {
+            serviceSerialNumbers = snMap
+            sonosDebugLog("[SMAPI] Discovered \(snMap.count) service serial numbers: \(snMap)")
+        } else {
+            sonosDebugLog("[SMAPI] No serial numbers found")
+        }
+    }
+
+    private func extractSN(from uri: String?, into map: inout [Int: Int]) {
+        guard let uri else { return }
+        let decoded = (uri.removingPercentEncoding ?? uri).replacingOccurrences(of: "&amp;", with: "&")
+        guard let sidMatch = decoded.range(of: "sid="),
+              let snMatch = decoded.range(of: "sn=") else { return }
+        let sidStr = String(decoded[sidMatch.upperBound...].prefix(while: { $0.isNumber }))
+        let snStr = String(decoded[snMatch.upperBound...].prefix(while: { $0.isNumber }))
+        if let sid = Int(sidStr), let sn = Int(snStr), sn > 0 {
+            map[sid] = sn
         }
     }
 
