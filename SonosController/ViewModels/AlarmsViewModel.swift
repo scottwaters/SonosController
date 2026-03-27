@@ -111,9 +111,15 @@ final class AlarmsViewModel {
     }
 
     var availableRooms: [(id: String, name: String)] {
-        sonosManager.devices.values
-            .filter { !$0.roomName.isEmpty }
-            .map { (id: $0.id, name: $0.roomName) }
-            .sorted { $0.name < $1.name }
+        // Use group coordinators to avoid duplicates from stereo pairs, subs, surrounds
+        var seen = Set<String>()
+        var rooms: [(id: String, name: String)] = []
+        for group in sonosManager.groups {
+            if let coord = group.coordinator, !seen.contains(coord.roomName) {
+                seen.insert(coord.roomName)
+                rooms.append((id: coord.id, name: coord.roomName))
+            }
+        }
+        return rooms.sorted { $0.name < $1.name }
     }
 }
