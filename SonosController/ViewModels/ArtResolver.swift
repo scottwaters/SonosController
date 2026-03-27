@@ -18,6 +18,7 @@ final class ArtResolver {
     var lastArtSearchKey = ""
     var lastTrackURI = ""
     var lastRadioTrackKey = ""
+    var lastStationName = ""
     /// True when we're in an ad break — view reads this to decide what to show
     var inAdBreak = false
 
@@ -69,15 +70,27 @@ final class ArtResolver {
 
     func updateDisplayedArt(trackMetadata: TrackMetadata, group: SonosGroup) {
         let onRadio = !trackMetadata.stationName.isEmpty || isRadioStream(trackMetadata)
+        let currentStation = trackMetadata.stationName
 
-        // Capture station art: use the first art we see when entering a radio stream,
-        // but only if we don't already have one saved
+        // Detect station change — clear all stale radio art from previous source
+        if currentStation != lastStationName {
+            let wasOnRadio = !lastStationName.isEmpty
+            lastStationName = currentStation
+            radioStationArtURL = nil
+            radioTrackArtURL = nil
+            lastRadioTrackKey = ""
+            inAdBreak = false
+            if wasOnRadio || onRadio {
+                // Clear displayed art so we don't carry over the previous source's art
+                displayedArtURL = nil
+                webArtURL = nil
+            }
+        }
+
+        // Capture station art from metadata DIDL (not from displayedArtURL which may be stale)
         if onRadio && radioStationArtURL == nil {
-            // Try the metadata art first (from DIDL), then any currently displayed art
             if let metaArt = trackMetadata.albumArtURI, !metaArt.isEmpty, let url = URL(string: metaArt) {
                 radioStationArtURL = url
-            } else if let art = displayedArtURL {
-                radioStationArtURL = art
             }
         }
 
@@ -154,11 +167,6 @@ final class ArtResolver {
                 lastArtSearchKey = ""
             }
             displayedArtURL = trackMetadata.albumArtURI.flatMap { URL(string: $0) }
-            if trackMetadata.stationName.isEmpty {
-                radioTrackArtURL = nil
-                radioStationArtURL = nil
-                lastRadioTrackKey = ""
-            }
             loadPersistedArtOverride(trackMetadata: trackMetadata, group: group)
         }
 
@@ -248,6 +256,7 @@ final class ArtResolver {
         lastArtSearchKey = ""
         lastTrackURI = ""
         lastRadioTrackKey = ""
+        lastStationName = ""
         inAdBreak = false
     }
 }
