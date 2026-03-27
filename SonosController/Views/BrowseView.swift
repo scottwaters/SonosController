@@ -301,22 +301,20 @@ struct BrowseListView: View {
                         .background(.orange.opacity(0.1))
                     }
 
-                    // Service filter bar
+                    // Service filter bar — wrapping layout so all tags are visible
                     if vm.showsFilters && vm.availableFilters.count > 1 {
-                        ScrollView(.horizontal, showsIndicators: true) {
-                            HStack(spacing: 6) {
-                                FilterChip(label: L10n.all, isSelected: vm.selectedFilter == nil) {
-                                    vm.selectedFilter = nil
-                                }
-                                ForEach(vm.availableFilters, id: \.self) { filter in
-                                    FilterChip(label: filter, isSelected: vm.selectedFilter == filter) {
-                                        vm.selectedFilter = vm.selectedFilter == filter ? nil : filter
-                                    }
+                        FlowLayout(spacing: 6) {
+                            FilterChip(label: L10n.all, isSelected: vm.selectedFilter == nil) {
+                                vm.selectedFilter = nil
+                            }
+                            ForEach(vm.availableFilters, id: \.self) { filter in
+                                FilterChip(label: filter, isSelected: vm.selectedFilter == filter) {
+                                    vm.selectedFilter = vm.selectedFilter == filter ? nil : filter
                                 }
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
                         .background(.bar)
                         Divider()
                     }
@@ -594,5 +592,49 @@ private struct FilterChip: View {
                 .foregroundStyle(isSelected ? .white : .primary)
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Flow Layout (wrapping horizontal layout)
+
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var lineHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX + size.width > maxWidth && currentX > 0 {
+                currentX = 0
+                currentY += lineHeight + spacing
+                lineHeight = 0
+            }
+            currentX += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
+
+        return CGSize(width: maxWidth, height: currentY + lineHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var currentX: CGFloat = bounds.minX
+        var currentY: CGFloat = bounds.minY
+        var lineHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX + size.width > bounds.maxX && currentX > bounds.minX {
+                currentX = bounds.minX
+                currentY += lineHeight + spacing
+                lineHeight = 0
+            }
+            subview.place(at: CGPoint(x: currentX, y: currentY), proposal: .unspecified)
+            currentX += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
     }
 }
