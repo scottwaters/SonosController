@@ -93,6 +93,7 @@ public enum ServiceName {
     public static let unavailable = "Unavailable"
     public static let unknown = "Unknown"
     public static let sonosPlaylist = "Sonos Playlist"
+    public static let sonosRadio = "Sonos Radio"
     public static let local = "Local"
 }
 
@@ -116,6 +117,8 @@ public enum ServiceColor {
         switch service {
         case ServiceName.musicLibrary, ServiceName.localLibrary, ServiceName.local: return .green.opacity(0.7)
         case ServiceName.radio: return .orange.opacity(0.7)
+        case ServiceName.sonosRadio: return .orange.opacity(0.8)
+        case ServiceName.tuneIn, "TuneIn (New)": return .orange.opacity(0.6)
         case ServiceName.calmRadio: return .teal.opacity(0.7)
         case ServiceName.sonosPlaylist: return .purple.opacity(0.7)
         case "TV", "Line-In": return .gray.opacity(0.7)

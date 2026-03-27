@@ -177,18 +177,24 @@ public final class PlayHistoryManager: ObservableObject {
         return result
     }
 
-    /// Determines service name from a history entry's source URI
+    /// Determines service name from a history entry's source URI.
+    /// Returns the streaming service (e.g. "Sonos Radio", "TuneIn", "Spotify"),
+    /// not the station name — station name is shown separately in metadata.
     public func sourceServiceName(for entry: PlayHistoryEntry) -> String {
-        if !entry.stationName.isEmpty { return entry.stationName }
         guard let uri = entry.sourceURI else { return ServiceName.local }
-        if URIPrefix.isLocal(uri) { return ServiceName.musicLibrary }
-        if URIPrefix.isRadio(uri) { return ServiceName.radio }
         let decoded = (uri.removingPercentEncoding ?? uri).replacingOccurrences(of: "&amp;", with: "&")
+
+        // Check sid= first — identifies the specific service (Sonos Radio, TuneIn, Calm Radio, etc.)
         if let range = decoded.range(of: "sid=") {
             let numStr = String(decoded[range.upperBound...].prefix(while: { $0.isNumber }))
             if let sid = Int(numStr), let name = ServiceID.knownNames[sid] { return name }
         }
+
+        if URIPrefix.isLocal(uri) { return ServiceName.musicLibrary }
+        if URIPrefix.isRadio(uri) { return ServiceName.radio }
         if decoded.contains("spotify") { return ServiceName.spotify }
+        if decoded.contains("apple") { return ServiceName.appleMusic }
+        if decoded.contains("amazon") || decoded.contains("amzn") { return ServiceName.amazonMusic }
         return ServiceName.streaming
     }
 

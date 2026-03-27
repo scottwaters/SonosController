@@ -445,7 +445,10 @@ struct NowPlayingView: View {
                             .foregroundStyle(.white.opacity(0.6))
                     }
             }
-            if vm.art.radioTrackArtURL != nil, let stationArt = vm.art.radioStationArtURL {
+            // Show station badge only when track-specific art is displayed AND station has its own distinct art
+            if let trackArt = vm.art.radioTrackArtURL,
+               let stationArt = vm.art.radioStationArtURL,
+               stationArt != trackArt {
                 CachedAsyncImage(url: stationArt, cornerRadius: 4)
                     .frame(width: 36, height: 36)
                     .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
