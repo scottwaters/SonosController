@@ -145,23 +145,22 @@ struct ContentView: View {
                     .navigationSplitViewColumnWidth(min: 160, ideal: 200, max: 280)
             } detail: {
                 if let group = selectedGroup {
-                    GeometryReader { geo in
-                        HStack(spacing: 0) {
-                            if showBrowse {
-                                BrowseView(group: group)
-                                    .environmentObject(sonosManager)
-                                    .frame(width: browseWidth(totalWidth: geo.size.width))
-                                Divider()
-                            }
+                    HStack(spacing: 0) {
+                        if showBrowse {
+                            BrowseView(group: group)
+                                .environmentObject(sonosManager)
+                                .frame(minWidth: browseMinWidth, idealWidth: 320, maxWidth: 420)
+                            Divider()
+                        }
 
-                            NowPlayingView(group: group, sonosManager: sonosManager, playHistoryManager: playHistoryManager)
-                                .frame(minWidth: nowPlayingMinWidth, maxWidth: .infinity)
+                        NowPlayingView(group: group, sonosManager: sonosManager, playHistoryManager: playHistoryManager)
+                            .frame(minWidth: nowPlayingMinWidth, maxWidth: .infinity)
+                            .layoutPriority(1)
 
-                            if showQueue {
-                                Divider()
-                                QueueView(group: group, sonosManager: sonosManager)
-                                    .frame(width: queueWidth(totalWidth: geo.size.width))
-                            }
+                        if showQueue {
+                            Divider()
+                            QueueView(group: group, sonosManager: sonosManager)
+                                .frame(minWidth: queueMinWidth, idealWidth: 280, maxWidth: 400)
                         }
                     }
                 } else {
