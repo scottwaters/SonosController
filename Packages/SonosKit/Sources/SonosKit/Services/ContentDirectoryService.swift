@@ -304,6 +304,7 @@ private class QueueXMLParser: NSObject, XMLParserDelegate {
     private var currentArtist = ""
     private var currentAlbum = ""
     private var currentArtURI = ""
+    private var currentResURI = ""
     private var currentDuration = ""
     private var inItem = false
     private var itemIndex: Int
@@ -339,6 +340,7 @@ private class QueueXMLParser: NSObject, XMLParserDelegate {
             currentArtist = ""
             currentAlbum = ""
             currentArtURI = ""
+            currentResURI = ""
             currentDuration = ""
         }
 
@@ -367,14 +369,23 @@ private class QueueXMLParser: NSObject, XMLParserDelegate {
                 } else {
                     currentArtURI = trimmed
                 }
+            case "res":
+                if !trimmed.isEmpty { currentResURI = trimmed }
             case "item":
+                // Fallback: if no albumArtURI but have a local file URI, use /getaa
+                var artURI = currentArtURI
+                if artURI.isEmpty, !currentResURI.isEmpty,
+                   URIPrefix.isLocal(currentResURI) {
+                    let encoded = currentResURI.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? currentResURI
+                    artURI = "http://\(deviceIP):\(devicePort)/getaa?s=1&u=\(encoded)"
+                }
                 itemIndex += 1
                 items.append(QueueItem(
                     id: itemIndex,
                     title: currentTitle,
                     artist: currentArtist,
                     album: currentAlbum,
-                    albumArtURI: currentArtURI.isEmpty ? nil : currentArtURI,
+                    albumArtURI: artURI.isEmpty ? nil : artURI,
                     duration: currentDuration
                 ))
                 inItem = false
