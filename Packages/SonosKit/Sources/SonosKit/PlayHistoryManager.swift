@@ -100,8 +100,8 @@ public final class PlayHistoryManager: ObservableObject {
         lastLoggedTrack[groupID] = dedupKey
 
         let entry = PlayHistoryEntry(
-            title: metadata.title,
-            artist: metadata.artist,
+            title: TrackMetadata.filterDeviceID(metadata.title),
+            artist: TrackMetadata.filterDeviceID(metadata.artist),
             album: metadata.album,
             stationName: metadata.stationName,
             sourceURI: metadata.trackURI,

@@ -56,6 +56,16 @@ public struct TrackMetadata: Equatable {
 
     public var trackURI: String?
 
+    /// True if a string looks like a Sonos device ID (e.g. "RINCON_000E58A1B2C401400")
+    public static func isDeviceID(_ value: String) -> Bool {
+        value.hasPrefix("RINCON_")
+    }
+
+    /// Returns the string blanked if it's a RINCON device ID, otherwise unchanged.
+    public static func filterDeviceID(_ value: String) -> String {
+        isDeviceID(value) ? "" : value
+    }
+
     /// Enriches metadata from GetMediaInfo's CurrentURIMetaData DIDL.
     /// Extracts station name, title, and album art for radio/streaming sources.
     /// Used by TransportStrategy and NowPlayingViewModel to avoid duplicated enrichment logic.

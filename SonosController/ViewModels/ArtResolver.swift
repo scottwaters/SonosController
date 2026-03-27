@@ -74,7 +74,7 @@ final class ArtResolver {
         if radioStationArtURL == nil, let stationArt = displayedArtURL ?? trackMetadata.albumArtURI.flatMap({ URL(string: $0) }) {
             radioStationArtURL = stationArt
         }
-        let artist = trackMetadata.artist.hasPrefix("RINCON_") ? "" : trackMetadata.artist
+        let artist = TrackMetadata.filterDeviceID(trackMetadata.artist)
         let cleanTitle = AlbumArtSearchService.cleanTrackTitle(trackMetadata.title)
         let searchTitle = cleanTitle.isEmpty ? trackMetadata.title : cleanTitle
         Task {

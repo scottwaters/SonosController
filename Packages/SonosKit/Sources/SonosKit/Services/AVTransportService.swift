@@ -161,17 +161,11 @@ public final class AVTransportService {
         if let trackURI = result["TrackURI"] {
             if trackURI.contains("x-sonos-htastream:") {
                 metadata.title = "TV"
-                let uriParts = trackURI.components(separatedBy: ":")
-                if uriParts.count >= 2 {
-                    metadata.artist = uriParts[1]  // RINCON_xxx — resolved to room name by the view
-                }
+                metadata.artist = ""
                 metadata.album = trackURI.contains(":spdif") ? "HDMI / Optical" : "HDMI"
             } else if trackURI.contains("x-rincon-stream:") {
                 metadata.title = "Line-In"
-                let uriParts = trackURI.components(separatedBy: ":")
-                if uriParts.count >= 2 {
-                    metadata.artist = uriParts[1]
-                }
+                metadata.artist = ""
                 metadata.album = "Analog Input"
             }
         }

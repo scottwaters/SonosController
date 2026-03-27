@@ -46,9 +46,7 @@ final class NowPlayingViewModel {
     }
 
     var displayArtist: String {
-        let artist = trackMetadata.artist
-        if artist.hasPrefix("RINCON_") { return "" }
-        return artist
+        TrackMetadata.filterDeviceID(trackMetadata.artist)
     }
 
     // MARK: - Volume

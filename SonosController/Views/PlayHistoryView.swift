@@ -16,6 +16,8 @@ struct PlayHistoryView: View {
     @State private var selectedEntryID: UUID?
     @State private var hoveredEntryID: UUID?
     @State private var expandedArtEntry: PlayHistoryEntry?
+    @State private var customDateFrom: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
+    @State private var customDateTo: Date = Date()
 
     enum DateRange: String, CaseIterable {
         case all = "All Time"
@@ -23,6 +25,7 @@ struct PlayHistoryView: View {
         case week = "This Week"
         case month = "This Month"
         case quarter = "3 Months"
+        case custom = "Custom Range"
     }
 
     private func sourceLabel(for entry: PlayHistoryEntry) -> String {
@@ -38,17 +41,23 @@ struct PlayHistoryView: View {
         var result = historyManager.entries
 
         if filterDateRange != .all {
-            let calendar = Calendar.current
-            let now = Date()
-            let cutoff: Date
-            switch filterDateRange {
-            case .today: cutoff = calendar.startOfDay(for: now)
-            case .week: cutoff = calendar.date(byAdding: .day, value: -7, to: now)!
-            case .month: cutoff = calendar.date(byAdding: .month, value: -1, to: now)!
-            case .quarter: cutoff = calendar.date(byAdding: .month, value: -3, to: now)!
-            case .all: cutoff = .distantPast
+            if filterDateRange == .custom {
+                let fromStart = Calendar.current.startOfDay(for: customDateFrom)
+                let toEnd = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: customDateTo)) ?? customDateTo
+                result = result.filter { $0.timestamp >= fromStart && $0.timestamp < toEnd }
+            } else {
+                let calendar = Calendar.current
+                let now = Date()
+                let cutoff: Date
+                switch filterDateRange {
+                case .today: cutoff = calendar.startOfDay(for: now)
+                case .week: cutoff = calendar.date(byAdding: .day, value: -7, to: now)!
+                case .month: cutoff = calendar.date(byAdding: .month, value: -1, to: now)!
+                case .quarter: cutoff = calendar.date(byAdding: .month, value: -3, to: now)!
+                default: cutoff = .distantPast
+                }
+                result = result.filter { $0.timestamp >= cutoff }
             }
-            result = result.filter { $0.timestamp >= cutoff }
         }
 
         if let room = filterRoom {
@@ -197,6 +206,19 @@ struct PlayHistoryView: View {
                 }
             }
             .fixedSize()
+
+            // Custom date range pickers
+            if filterDateRange == .custom {
+                DatePicker("", selection: $customDateFrom, displayedComponents: [.date])
+                    .labelsHidden()
+                    .frame(width: 100)
+                Text("to")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                DatePicker("", selection: $customDateTo, displayedComponents: [.date])
+                    .labelsHidden()
+                    .frame(width: 100)
+            }
 
             // Room
             Picker("", selection: $filterRoom) {
