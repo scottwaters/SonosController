@@ -37,17 +37,6 @@ enum ChartTheme: String, CaseIterable, Identifiable {
         }
     }
 
-    var accent: Color {
-        switch self {
-        case .ocean: return .purple
-        case .sunset: return .yellow
-        case .neon: return .mint
-        case .forest: return .mint
-        case .berry: return .indigo
-        case .mono: return .primary
-        }
-    }
-
     var barGradient: LinearGradient {
         LinearGradient(colors: [primary, secondary], startPoint: .bottom, endPoint: .top)
     }
@@ -66,7 +55,7 @@ enum ChartTheme: String, CaseIterable, Identifiable {
                        startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
-    var swatchColors: [Color] { [primary, secondary, accent] }
+    var swatchColors: [Color] { [primary, secondary] }
 }
 
 // MARK: - Dashboard
@@ -86,7 +75,6 @@ struct PlayHistoryDashboard: View {
     @AppStorage(UDKey.chartTheme) private var selectedTheme: String = ChartTheme.ocean.rawValue
     @AppStorage(UDKey.customPrimaryColor) private var customPrimaryHex: String = "#3B82F6"
     @AppStorage(UDKey.customSecondaryColor) private var customSecondaryHex: String = "#8B5CF6"
-    @AppStorage(UDKey.customAccentColor) private var customAccentHex: String = "#EC4899"
     @State private var showCustomEditor = false
     @State private var hoveredDay: Date?
     @State private var hoveredHour: Int?
@@ -102,9 +90,6 @@ struct PlayHistoryDashboard: View {
     }
     private var effectiveSecondary: Color {
         isCustomTheme ? Color(hex: customSecondaryHex) : theme.secondary
-    }
-    private var effectiveAccent: Color {
-        isCustomTheme ? Color(hex: customAccentHex) : theme.accent
     }
     private var effectiveBarGradient: LinearGradient {
         let p = effectivePrimary, s = effectiveSecondary
@@ -229,9 +214,8 @@ struct PlayHistoryDashboard: View {
                 } label: {
                     HStack(spacing: 4) {
                         HStack(spacing: 0) {
-                            Color(hex: customPrimaryHex).frame(width: 10, height: 20)
-                            Color(hex: customSecondaryHex).frame(width: 10, height: 20)
-                            Color(hex: customAccentHex).frame(width: 10, height: 20)
+                            Color(hex: customPrimaryHex).frame(width: 14, height: 20)
+                            Color(hex: customSecondaryHex).frame(width: 14, height: 20)
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .overlay(
@@ -254,7 +238,6 @@ struct PlayHistoryDashboard: View {
                 HStack(spacing: 16) {
                     colorPickerItem("Primary", hex: $customPrimaryHex)
                     colorPickerItem("Secondary", hex: $customSecondaryHex)
-                    colorPickerItem("Accent", hex: $customAccentHex)
                     Spacer()
                 }
                 .padding(10)

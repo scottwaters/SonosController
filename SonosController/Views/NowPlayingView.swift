@@ -427,6 +427,9 @@ struct NowPlayingView: View {
                 CachedAsyncImage(url: trackArt, cornerRadius: 8)
             } else if let url = vm.art.displayedArtURL {
                 CachedAsyncImage(url: url, cornerRadius: 8)
+            } else if let stationArt = vm.art.radioStationArtURL, !trackMetadata.stationName.isEmpty {
+                // Ad break — no track art available, fall back to station art
+                CachedAsyncImage(url: stationArt, cornerRadius: 8)
             } else {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(

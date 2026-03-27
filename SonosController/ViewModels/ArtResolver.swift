@@ -50,8 +50,21 @@ final class ArtResolver {
 
     func updateDisplayedArt(trackMetadata: TrackMetadata, group: SonosGroup) {
         let resolved = resolveArtURL(trackMetadata: trackMetadata, group: group)
+
+        // Capture station art when first entering a radio stream
+        if !trackMetadata.stationName.isEmpty || isRadioStream(trackMetadata) {
+            if radioStationArtURL == nil, let art = resolved ?? displayedArtURL {
+                radioStationArtURL = art
+            }
+        }
+
         if resolved != displayedArtURL {
             if resolved == nil && displayedArtURL != nil {
+                // During radio ads, track details vanish but the station is still playing.
+                // Keep showing station art instead of falling to the placeholder.
+                if !trackMetadata.stationName.isEmpty || isRadioStream(trackMetadata) {
+                    return
+                }
                 let currentURI = trackMetadata.trackURI ?? ""
                 if currentURI == lastTrackURI { return }
             }
@@ -59,12 +72,21 @@ final class ArtResolver {
         }
     }
 
+    private func isRadioStream(_ metadata: TrackMetadata) -> Bool {
+        metadata.trackURI.map(URIPrefix.isRadio) ?? false
+    }
+
     // MARK: - Radio Track Art
 
     func searchRadioTrackArt(trackMetadata: TrackMetadata) {
+        let isAdBreak = !trackMetadata.stationName.isEmpty &&
+                        (trackMetadata.title.isEmpty || trackMetadata.title == trackMetadata.stationName) &&
+                        trackMetadata.artist.isEmpty
         guard !trackMetadata.stationName.isEmpty,
               !trackMetadata.title.isEmpty,
-              trackMetadata.title != trackMetadata.stationName else {
+              trackMetadata.title != trackMetadata.stationName,
+              !isAdBreak else {
+            // Ad break or no track info — clear track-specific art so station art shows
             if radioTrackArtURL != nil { radioTrackArtURL = nil }
             return
         }
