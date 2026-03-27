@@ -95,6 +95,16 @@ struct SettingsView: View {
                         Text("When enabled, the shuffle button on the player uses Sonos play mode shuffle. When disabled (default), use the queue shuffle button to physically reorder tracks.")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
+
+                        Divider().padding(.vertical, 4)
+
+                        Toggle("Proportional Group Volume", isOn: Binding(
+                            get: { UserDefaults.standard.bool(forKey: UDKey.proportionalGroupVolume) },
+                            set: { UserDefaults.standard.set($0, forKey: UDKey.proportionalGroupVolume) }
+                        ))
+                        Text("Controls how the master volume slider adjusts individual speakers in a group.\n\nProportional (on): Speakers scale relative to each other, preserving the balance between them. If one speaker is 10% louder, it stays 10% louder at any master level.\n\nLinear (off): All speakers move by the same amount. The volume gap between speakers shrinks as you approach maximum.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
 
                     // ─── NETWORK ───

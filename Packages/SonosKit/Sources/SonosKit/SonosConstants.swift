@@ -172,6 +172,7 @@ public enum UDKey {
     public static let customPrimaryColor = "customPrimary"
     public static let customSecondaryColor = "customSecondary"
     public static let customAccentColor = "customAccent"
+    public static let proportionalGroupVolume = "proportionalGroupVolume"
     public static let artOverridePrefix = "artOverride:"
 }
 

@@ -172,19 +172,23 @@ final class NowPlayingViewModel {
         volumeGraceUntil = now.addingTimeInterval(Timing.playbackGracePeriod)
         let oldMaster = lastMasterVolume
         let newMaster = volume
+        let proportional = UserDefaults.standard.bool(forKey: UDKey.proportionalGroupVolume)
 
         for member in group.members {
             sonosManager.setVolumeGrace(deviceID: member.id, duration: Timing.playbackGracePeriod)
             let currentVol = speakerVolumes[member.id] ?? 0
 
             let newVol: Double
-            if oldMaster > 0 {
-                // Proportional scaling: each speaker keeps its ratio relative to the master.
-                // e.g. speakers at 30,40 (master=35) → master moves to 70 → speakers become 60,80
+            if proportional && oldMaster > 0 {
+                // Proportional: each speaker keeps its ratio relative to the master.
+                // e.g. speakers at 30,40 (master=35) → master to 70 → speakers become 60,80
                 newVol = currentVol * (newMaster / oldMaster)
-            } else {
-                // Master was at 0 — can't scale proportionally, use absolute offset
+            } else if proportional && oldMaster == 0 {
+                // Master was at 0 — can't scale proportionally, set all to new master
                 newVol = newMaster
+            } else {
+                // Linear: all speakers shift by the same absolute delta
+                newVol = currentVol + (newMaster - oldMaster)
             }
 
             let clamped = max(0, min(100, newVol))
