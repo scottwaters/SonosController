@@ -234,9 +234,15 @@ struct BrowseSectionsView: View {
             Task {
                 await sonosManager.loadBrowseSections()
                 isLoading = false
-                if smapiManager.isEnabled && smapiManager.availableServices.isEmpty,
-                   let speaker = sonosManager.groups.first?.coordinator {
-                    await smapiManager.loadServices(speakerIP: speaker.ip, musicServicesList: sonosManager.musicServicesList)
+                if smapiManager.isEnabled {
+                    if smapiManager.availableServices.isEmpty,
+                       let speaker = sonosManager.groups.first?.coordinator {
+                        await smapiManager.loadServices(speakerIP: speaker.ip, musicServicesList: sonosManager.musicServicesList)
+                    }
+                    // Discover account serial numbers from favorites for correct playback auth
+                    if smapiManager.serviceSerialNumbers.isEmpty {
+                        await smapiManager.discoverSerialNumbers(using: sonosManager)
+                    }
                 }
             }
         }
