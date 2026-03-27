@@ -859,14 +859,26 @@ public class SonosManager: ObservableObject {
     // MARK: - Alarms
 
     public func getAlarms() async throws -> [SonosAlarm] {
-        guard let anyDevice = preferredDevice else { return [] }
-        var alarms = try await alarmClock.listAlarms(device: anyDevice)
-        for i in alarms.indices {
-            if let dev = devices[alarms[i].roomUUID] {
-                alarms[i].roomName = dev.roomName
+        // Alarm lists can be inconsistent across speakers during sync.
+        // Query multiple speakers and return the longest (most complete) list.
+        var bestAlarms: [SonosAlarm] = []
+        let candidates = groups.compactMap(\.coordinator)
+        for device in candidates {
+            do {
+                let result = try await alarmClock.listAlarms(device: device)
+                if result.count > bestAlarms.count {
+                    bestAlarms = result
+                }
+            } catch {
+                continue
             }
         }
-        return alarms
+        for i in bestAlarms.indices {
+            if let dev = devices[bestAlarms[i].roomUUID] {
+                bestAlarms[i].roomName = dev.roomName
+            }
+        }
+        return bestAlarms
     }
 
     @discardableResult
