@@ -21,6 +21,7 @@ import SonosKit
 struct NowPlayingView: View {
     @EnvironmentObject var sonosManager: SonosManager
     @State private var vm: NowPlayingViewModel
+    @State private var showShuffleHint = false
     let group: SonosGroup
 
     init(group: SonosGroup, sonosManager: SonosManager, playHistoryManager: PlayHistoryManager? = nil) {
@@ -258,7 +259,19 @@ struct NowPlayingView: View {
                                 .foregroundStyle(.tertiary)
                                 .frame(minWidth: 32, minHeight: 32)
                                 .contentShape(Rectangle())
-                                .tooltip("Use the queue shuffle button, or enable Classic Shuffle in Settings")
+                                .onTapGesture { showShuffleHint = true }
+                                .popover(isPresented: $showShuffleHint, arrowEdge: .bottom) {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text("Shuffle is disabled")
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                        Text("Use the shuffle button in the Queue panel to physically reorder tracks, or enable Classic Shuffle Mode in Settings.")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .frame(maxWidth: 220)
+                                    }
+                                    .padding(10)
+                                }
                         }
 
                         transportButton("previous", icon: "backward.fill", size: .title2) {
