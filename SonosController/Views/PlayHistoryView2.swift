@@ -1,0 +1,242 @@
+/// PlayHistoryView2.swift — Reimagined history layout for comparison.
+///
+/// Card-based timeline grouped by day, with larger art, richer metadata display,
+/// and a visual timeline spine. Designed for a more immersive browsing experience.
+import SwiftUI
+import SonosKit
+
+struct PlayHistoryView2: View {
+    let entries: [PlayHistoryEntry]
+    @Binding var expandedArtEntry: PlayHistoryEntry?
+    var sourceLabel: (PlayHistoryEntry) -> String
+
+    private var groupedByDay: [(String, [PlayHistoryEntry])] {
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        formatter.doesRelativeDateFormatting = true
+        formatter.dateStyle = .full
+        formatter.timeStyle = .none
+
+        var groups: [(String, [PlayHistoryEntry])] = []
+        var currentDay = ""
+        var currentEntries: [PlayHistoryEntry] = []
+
+        for entry in entries {
+            let day = formatter.string(from: entry.timestamp)
+            if day != currentDay {
+                if !currentEntries.isEmpty {
+                    groups.append((currentDay, currentEntries))
+                }
+                currentDay = day
+                currentEntries = [entry]
+            } else {
+                currentEntries.append(entry)
+            }
+        }
+        if !currentEntries.isEmpty {
+            groups.append((currentDay, currentEntries))
+        }
+        return groups
+    }
+
+    var body: some View {
+        if entries.isEmpty {
+            emptyState
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 0, pinnedViews: .sectionHeaders) {
+                    ForEach(groupedByDay, id: \.0) { day, dayEntries in
+                        Section {
+                            ForEach(dayEntries) { entry in
+                                cardRow(entry)
+                            }
+                        } header: {
+                            dayStickyHeader(day, count: dayEntries.count)
+                        }
+                    }
+                }
+                .padding(.bottom, 20)
+            }
+        }
+    }
+
+    // MARK: - Day Header
+
+    private func dayStickyHeader(_ day: String, count: Int) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(.tertiary)
+                .frame(width: 24, height: 2)
+            Text(day)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+            Text("\(count)")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(.tertiary, in: Capsule())
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+    }
+
+    // MARK: - Card Row
+
+    private func cardRow(_ entry: PlayHistoryEntry) -> some View {
+        let source = sourceLabel(entry)
+        let timeStr = entry.timestamp.formatted(date: .omitted, time: .shortened)
+
+        return HStack(alignment: .top, spacing: 0) {
+            // Timeline spine
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(ServiceColor.color(for: source))
+                    .frame(width: 8, height: 8)
+                    .padding(.top, 20)
+                Rectangle()
+                    .fill(.quaternary)
+                    .frame(width: 1)
+            }
+            .frame(width: 32)
+
+            // Card content
+            HStack(spacing: 14) {
+                // Art — larger for visual impact
+                CachedAsyncImage(url: entry.albumArtURI.flatMap { URL(string: $0) }, cornerRadius: 8)
+                    .frame(width: 56, height: 56)
+                    .shadow(color: .black.opacity(0.1), radius: 3, x: 0, y: 1)
+                    .onTapGesture { expandedArtEntry = entry }
+
+                // Metadata — structured grid layout
+                VStack(alignment: .leading, spacing: 4) {
+                    // Title row
+                    HStack(spacing: 0) {
+                        Text(entry.title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(timeStr)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    // Artist / Album row
+                    HStack(spacing: 0) {
+                        if !entry.artist.isEmpty {
+                            Text(entry.artist)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        if !entry.album.isEmpty {
+                            if !entry.artist.isEmpty {
+                                Text("  /  ")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.quaternary)
+                            }
+                            Text(entry.album)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                    }
+
+                    // Metadata pills row
+                    HStack(spacing: 6) {
+                        // Source pill
+                        Text(source)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(ServiceColor.color(for: source), in: Capsule())
+
+                        // Station name
+                        if !entry.stationName.isEmpty {
+                            HStack(spacing: 3) {
+                                Image(systemName: "antenna.radiowaves.left.and.right")
+                                    .font(.system(size: 8))
+                                Text(entry.stationName)
+                                    .font(.system(size: 10))
+                                    .lineLimit(1)
+                            }
+                            .foregroundStyle(.orange.opacity(0.9))
+                        }
+
+                        Spacer(minLength: 0)
+
+                        // Room
+                        if !entry.groupName.isEmpty {
+                            HStack(spacing: 3) {
+                                Image(systemName: "hifispeaker")
+                                    .font(.system(size: 8))
+                                Text(entry.groupName)
+                                    .font(.system(size: 10))
+                            }
+                            .foregroundStyle(.tertiary)
+                        }
+
+                        // Duration
+                        if entry.duration > 0 {
+                            Text(formatDuration(entry.duration))
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.background)
+                    .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(.quaternary.opacity(0.5), lineWidth: 0.5)
+            )
+            .padding(.trailing, 20)
+            .padding(.vertical, 4)
+        }
+        .contextMenu {
+            Button("Copy Track Details") {
+                var lines: [String] = []
+                if !entry.stationName.isEmpty { lines.append("Station: \(entry.stationName)") }
+                if !entry.artist.isEmpty { lines.append("Artist: \(entry.artist)") }
+                if !entry.album.isEmpty { lines.append("Album: \(entry.album)") }
+                if !entry.title.isEmpty { lines.append("Track: \(entry.title)") }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+            }
+        }
+    }
+
+    // MARK: - Empty State
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "waveform.path")
+                .font(.system(size: 44, weight: .thin))
+                .foregroundStyle(.tertiary)
+            Text("No listening history")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text("Tracks will appear here as you listen")
+                .font(.system(size: 12))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Helpers
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let mins = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        return String(format: "%d:%02d", mins, secs)
+    }
+}

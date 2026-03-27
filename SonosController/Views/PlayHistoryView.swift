@@ -105,15 +105,19 @@ struct PlayHistoryView: View {
             Picker("", selection: $selectedTab) {
                 Text("Dashboard").tag(1)
                 Text("History").tag(0)
+                Text("History2").tag(2)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
             .padding(.top, 8)
             .padding(.bottom, 8)
 
-            if selectedTab == 0 {
+            switch selectedTab {
+            case 0:
                 historyContent
-            } else {
+            case 2:
+                PlayHistoryView2(entries: filteredEntries, expandedArtEntry: $expandedArtEntry, sourceLabel: sourceLabel)
+            default:
                 PlayHistoryDashboard(entries: filteredEntriesUnsorted, expandedArtEntry: $expandedArtEntry)
                     .environmentObject(historyManager)
             }
@@ -380,18 +384,18 @@ struct PlayHistoryView: View {
         let isHovered = hoveredEntryID == entry.id
         let source = sourceLabel(for: entry)
 
-        return HStack(spacing: 12) {
-            // Album art
+        return HStack(spacing: 10) {
+            // Album art — fixed size anchor
             CachedAsyncImage(url: entry.albumArtURI.flatMap { URL(string: $0) }, cornerRadius: 6)
                 .frame(width: 40, height: 40)
                 .onTapGesture { expandedArtEntry = entry }
 
-            // Track info
+            // Track info — fills available space
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title)
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     if !entry.artist.isEmpty {
                         Text(entry.artist)
                             .font(.system(size: 11))
@@ -399,7 +403,7 @@ struct PlayHistoryView: View {
                             .lineLimit(1)
                     }
                     if !entry.album.isEmpty {
-                        Text("—")
+                        Text("·")
                             .font(.system(size: 11))
                             .foregroundStyle(.quaternary)
                         Text(entry.album)
@@ -408,7 +412,7 @@ struct PlayHistoryView: View {
                             .lineLimit(1)
                     }
                     if !entry.stationName.isEmpty {
-                        Text("—")
+                        Text("·")
                             .font(.system(size: 11))
                             .foregroundStyle(.quaternary)
                         Text(entry.stationName)
@@ -418,42 +422,36 @@ struct PlayHistoryView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer()
-
-            // Source badge
+            // Right-aligned columns — all always present with fixed widths for alignment
             Text(source)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
                 .background(ServiceColor.color(for: source), in: Capsule())
+                .frame(width: 100, alignment: .center)
 
-            // Room
-            if !entry.groupName.isEmpty {
-                HStack(spacing: 3) {
-                    Image(systemName: "hifispeaker")
-                        .font(.system(size: 9))
-                    Text(entry.groupName)
-                        .font(.system(size: 11))
-                }
+            HStack(spacing: 3) {
+                Image(systemName: "hifispeaker")
+                    .font(.system(size: 9))
+                Text(entry.groupName.isEmpty ? "—" : entry.groupName)
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.tertiary)
+            .frame(width: 100, alignment: .leading)
+
+            Text(entry.duration > 0 ? formatDuration(entry.duration) : "—")
+                .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.tertiary)
-                .frame(width: 90, alignment: .leading)
-            }
+                .frame(width: 44, alignment: .trailing)
 
-            // Duration
-            if entry.duration > 0 {
-                Text(formatDuration(entry.duration))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 40, alignment: .trailing)
-            }
-
-            // Timestamp
             Text(entry.timestamp, format: .relative(presentation: .named))
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
-                .frame(width: 80, alignment: .trailing)
+                .frame(width: 85, alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)

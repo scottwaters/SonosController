@@ -41,6 +41,7 @@
 		A10037 /* AlarmsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10037; };
 		A10038 /* ArtResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10038; };
 		A10039 /* BrowseItemArtLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10039; };
+		A10040 /* PlayHistoryView2.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10040; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -80,6 +81,7 @@
 		B10037 /* AlarmsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlarmsViewModel.swift; sourceTree = "<group>"; };
 		B10038 /* ArtResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtResolver.swift; sourceTree = "<group>"; };
 		B10039 /* BrowseItemArtLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseItemArtLoader.swift; sourceTree = "<group>"; };
+		B10040 /* PlayHistoryView2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayHistoryView2.swift; sourceTree = "<group>"; };
 		B10020 /* SonosController.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SonosController.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -149,6 +151,7 @@
 				B10022 /* ColorSwatchGrid.swift */,
 				B10023 /* PresetManagerView.swift */,
 				B10024 /* PlayHistoryView.swift */,
+				B10040 /* PlayHistoryView2.swift */,
 				B10025 /* MarqueeText.swift */,
 				B10026 /* HomeTheaterEQView.swift */,
 				B10027 /* WindowManager.swift */,
@@ -259,6 +262,7 @@
 				A10022 /* ColorSwatchGrid.swift in Sources */,
 				A10023 /* PresetManagerView.swift in Sources */,
 				A10024 /* PlayHistoryView.swift in Sources */,
+				A10040 /* PlayHistoryView2.swift in Sources */,
 				A10025 /* MarqueeText.swift in Sources */,
 				A10026 /* HomeTheaterEQView.swift in Sources */,
 				A10027 /* WindowManager.swift in Sources */,
