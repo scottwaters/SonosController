@@ -97,6 +97,16 @@ public final class PlayHistoryManager: ObservableObject {
 
         lastLoggedTrack[groupID] = dedupKey
 
+        // Only persist internet art URLs — speaker-local /getaa URLs are ephemeral
+        // and break after IP changes or restarts. updateArtwork() will backfill
+        // from iTunes search when it completes.
+        let artURI: String?
+        if let art = metadata.albumArtURI, !art.isEmpty, !art.contains("/getaa?") {
+            artURI = art
+        } else {
+            artURI = nil
+        }
+
         let entry = PlayHistoryEntry(
             title: TrackMetadata.filterDeviceID(metadata.title),
             artist: TrackMetadata.filterDeviceID(metadata.artist),
@@ -105,7 +115,7 @@ public final class PlayHistoryManager: ObservableObject {
             sourceURI: metadata.trackURI,
             groupName: groupName,
             duration: metadata.duration,
-            albumArtURI: metadata.albumArtURI
+            albumArtURI: artURI
         )
         repo.insert(entry)
         entries.append(entry)
@@ -115,10 +125,10 @@ public final class PlayHistoryManager: ObservableObject {
     public func updateArtwork(forTitle title: String, artist: String, artURL: String) {
         for i in entries.indices.reversed() {
             if entries[i].title == title && entries[i].artist == artist {
-                guard entries[i].albumArtURI != artURL else { return }
-                entries[i].albumArtURI = artURL
-                repo.updateArtwork(id: entries[i].id, artURL: artURL)
-                return
+                if entries[i].albumArtURI != artURL {
+                    entries[i].albumArtURI = artURL
+                    repo.updateArtwork(id: entries[i].id, artURL: artURL)
+                }
             }
         }
     }
