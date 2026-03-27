@@ -858,9 +858,11 @@ public class SonosManager: ObservableObject {
 
     // MARK: - Alarms
 
-    public func getAlarms() async throws -> [SonosAlarm] {
-        // Alarm lists can be inconsistent across speakers during sync.
-        // Query multiple speakers and return the longest (most complete) list.
+    /// Cached alarm list — populated by refreshAlarms(), read by UI
+    @Published public var cachedAlarms: [SonosAlarm] = []
+
+    /// Fetches alarms from all coordinators, picks the most complete list, caches it.
+    public func refreshAlarms() async {
         var bestAlarms: [SonosAlarm] = []
         let candidates = groups.compactMap(\.coordinator)
         for device in candidates {
@@ -878,7 +880,12 @@ public class SonosManager: ObservableObject {
                 bestAlarms[i].roomName = dev.roomName
             }
         }
-        return bestAlarms
+        cachedAlarms = bestAlarms.sorted { $0.startTime < $1.startTime }
+    }
+
+    public func getAlarms() async throws -> [SonosAlarm] {
+        await refreshAlarms()
+        return cachedAlarms
     }
 
     @discardableResult

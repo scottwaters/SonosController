@@ -235,7 +235,7 @@ struct ContentView: View {
                     }
                     .help(L10n.manageAlarms)
                     .popover(isPresented: $showAlarms) {
-                        AlarmsView(sonosManager: sonosManager)
+                        AlarmsView()
                             .environmentObject(sonosManager)
                             .frame(width: 340, height: 400)
                     }
