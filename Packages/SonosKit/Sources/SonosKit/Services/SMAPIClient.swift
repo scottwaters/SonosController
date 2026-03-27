@@ -183,6 +183,7 @@ public final class SMAPIClient {
         <s:credentials>
         <s:deviceId>\(token.deviceID)</s:deviceId>
         <s:deviceProvider>Sonos</s:deviceProvider>
+        <s:context/>
         <s:loginToken>
         <s:token>\(token.authToken)</s:token>
         <s:key>\(token.privateKey)</s:key>
@@ -194,6 +195,57 @@ public final class SMAPIClient {
         \(bodyContent)
         </soap:Body></soap:Envelope>
         """
+    }
+
+    /// Anonymous SMAPI envelope — for services that don't require auth (e.g. TuneIn)
+    public func getMetadataAnonymous(serviceURI: String, deviceID: String, id: String = "root",
+                                     index: Int = 0, count: Int = 20) async throws -> (items: [SMAPIMediaItem], total: Int) {
+        let body = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+         xmlns:s="http://www.sonos.com/Services/1.1">
+        <soap:Header>
+        <s:credentials>
+        <s:deviceId>\(deviceID)</s:deviceId>
+        <s:deviceProvider>Sonos</s:deviceProvider>
+        </s:credentials>
+        </soap:Header>
+        <soap:Body>
+        <s:getMetadata>
+        <s:id>\(xmlEscape(id))</s:id>
+        <s:index>\(index)</s:index>
+        <s:count>\(count)</s:count>
+        </s:getMetadata>
+        </soap:Body></soap:Envelope>
+        """
+        let result = try await soapCall(url: serviceURI, action: "http://www.sonos.com/Services/1.1#getMetadata", body: body)
+        return parseMediaList(result)
+    }
+
+    public func searchAnonymous(serviceURI: String, deviceID: String, searchID: String = "artist",
+                                term: String, index: Int = 0, count: Int = 20) async throws -> (items: [SMAPIMediaItem], total: Int) {
+        guard !term.trimmingCharacters(in: .whitespaces).isEmpty else { return ([], 0) }
+        let body = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+         xmlns:s="http://www.sonos.com/Services/1.1">
+        <soap:Header>
+        <s:credentials>
+        <s:deviceId>\(deviceID)</s:deviceId>
+        <s:deviceProvider>Sonos</s:deviceProvider>
+        </s:credentials>
+        </soap:Header>
+        <soap:Body>
+        <s:search>
+        <s:id>\(searchID)</s:id>
+        <s:term>\(xmlEscape(term))</s:term>
+        <s:index>\(index)</s:index>
+        <s:count>\(count)</s:count>
+        </s:search>
+        </soap:Body></soap:Envelope>
+        """
+        let result = try await soapCall(url: serviceURI, action: "http://www.sonos.com/Services/1.1#search", body: body)
+        return parseMediaList(result)
     }
 
     private func soapCallWithRefresh(url: String, action: String, body: String, token: SMAPIToken) async throws -> String {

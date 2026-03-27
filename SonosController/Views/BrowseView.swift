@@ -98,18 +98,15 @@ struct BrowseView: View {
                 let current = breadcrumbs.last ?? BrowseDestination(title: "", objectID: "")
                 if current.objectID == "RECENT:" {
                     RecentlyPlayedView(group: group)
-                } else if current.objectID.hasPrefix("SMAPI:"),
-                          let sidStr = current.objectID.components(separatedBy: ":").last,
-                          let sid = Int(sidStr),
-                          let service = smapiManager.availableServices.first(where: { $0.id == sid }) {
-                    ServiceBrowseView(service: service, group: group)
-                        .environmentObject(smapiManager)
                 } else {
                     BrowseListView(
                         title: current.title,
                         objectID: current.objectID,
                         group: group,
                         sonosManager: sonosManager,
+                        smapiServiceID: current.smapiServiceID,
+                        smapiServiceURI: current.smapiServiceURI,
+                        smapiAuthType: current.smapiAuthType,
                         onNavigate: { dest in
                             breadcrumbs.append(dest)
                         }
@@ -134,6 +131,17 @@ struct BrowseView: View {
 struct BrowseDestination: Hashable {
     let title: String
     let objectID: String
+    var smapiServiceID: Int? = nil
+    var smapiServiceURI: String? = nil
+    var smapiAuthType: String? = nil
+
+    init(title: String, objectID: String, smapiService: SMAPIServiceDescriptor? = nil) {
+        self.title = title
+        self.objectID = objectID
+        self.smapiServiceID = smapiService?.id
+        self.smapiServiceURI = smapiService?.secureUri
+        self.smapiAuthType = smapiService?.authType
+    }
 }
 
 struct BrowseSectionsView: View {
@@ -159,13 +167,28 @@ struct BrowseSectionsView: View {
                 }
             }
 
-            // TODO: SMAPI music services browsing is not working reliably yet.
-            // Re-enable this section once SMAPI auth and browse are stable.
-            // if smapiManager.isEnabled && !smapiManager.authenticatedServiceList.isEmpty {
-            //     Section("Music Services") {
-            //         ForEach(smapiManager.authenticatedServiceList, id: \.id) { service in ... }
-            //     }
-            // }
+            // SMAPI Music Services
+            if smapiManager.isEnabled {
+                let authenticated = smapiManager.authenticatedServiceList
+                let anonymous = smapiManager.availableServices.filter { $0.authType == "Anonymous" }
+                let browseable = authenticated + anonymous
+                if !browseable.isEmpty {
+                    Section("Music Services") {
+                        ForEach(browseable, id: \.id) { service in
+                            Button {
+                                onNavigate(BrowseDestination(
+                                    title: service.name,
+                                    objectID: "SMAPI:\(service.id):root",
+                                    smapiService: service
+                                ))
+                            } label: {
+                                Label(service.name, systemImage: "music.note.house")
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
 
             if isLoading && sonosManager.browseSections.isEmpty {
                 Section {
@@ -213,11 +236,10 @@ struct BrowseSectionsView: View {
             Task {
                 await sonosManager.loadBrowseSections()
                 isLoading = false
-                // TODO: SMAPI service loading disabled — not working reliably yet.
-                // if smapiManager.isEnabled && smapiManager.availableServices.isEmpty,
-                //    let speaker = sonosManager.groups.first?.coordinator {
-                //     await smapiManager.loadServices(...)
-                // }
+                if smapiManager.isEnabled && smapiManager.availableServices.isEmpty,
+                   let speaker = sonosManager.groups.first?.coordinator {
+                    await smapiManager.loadServices(speakerIP: speaker.ip, musicServicesList: sonosManager.musicServicesList)
+                }
             }
         }
     }
@@ -227,11 +249,21 @@ struct BrowseSectionsView: View {
 struct BrowseListView: View {
     @EnvironmentObject var sonosManager: SonosManager
     @EnvironmentObject var playlistScanner: PlaylistServiceScanner
+    @EnvironmentObject var smapiManager: SMAPIAuthManager
     @State private var vm: BrowseViewModel
     let onNavigate: (BrowseDestination) -> Void
 
-    init(title: String, objectID: String, group: SonosGroup?, sonosManager: SonosManager, onNavigate: @escaping (BrowseDestination) -> Void) {
+    private let smapiServiceID: Int?
+    private let smapiServiceURI: String?
+    private let smapiAuthType: String?
+
+    init(title: String, objectID: String, group: SonosGroup?, sonosManager: SonosManager,
+         smapiServiceID: Int? = nil, smapiServiceURI: String? = nil, smapiAuthType: String? = nil,
+         onNavigate: @escaping (BrowseDestination) -> Void) {
         self.onNavigate = onNavigate
+        self.smapiServiceID = smapiServiceID
+        self.smapiServiceURI = smapiServiceURI
+        self.smapiAuthType = smapiAuthType
         _vm = State(wrappedValue: BrowseViewModel(sonosManager: sonosManager, objectID: objectID, title: title, group: group))
     }
 
@@ -364,6 +396,15 @@ struct BrowseListView: View {
             }
         }
         .onAppear {
+            // Configure SMAPI if this is a service browse
+            if let sid = smapiServiceID, let uri = smapiServiceURI {
+                vm.smapiServiceID = sid
+                vm.smapiServiceURI = uri
+                vm.smapiAuthType = smapiAuthType
+                vm.smapiClient = smapiManager.client
+                vm.smapiToken = smapiManager.tokenStore.getToken(for: sid)
+                vm.smapiDeviceID = smapiManager.tokenStore.authenticatedServices.values.first?.deviceID ?? ""
+            }
             Task {
                 await vm.loadItems()
                 let sqItems = vm.items.filter { $0.objectID.hasPrefix("SQ:") }
@@ -423,7 +464,7 @@ struct BrowseListView: View {
             if item.isContainer {
                 Divider()
                 Button(L10n.browse) {
-                    onNavigate(BrowseDestination(title: item.title, objectID: item.objectID))
+                    onNavigate(smapiDestination(title: item.title, objectID: item.objectID))
                 }
             }
             if item.objectID.hasPrefix("SQ:") && item.isContainer && objectID == "SQ:" {
@@ -441,12 +482,25 @@ struct BrowseListView: View {
         }
     }
 
+    private func smapiDestination(title: String, objectID: String) -> BrowseDestination {
+        if vm.isSMAPI, let sid = smapiServiceID, let uri = smapiServiceURI {
+            // Carry SMAPI context for drill-down
+            let smapiObjID = "SMAPI:\(sid):\(objectID)"
+            var dest = BrowseDestination(title: title, objectID: smapiObjID)
+            dest.smapiServiceID = sid
+            dest.smapiServiceURI = uri
+            dest.smapiAuthType = smapiAuthType
+            return dest
+        }
+        return BrowseDestination(title: title, objectID: objectID)
+    }
+
     private func handleTap(_ item: BrowseItem) {
         if item.isContainer {
             if item.objectID.hasPrefix("SQ:") {
                 Task { await playlistScanner.scanPlaylist(objectID: item.objectID, using: sonosManager, force: true) }
             }
-            onNavigate(BrowseDestination(title: item.title, objectID: item.objectID))
+            onNavigate(smapiDestination(title: item.title, objectID: item.objectID))
         } else if let group = group {
             Task { await vm.play(item) }
         }

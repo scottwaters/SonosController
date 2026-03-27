@@ -249,11 +249,15 @@ struct SettingsView: View {
                     }
                 }
 
-                    // TODO: SMAPI music services not working reliably yet. Hidden until stable.
-                    // settingsSection("Music Services") {
-                    //     MusicServicesSettingsSection()
-                    //         .environmentObject(smapiManager)
-                    // }
+                    settingsSection("Music Services") {
+                        Toggle("Enable Music Services", isOn: Binding(
+                            get: { smapiManager.isEnabled },
+                            set: { smapiManager.isEnabled = $0 }
+                        ))
+                        Text("Browse and search music services (TuneIn, Spotify, etc.) from the sidebar. Some services require authentication.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
                 .padding(32)
             }

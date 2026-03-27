@@ -33,7 +33,25 @@ final class BrowseViewModel {
 
     private let pageSize = 100
 
+    // SMAPI service info (nil for standard UPnP browsing)
+    var smapiServiceID: Int?
+    var smapiServiceURI: String?
+    var smapiAuthType: String?
+    var smapiClient: SMAPIClient?
+    var smapiToken: SMAPIToken?
+    var smapiDeviceID: String = ""
+
+    var isSMAPI: Bool { smapiServiceURI != nil }
     var isSearch: Bool { objectID.hasPrefix("SEARCH:") }
+
+    /// The SMAPI item ID to browse (extracted from "SMAPI:sid:itemID" format or just the raw objectID)
+    var smapiItemID: String {
+        if objectID.hasPrefix("SMAPI:") {
+            let parts = objectID.components(separatedBy: ":")
+            return parts.count >= 3 ? parts.dropFirst(2).joined(separator: ":") : "root"
+        }
+        return objectID
+    }
 
     init(sonosManager: any BrowsingServices, objectID: String, title: String, group: SonosGroup?) {
         self.sonosManager = sonosManager
@@ -75,7 +93,9 @@ final class BrowseViewModel {
         isLoading = true
         errorMessage = nil
         do {
-            if isSearch {
+            if isSMAPI {
+                try await loadSMAPIItems()
+            } else if isSearch {
                 let query = String(objectID.dropFirst("SEARCH:".count))
                 async let artistResults = sonosManager.search(query: query, in: "A:ALBUMARTIST", start: 0, count: 20)
                 async let albumResults = sonosManager.search(query: query, in: "A:ALBUM", start: 0, count: 20)
@@ -91,9 +111,38 @@ final class BrowseViewModel {
                 loadedCount = result.count
             }
         } catch {
-            errorMessage = AppError.from(error as? SOAPError ?? SOAPError.networkError(error)).errorDescription
+            errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func loadSMAPIItems() async throws {
+        guard let uri = smapiServiceURI, let client = smapiClient else {
+            errorMessage = "Service not configured"
+            return
+        }
+        let browseID = smapiItemID
+        let result: (items: [SMAPIMediaItem], total: Int)
+        if let token = smapiToken {
+            result = try await client.getMetadata(serviceURI: uri, token: token, id: browseID, index: 0, count: pageSize)
+        } else {
+            result = try await client.getMetadataAnonymous(serviceURI: uri, deviceID: smapiDeviceID, id: browseID, index: 0, count: pageSize)
+        }
+        // Convert SMAPIMediaItem to BrowseItem for display
+        items = result.items.map { smapi in
+            BrowseItem(
+                id: smapi.id,
+                title: smapi.title,
+                artist: smapi.artist,
+                album: smapi.album,
+                albumArtURI: smapi.albumArtURI.isEmpty ? nil : smapi.albumArtURI,
+                itemClass: smapi.canBrowse ? .container : .musicTrack,
+                resourceURI: smapi.uri.isEmpty ? nil : smapi.uri,
+                resourceMetadata: smapi.metadata.isEmpty ? nil : smapi.metadata
+            )
+        }
+        totalItems = result.total
+        loadedCount = items.count
     }
 
     func loadMore() async {
