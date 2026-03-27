@@ -103,27 +103,19 @@ public final class AVTransportService {
         )
 
         var metadata = TrackMetadata()
+        metadata.trackURI = result["TrackURI"]
 
         if let didl = result["TrackMetaData"], !didl.isEmpty,
            didl != "NOT_IMPLEMENTED" {
+            // Base DIDL extraction (title, artist, album, art)
+            metadata.enrichFromDIDL(didl, device: device)
+
+            // Radio/stream-specific: parse r:streamContent for current track info
             if let parsed = XMLResponseParser.parseDIDLMetadata(didl) {
-                metadata.title = parsed.title
-                metadata.artist = parsed.creator
-                metadata.album = parsed.album
-
-                // Detect radio/streaming from the track URI or content type
                 let trackURI = result["TrackURI"] ?? ""
-                let isRadioStream = trackURI.contains("x-sonosapi-stream:") ||
-                                    trackURI.contains("x-sonosapi-radio:") ||
-                                    trackURI.contains("x-rincon-mp3radio:") ||
-                                    trackURI.hasSuffix(".m3u8") ||
-                                    trackURI.hasSuffix(".pls") ||
-                                    trackURI.contains("tunein.com") ||
-                                    parsed.title.lowercased().hasSuffix(".m3u8") ||
-                                    parsed.title.lowercased().hasSuffix(".pls") ||
-                                    parsed.title.lowercased().hasSuffix(".mp3")
+                let isRadio = URIPrefix.isRadio(trackURI) ||
+                              trackURI.hasSuffix(".m3u8") || trackURI.hasSuffix(".pls")
 
-                // r:streamContent has the currently playing track for radio/streams.
                 if !parsed.streamContent.isEmpty {
                     let parts = parsed.streamContent.components(separatedBy: " - ")
                     if parts.count >= 2 {
@@ -132,27 +124,20 @@ public final class AVTransportService {
                     } else {
                         metadata.title = Self.smartCase(parsed.streamContent)
                     }
-                } else if isRadioStream {
-                    // No track info from stream — clear title so station name shows alone
+                } else if isRadio {
                     metadata.title = ""
                     metadata.artist = ""
                 }
 
-                // Final safety: clear title if it looks like a technical name
-                if Self.looksLikeTechnicalTitle(metadata.title) {
-                    metadata.title = ""
-                }
-                if Self.looksLikeTechnicalTitle(metadata.artist) {
-                    metadata.artist = ""
-                }
+                // Clear technical-looking names
+                if Self.looksLikeTechnicalTitle(metadata.title) { metadata.title = "" }
+                if Self.looksLikeTechnicalTitle(metadata.artist) { metadata.artist = "" }
 
-                // Relative art URIs need the device's base URL prepended
-                var artURI = device.makeAbsoluteURL(parsed.albumArtURI)
-                if artURI.isEmpty, !parsed.resourceURI.isEmpty {
+                // Fallback art via /getaa if DIDL had no art
+                if metadata.albumArtURI == nil, !parsed.resourceURI.isEmpty {
                     let encoded = parsed.resourceURI.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? parsed.resourceURI
-                    artURI = "http://\(device.ip):\(device.port)/getaa?s=1&u=\(encoded)"
+                    metadata.albumArtURI = "http://\(device.ip):\(device.port)/getaa?s=1&u=\(encoded)"
                 }
-                metadata.albumArtURI = artURI.isEmpty ? nil : artURI
             }
         }
 
@@ -179,7 +164,6 @@ public final class AVTransportService {
         if let trackStr = result["Track"], let track = Int(trackStr) {
             metadata.trackNumber = track
         }
-        metadata.trackURI = result["TrackURI"]
 
         return metadata
     }

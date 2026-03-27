@@ -374,6 +374,114 @@ final class NowPlayingViewModel {
         return String(format: "%d:%02d", minutes, seconds)
     }
 
+    // MARK: - Art Orchestration (single entry point — View calls this, not art.* directly)
+
+    func handleMetadataChanged(_ metadata: TrackMetadata) {
+        // Track URI changed — reset search state
+        art.handleTrackURIChanged(trackMetadata: metadata, group: group)
+
+        // During ad breaks, just update display state (show station art)
+        guard !metadata.isAdBreak else {
+            art.updateDisplayedArt(trackMetadata: metadata, group: group)
+            return
+        }
+
+        // Update from new albumArtURI if available
+        if let artStr = metadata.albumArtURI, !artStr.isEmpty, let url = URL(string: artStr) {
+            if art.displayedArtURL != url && !art.forceWebArt {
+                art.displayedArtURL = url
+            }
+        }
+
+        // Search for web art if metadata art is missing
+        searchWebArtIfNeeded(metadata)
+        art.updateDisplayedArt(trackMetadata: metadata, group: group)
+
+        // Radio: search for track-specific art
+        searchRadioTrackArt(metadata)
+    }
+
+    func onArtAppear() {
+        art.loadPersistedArtOverride(trackMetadata: trackMetadata, group: group)
+        handleMetadataChanged(trackMetadata)
+    }
+
+    // MARK: - Art Search (orchestration — delegates to AlbumArtSearchService)
+
+    private func searchWebArtIfNeeded(_ metadata: TrackMetadata) {
+        let hasArt = metadata.albumArtURI != nil && !(metadata.albumArtURI?.isEmpty ?? true)
+        let isLocalFile = metadata.trackURI.map(URIPrefix.isLocal) ?? false
+        if hasArt && !isLocalFile {
+            if !art.forceWebArt { if art.webArtURL != nil { art.webArtURL = nil } }
+            return
+        }
+        art.forceWebArt = false
+
+        let searchTerm: String
+        if isLocalFile && !metadata.album.isEmpty {
+            searchTerm = metadata.album
+        } else if !metadata.stationName.isEmpty {
+            searchTerm = metadata.stationName
+        } else if !metadata.album.isEmpty {
+            searchTerm = metadata.album
+        } else if !metadata.title.isEmpty {
+            searchTerm = metadata.title
+        } else {
+            searchTerm = ""
+        }
+        let artist = displayArtist
+        let key = "\(searchTerm)|\(artist)"
+        guard !searchTerm.isEmpty else { return }
+        guard key != art.lastArtSearchKey else { return }
+        art.lastArtSearchKey = key
+        art.webArtURL = nil
+        Task {
+            if let artURL = await AlbumArtSearchService.shared.searchArtwork(
+                artist: artist, album: searchTerm
+            ) {
+                art.webArtURL = URL(string: artURL)
+                art.playHistoryManager?.updateArtwork(
+                    forTitle: metadata.title, artist: metadata.artist, artURL: artURL
+                )
+            } else {
+                art.webArtURL = nil
+            }
+            art.updateDisplayedArt(trackMetadata: metadata, group: group)
+        }
+    }
+
+    private func searchRadioTrackArt(_ metadata: TrackMetadata) {
+        guard !metadata.stationName.isEmpty,
+              !metadata.title.isEmpty,
+              metadata.title != metadata.stationName,
+              !metadata.isAdBreak else {
+            if art.radioTrackArtURL != nil { art.radioTrackArtURL = nil }
+            art.lastRadioTrackKey = ""
+            return
+        }
+        let key = "\(metadata.title)|\(metadata.artist)"
+        guard key != art.lastRadioTrackKey else { return }
+        art.lastRadioTrackKey = key
+        if art.radioStationArtURL == nil, let stationArt = art.displayedArtURL ?? metadata.albumArtURI.flatMap({ URL(string: $0) }) {
+            art.radioStationArtURL = stationArt
+        }
+        let artist = TrackMetadata.filterDeviceID(metadata.artist)
+        let cleanTitle = AlbumArtSearchService.cleanTrackTitle(metadata.title)
+        let searchTitle = cleanTitle.isEmpty ? metadata.title : cleanTitle
+        Task {
+            if let artURL = await AlbumArtSearchService.shared.searchRadioTrackArt(
+                artist: artist, title: searchTitle
+            ) {
+                art.radioTrackArtURL = URL(string: artURL)
+                art.playHistoryManager?.updateArtwork(
+                    forTitle: metadata.title, artist: metadata.artist, artURL: artURL
+                )
+            } else {
+                art.radioTrackArtURL = nil
+            }
+        }
+    }
+
     // MARK: - Metadata Enrichment
 
     /// Enriches track metadata from media info for radio streams.

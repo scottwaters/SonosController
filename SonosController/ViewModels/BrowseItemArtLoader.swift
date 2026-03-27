@@ -38,13 +38,11 @@ final class BrowseItemArtLoader {
         }
 
         // 1. Try DIDL metadata
-        if let meta = item.resourceMetadata, !meta.isEmpty {
-            let didl = meta.contains("&lt;") ? XMLResponseParser.xmlUnescape(meta) : meta
-            if let parsed = XMLResponseParser.parseDIDLMetadata(didl), !parsed.albumArtURI.isEmpty {
-                var artURI = parsed.albumArtURI
-                if let device = sonosManager.groups.first?.coordinator {
-                    artURI = device.makeAbsoluteURL(artURI)
-                }
+        if let meta = item.resourceMetadata, !meta.isEmpty,
+           let device = sonosManager.groups.first?.coordinator {
+            var probe = TrackMetadata()
+            probe.enrichFromDIDL(meta, device: device)
+            if let artURI = probe.albumArtURI, !artURI.isEmpty {
                 sonosManager.cacheArtURL(artURI, forURI: item.resourceURI ?? "", title: item.title, itemID: item.objectID)
                 return URL(string: artURI)
             }

@@ -9,7 +9,8 @@ public struct TrackMetadata: Equatable {
     public var position: TimeInterval
     public var trackNumber: Int
     public var queueSize: Int
-    public var stationName: String  // Radio/stream station name (shown above track info)
+    public var stationName: String
+    public var trackURI: String?
 
     public init(title: String = "", artist: String = "", album: String = "",
                 albumArtURI: String? = nil, duration: TimeInterval = 0,
@@ -26,13 +27,25 @@ public struct TrackMetadata: Equatable {
         self.stationName = stationName
     }
 
-    public var durationString: String {
-        formatTime(duration)
+    // MARK: - Computed State
+
+    /// True when a radio station is playing but track details are absent (ad break, buffer, etc.)
+    public var isAdBreak: Bool {
+        guard isRadioStream || !stationName.isEmpty else { return false }
+        if title.isEmpty { return true }
+        if title == stationName && artist.isEmpty { return true }
+        return false
     }
 
-    public var positionString: String {
-        formatTime(position)
+    /// True if the track URI indicates a radio/internet stream
+    public var isRadioStream: Bool {
+        trackURI.map(URIPrefix.isRadio) ?? false
     }
+
+    // MARK: - Formatting
+
+    public var durationString: String { formatTime(duration) }
+    public var positionString: String { formatTime(position) }
 
     private func formatTime(_ interval: TimeInterval) -> String {
         let total = Int(interval)
@@ -46,7 +59,6 @@ public struct TrackMetadata: Equatable {
     }
 
     /// Extracts the Sonos service ID (sid=NNN) from the track URI, if present.
-    /// Used to identify which streaming service is playing.
     public var serviceID: Int? {
         guard let uri = trackURI, let range = uri.range(of: "sid=") else { return nil }
         let after = uri[range.upperBound...]
@@ -54,38 +66,66 @@ public struct TrackMetadata: Equatable {
         return Int(numStr)
     }
 
-    public var trackURI: String?
+    // MARK: - RINCON Device ID Filtering
 
-    /// True if a string looks like a Sonos device ID (e.g. "RINCON_000E58A1B2C401400")
     public static func isDeviceID(_ value: String) -> Bool {
         value.hasPrefix("RINCON_")
     }
 
-    /// Returns the string blanked if it's a RINCON device ID, otherwise unchanged.
     public static func filterDeviceID(_ value: String) -> String {
         isDeviceID(value) ? "" : value
     }
 
-    /// Enriches metadata from GetMediaInfo's CurrentURIMetaData DIDL.
-    /// Extracts station name, title, and album art for radio/streaming sources.
-    /// Used by TransportStrategy and NowPlayingViewModel to avoid duplicated enrichment logic.
-    public mutating func enrichFromMediaInfo(_ mediaInfo: [String: String], device: SonosDevice) {
-        guard let rawDIDL = mediaInfo["CurrentURIMetaData"], !rawDIDL.isEmpty,
-              rawDIDL != "NOT_IMPLEMENTED" else { return }
+    // MARK: - DIDL Enrichment (single source of truth for all DIDL parsing)
+
+    /// Enriches metadata from a raw DIDL-Lite XML string.
+    /// Handles XML-escaped input, extracts title, artist, album, art URI.
+    /// Art URIs are made absolute using the provided device address.
+    /// Used by: AVTransportService, TransportStrategy, BrowseItemArtLoader, enrichFromMediaInfo.
+    public mutating func enrichFromDIDL(_ rawDIDL: String, device: SonosDevice) {
+        guard !rawDIDL.isEmpty, rawDIDL != "NOT_IMPLEMENTED" else { return }
         let didl = rawDIDL.contains("&lt;") ? XMLResponseParser.xmlUnescape(rawDIDL) : rawDIDL
         guard let parsed = XMLResponseParser.parseDIDLMetadata(didl) else { return }
-        let currentURI = mediaInfo["CurrentURI"] ?? ""
-        if URIPrefix.isRadio(currentURI), !parsed.title.isEmpty {
-            stationName = parsed.title
-        }
-        if title.isEmpty {
-            title = parsed.title
-        }
+
+        if title.isEmpty { title = parsed.title }
+        if artist.isEmpty { artist = parsed.creator }
+        if album.isEmpty { album = parsed.album }
+
         let artURI = device.makeAbsoluteURL(parsed.albumArtURI)
         if !artURI.isEmpty {
             albumArtURI = artURI
         }
     }
+
+    /// Enriches metadata from GetMediaInfo's CurrentURIMetaData DIDL.
+    /// Extracts station name for radio streams in addition to standard DIDL fields.
+    public mutating func enrichFromMediaInfo(_ mediaInfo: [String: String], device: SonosDevice) {
+        guard let rawDIDL = mediaInfo["CurrentURIMetaData"] else { return }
+        let currentURI = mediaInfo["CurrentURI"] ?? ""
+
+        // Save current title/artist — enrichFromDIDL only fills empty fields
+        let hadTitle = !title.isEmpty
+        enrichFromDIDL(rawDIDL, device: device)
+
+        // For radio streams, DIDL title is the station name
+        if let parsed = Self.quickParseDIDLTitle(rawDIDL),
+           URIPrefix.isRadio(currentURI), !parsed.isEmpty {
+            stationName = parsed
+            // If title was set from DIDL but it's just the station name, keep it
+            if !hadTitle && title == parsed {
+                // title is the station name — that's fine for now, track info may come later
+            }
+        }
+    }
+
+    /// Quick parse to get just the title from DIDL without full parsing.
+    private static func quickParseDIDLTitle(_ rawDIDL: String) -> String? {
+        guard !rawDIDL.isEmpty, rawDIDL != "NOT_IMPLEMENTED" else { return nil }
+        let didl = rawDIDL.contains("&lt;") ? XMLResponseParser.xmlUnescape(rawDIDL) : rawDIDL
+        return XMLResponseParser.parseDIDLMetadata(didl)?.title
+    }
+
+    // MARK: - Time Parsing
 
     public static func parseTimeString(_ time: String) -> TimeInterval {
         let parts = time.split(separator: ":").compactMap { Double($0) }

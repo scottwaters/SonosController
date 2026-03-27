@@ -279,31 +279,20 @@ public final class HybridEventFirstTransport: TransportStrategy, @unchecked Send
 
         // Parse track metadata from DIDL
         if let didlXML = event.currentTrackMetaData, !didlXML.isEmpty,
-           didlXML != "NOT_IMPLEMENTED" {
-            // The SAX parser already unescaped the val attribute, so didlXML is valid DIDL XML
-            if let parsed = XMLResponseParser.parseDIDLMetadata(didlXML) {
-                var artURI = parsed.albumArtURI
-                if let device = currentDevices[deviceID] {
-                    artURI = device.makeAbsoluteURL(artURI)
-                }
+           didlXML != "NOT_IMPLEMENTED",
+           let device = currentDevices[deviceID] {
+            var metadata = TrackMetadata()
+            metadata.trackURI = event.currentTrackURI
+            metadata.enrichFromDIDL(didlXML, device: device)
 
-                var metadata = TrackMetadata(
-                    title: parsed.title,
-                    artist: parsed.creator,
-                    album: parsed.album,
-                    albumArtURI: artURI.isEmpty ? nil : artURI
-                )
-                metadata.trackURI = event.currentTrackURI
-
-                if let durStr = event.currentTrackDuration {
-                    metadata.duration = TrackMetadata.parseTimeString(durStr)
-                }
-                if let numTracks = event.numberOfTracks {
-                    metadata.queueSize = numTracks
-                }
-
-                delegate?.transportDidUpdateTrackMetadata(group.coordinatorID, metadata: metadata)
+            if let durStr = event.currentTrackDuration {
+                metadata.duration = TrackMetadata.parseTimeString(durStr)
             }
+            if let numTracks = event.numberOfTracks {
+                metadata.queueSize = numTracks
+            }
+
+            delegate?.transportDidUpdateTrackMetadata(group.coordinatorID, metadata: metadata)
         } else if event.currentTrackURI != nil || event.currentTrackDuration != nil {
             // Event has URI/duration but no DIDL — trigger a position refresh
             // This happens on some radio stations when tracks change

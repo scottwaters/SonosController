@@ -908,9 +908,10 @@ public class SonosManager: ObservableObject {
             sections.append(BrowseSection(id: "shares", title: "Music Library Folders", objectID: "S:", icon: "externaldrive.connected.to.line.below"))
         }
 
-        if let total = await probeContainer(device: anyDevice, objectID: "R:0"), total > 0 {
-            sections.append(BrowseSection(id: "radio", title: "Radio", objectID: "R:0", icon: "antenna.radiowaves.left.and.right"))
-        }
+        // Radio directory (R:0) hidden — requires TuneIn/service integration not yet enabled
+        // if let total = await probeContainer(device: anyDevice, objectID: "R:0"), total > 0 {
+        //     sections.append(BrowseSection(id: "radio", title: "Radio", objectID: "R:0", icon: "antenna.radiowaves.left.and.right"))
+        // }
 
         self.browseSections = sections
         saveCache()

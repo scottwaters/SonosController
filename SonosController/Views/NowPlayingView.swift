@@ -423,15 +423,8 @@ struct NowPlayingView: View {
 
     private var albumArtView: some View {
         return ZStack(alignment: .bottomTrailing) {
-            if vm.art.inAdBreak, let stationArt = vm.art.radioStationArtURL {
-                // Ad break — show station art, not stale track art
-                CachedAsyncImage(url: stationArt, cornerRadius: 8)
-            } else if let trackArt = vm.art.radioTrackArtURL, !trackMetadata.stationName.isEmpty {
-                CachedAsyncImage(url: trackArt, cornerRadius: 8)
-            } else if let url = vm.art.displayedArtURL {
+            if let url = vm.art.artURLForDisplay(trackMetadata: trackMetadata) {
                 CachedAsyncImage(url: url, cornerRadius: 8)
-            } else if let stationArt = vm.art.radioStationArtURL, !trackMetadata.stationName.isEmpty {
-                CachedAsyncImage(url: stationArt, cornerRadius: 8)
             } else {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(
@@ -447,11 +440,8 @@ struct NowPlayingView: View {
                             .foregroundStyle(.white.opacity(0.6))
                     }
             }
-            // Show station badge only when track-specific art differs from station art
-            if let _ = vm.art.radioTrackArtURL,
-               let stationArt = vm.art.radioStationArtURL,
-               stationArt != vm.art.radioTrackArtURL,
-               stationArt != vm.art.displayedArtURL {
+            if vm.art.shouldShowStationBadge(trackMetadata: trackMetadata),
+               let stationArt = vm.art.radioStationArtURL {
                 CachedAsyncImage(url: stationArt, cornerRadius: 4)
                     .frame(width: 36, height: 36)
                     .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
@@ -459,24 +449,11 @@ struct NowPlayingView: View {
             }
         }
         .onAppear {
-            vm.art.loadPersistedArtOverride(trackMetadata: trackMetadata, group: group)
-            vm.art.searchWebArtIfNeeded(trackMetadata: trackMetadata, displayArtist: vm.displayArtist, group: group)
-            vm.art.updateDisplayedArt(trackMetadata: trackMetadata, group: group)
-            vm.art.searchRadioTrackArt(trackMetadata: trackMetadata)
+            vm.onArtAppear()
         }
         .onReceive(sonosManager.$groupTrackMetadata) { newMeta in
             let meta = newMeta[group.coordinatorID] ?? TrackMetadata()
-            // During ad breaks, don't let stale track art override station art
-            if !vm.art.isRadioAdBreak(meta) {
-                if let art = meta.albumArtURI, !art.isEmpty, let url = URL(string: art) {
-                    if vm.art.displayedArtURL != url && !vm.art.forceWebArt {
-                        vm.art.displayedArtURL = url
-                    }
-                }
-            }
-            vm.art.searchWebArtIfNeeded(trackMetadata: trackMetadata, displayArtist: vm.displayArtist, group: group)
-            vm.art.updateDisplayedArt(trackMetadata: trackMetadata, group: group)
-            vm.art.searchRadioTrackArt(trackMetadata: trackMetadata)
+            vm.handleMetadataChanged(meta)
         }
             .contextMenu {
                 Button(L10n.refreshArtwork) {
