@@ -91,7 +91,9 @@ public final class SMAPIAuthManager: ObservableObject {
             }
             if !snMap.isEmpty {
                 serviceSerialNumbers = snMap
-                sonosDebugLog("[SMAPI] Discovered \(snMap.count) service serial numbers")
+                sonosDebugLog("[SMAPI] Discovered \(snMap.count) service serial numbers: \(snMap)")
+            } else {
+                sonosDebugLog("[SMAPI] No serial numbers found in \(items.count) favorites")
             }
         } catch {
             sonosDebugLog("[SMAPI] Failed to discover serial numbers: \(error)")

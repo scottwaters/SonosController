@@ -408,7 +408,15 @@ struct BrowseListView: View {
                 vm.smapiClient = smapiManager.client
                 vm.smapiToken = smapiManager.tokenStore.getToken(for: sid)
                 vm.smapiDeviceID = smapiManager.tokenStore.authenticatedServices.values.first?.deviceID ?? ""
-                vm.smapiSerialNumber = smapiManager.serialNumber(for: sid)
+                // Ensure serial numbers are discovered before browsing
+                if smapiManager.serviceSerialNumbers.isEmpty {
+                    Task {
+                        await smapiManager.discoverSerialNumbers(using: sonosManager)
+                        vm.smapiSerialNumber = smapiManager.serialNumber(for: sid)
+                    }
+                } else {
+                    vm.smapiSerialNumber = smapiManager.serialNumber(for: sid)
+                }
             }
             Task {
                 await vm.loadItems()
