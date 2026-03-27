@@ -1,17 +1,16 @@
 /// AlarmsViewModel.swift — Business logic for alarm management.
+/// Uses ObservableObject (not @Observable) for reliable popover support on macOS.
 import Foundation
-import Observation
 import SonosKit
 
 @MainActor
-@Observable
-final class AlarmsViewModel {
+final class AlarmsViewModel: ObservableObject {
     let sonosManager: any AlarmServiceProtocol
 
-    var alarms: [SonosAlarm] = []
-    var isLoading = false
-    var editingAlarm: SonosAlarm?
-    var isCreating = false
+    @Published var alarms: [SonosAlarm] = []
+    @Published var isLoading = false
+    @Published var editingAlarm: SonosAlarm?
+    @Published var isCreating = false
 
     init(sonosManager: any AlarmServiceProtocol) {
         self.sonosManager = sonosManager
@@ -20,13 +19,18 @@ final class AlarmsViewModel {
     func loadAlarms() async {
         isLoading = true
         do {
-            alarms = try await sonosManager.getAlarms()
+            let result = try await sonosManager.getAlarms()
+            print("[ALARM] Fetched \(result.count) alarms from speaker")
+            for a in result {
+                print("[ALARM]   ID=\(a.id) \(a.startTime) \(a.recurrence) room=\(a.roomName)")
+            }
+            alarms = result
             alarms.sort { $0.startTime < $1.startTime }
-            sonosDebugLog("[ALARM] Loaded \(alarms.count) alarms")
         } catch {
-            sonosDebugLog("[ALARM] Load alarms failed: \(error)")
+            print("[ALARM] Load failed: \(error)")
         }
         isLoading = false
+        print("[ALARM] isLoading=\(isLoading) alarms.count=\(alarms.count)")
     }
 
     func toggleAlarm(_ alarm: SonosAlarm, enabled: Bool) async {

@@ -4,10 +4,10 @@ import SonosKit
 
 struct AlarmsView: View {
     @EnvironmentObject var sonosManager: SonosManager
-    @State private var vm: AlarmsViewModel
+    @StateObject private var vm: AlarmsViewModel
 
     init(sonosManager: SonosManager) {
-        _vm = State(initialValue: AlarmsViewModel(sonosManager: sonosManager))
+        _vm = StateObject(wrappedValue: AlarmsViewModel(sonosManager: sonosManager))
     }
 
     var body: some View {
