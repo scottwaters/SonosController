@@ -300,8 +300,6 @@ final class NowPlayingViewModel {
 
     func syncVolumeFromManager() {
         guard !isDraggingVolume else { return } // Don't override while user is dragging
-        let now = Date()
-        guard now > volumeGraceUntil else { return }
 
         if group.members.count > 1 {
             var totalVol = 0.0
@@ -343,8 +341,6 @@ final class NowPlayingViewModel {
     }
 
     func syncMuteFromManager() {
-        let now = Date()
-        guard now > muteGraceUntil else { return }
 
         for member in group.members {
             if !sonosManager.isMuteGraceActive(deviceID: member.id) {
