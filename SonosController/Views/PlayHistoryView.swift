@@ -9,6 +9,7 @@ struct PlayHistoryView: View {
     @State private var searchText = ""
     @State private var filterRoom: String?
     @State private var filterSource: String?
+    @State private var filterStarred = false
     @State private var filterDateRange: DateRange = .all
     @State private var sortNewestFirst = true
     @State private var showClearConfirm = false
@@ -44,7 +45,7 @@ struct PlayHistoryView: View {
     private var filteredEntriesUnsorted: [PlayHistoryEntry] { cachedFilteredEntries }
 
     private var hasActiveFilters: Bool {
-        filterRoom != nil || filterSource != nil || filterDateRange != .all || !searchText.isEmpty
+        filterRoom != nil || filterSource != nil || filterDateRange != .all || !searchText.isEmpty || filterStarred
     }
 
     /// Compute date range bounds from filter selection
@@ -65,13 +66,17 @@ struct PlayHistoryView: View {
     /// Refresh cached results from SQLite query
     private func refreshFilteredEntries() {
         let bounds = dateBounds
-        cachedFilteredEntries = historyManager.queryFiltered(
+        var results = historyManager.queryFiltered(
             since: bounds.since, until: bounds.until,
             room: filterRoom, source: filterSource,
             searchText: searchText.isEmpty ? nil : searchText,
             sortNewestFirst: sortNewestFirst
         )
-        cachedFilteredCount = cachedFilteredEntries.count
+        if filterStarred {
+            results = results.filter(\.starred)
+        }
+        cachedFilteredEntries = results
+        cachedFilteredCount = results.count
     }
 
     /// Debounced refresh for search text changes
@@ -263,6 +268,18 @@ struct PlayHistoryView: View {
             }
             .fixedSize()
 
+            // Starred filter
+            Button {
+                filterStarred.toggle()
+                refreshFilteredEntries()
+            } label: {
+                Image(systemName: filterStarred ? "star.fill" : "star")
+                    .font(.system(size: 12))
+                    .foregroundStyle(filterStarred ? .yellow : .secondary)
+            }
+            .buttonStyle(.plain)
+            .tooltip(filterStarred ? "Show all tracks" : "Show starred only")
+
             Spacer()
 
             // Count
@@ -299,6 +316,11 @@ struct PlayHistoryView: View {
                         withAnimation { filterSource = nil }
                     }
                 }
+                if filterStarred {
+                    filterChip(label: "Starred", icon: "star.fill", color: .yellow) {
+                        withAnimation { filterStarred = false; refreshFilteredEntries() }
+                    }
+                }
                 if !searchText.isEmpty {
                     filterChip(label: "\"\(searchText)\"", icon: "magnifyingglass") {
                         withAnimation { searchText = "" }
@@ -312,8 +334,10 @@ struct PlayHistoryView: View {
                         filterDateRange = .all
                         filterRoom = nil
                         filterSource = nil
+                        filterStarred = false
                         searchText = ""
                     }
+                    refreshFilteredEntries()
                 }
                 .font(.system(size: 11))
                 .buttonStyle(.plain)

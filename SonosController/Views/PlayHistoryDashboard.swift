@@ -134,6 +134,7 @@ struct PlayHistoryDashboard: View {
     private var listeningStreak: Int { stats?.listeningStreak ?? 0 }
     private var currentStreak: Int { stats?.currentStreak ?? 0 }
     private var averagePlaysPerDay: Double { stats?.averagePlaysPerDay ?? 0 }
+    private var starredCount: Int { stats?.starredCount ?? 0 }
 
     private func recomputeStats() {
         stats = DashboardStats(entries: entries, historyManager: historyManager)
@@ -662,6 +663,7 @@ struct PlayHistoryDashboard: View {
             statPill(icon: "chart.line.uptrend.xyaxis", label: "Avg/Day", value: String(format: "%.1f", averagePlaysPerDay), color: effectivePrimary)
             statPill(icon: "opticaldisc.fill", label: "Albums", value: "\(uniqueAlbumCount)", color: effectiveSecondary)
             statPill(icon: "antenna.radiowaves.left.and.right", label: "Stations", value: "\(uniqueStationCount)", color: .orange)
+            statPill(icon: "star.fill", label: "Starred", value: "\(starredCount)", color: .yellow)
             Spacer()
         }
     }
@@ -929,6 +931,7 @@ private struct DashboardStats {
     let listeningStreak: Int
     let currentStreak: Int
     let averagePlaysPerDay: Double
+    let starredCount: Int
 
     init(entries: [PlayHistoryEntry], historyManager: PlayHistoryManager) {
         self.totalEntries = entries.count
@@ -1051,6 +1054,7 @@ private struct DashboardStats {
         // Average plays per day
         let uniqueDayCount = dayCounts.count
         self.averagePlaysPerDay = uniqueDayCount > 0 ? Double(entries.count) / Double(uniqueDayCount) : 0
+        self.starredCount = entries.filter(\.starred).count
     }
 }
 

@@ -522,10 +522,14 @@ struct NowPlayingView: View {
     }
 
     private func starCurrentTrack() {
-        guard !trackMetadata.title.isEmpty else { return }
-        sonosManager.playHistoryManager?.starCurrentTrack(
-            title: trackMetadata.title, artist: trackMetadata.artist
-        )
+        guard !trackMetadata.title.isEmpty,
+              let manager = sonosManager.playHistoryManager else { return }
+        // Find the most recent matching entry and toggle its star
+        if let entry = manager.entries.last(where: {
+            $0.title == trackMetadata.title && $0.artist == trackMetadata.artist
+        }) {
+            manager.toggleStar(id: entry.id)
+        }
     }
 
     private var isCurrentTrackStarred: Bool {
