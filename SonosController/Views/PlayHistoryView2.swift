@@ -16,6 +16,7 @@ struct PlayHistoryView2: View {
     @Binding var expandedArtEntry: PlayHistoryEntry?
     var sourceLabel: (PlayHistoryEntry) -> String
     var onFilter: ((HistoryFilterAction) -> Void)?
+    var onStar: ((PlayHistoryEntry) -> Void)?
 
     private var groupedByDay: [(String, [PlayHistoryEntry])] {
         let calendar = Calendar.current
@@ -108,7 +109,12 @@ struct PlayHistoryView2: View {
                 // Metadata — structured grid layout
                 VStack(alignment: .leading, spacing: 4) {
                     // Title row
-                    HStack(spacing: 0) {
+                    HStack(spacing: 4) {
+                        if entry.starred {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.yellow)
+                        }
                         Text(entry.title)
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(1)
@@ -198,6 +204,12 @@ struct PlayHistoryView2: View {
             .padding(.vertical, 4)
         }
         .contextMenu {
+            Button {
+                onStar?(entry)
+            } label: {
+                Label(entry.starred ? "Unstar" : "Star", systemImage: entry.starred ? "star.fill" : "star")
+            }
+            Divider()
             Button("Copy Track Details") {
                 var lines: [String] = []
                 if !entry.stationName.isEmpty { lines.append("Station: \(entry.stationName)") }

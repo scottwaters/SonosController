@@ -46,6 +46,9 @@ public final class PlayHistoryRepository {
             )
         """)
 
+        // Add starred column if it doesn't exist (migration for existing databases)
+        exec("ALTER TABLE history ADD COLUMN starred INTEGER NOT NULL DEFAULT 0")
+
         exec("CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp)")
         exec("CREATE INDEX IF NOT EXISTS idx_history_artist ON history(artist)")
         exec("CREATE INDEX IF NOT EXISTS idx_history_group ON history(group_name)")
@@ -89,7 +92,7 @@ public final class PlayHistoryRepository {
 
     func loadAll() -> [PlayHistoryEntry] {
         var entries: [PlayHistoryEntry] = []
-        let sql = "SELECT id, timestamp, title, artist, album, station_name, source_uri, group_name, duration, album_art_uri FROM history ORDER BY timestamp ASC"
+        let sql = "SELECT id, timestamp, title, artist, album, station_name, source_uri, group_name, duration, album_art_uri, starred FROM history ORDER BY timestamp ASC"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return entries }
         defer { sqlite3_finalize(stmt) }
@@ -105,7 +108,8 @@ public final class PlayHistoryRepository {
                 sourceURI: sqlite3_column_type(stmt, 6) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 6)) : nil,
                 groupName: String(cString: sqlite3_column_text(stmt, 7)),
                 duration: sqlite3_column_double(stmt, 8),
-                albumArtURI: sqlite3_column_type(stmt, 9) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 9)) : nil
+                albumArtURI: sqlite3_column_type(stmt, 9) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 9)) : nil,
+                starred: sqlite3_column_int(stmt, 10) != 0
             )
             entries.append(entry)
         }
@@ -148,7 +152,7 @@ public final class PlayHistoryRepository {
 
         let whereClause = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
         let order = sortNewestFirst ? "DESC" : "ASC"
-        let sql = "SELECT id, timestamp, title, artist, album, station_name, source_uri, group_name, duration, album_art_uri FROM history \(whereClause) ORDER BY timestamp \(order) LIMIT \(limit)"
+        let sql = "SELECT id, timestamp, title, artist, album, station_name, source_uri, group_name, duration, album_art_uri, starred FROM history \(whereClause) ORDER BY timestamp \(order) LIMIT \(limit)"
 
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -174,7 +178,8 @@ public final class PlayHistoryRepository {
                 sourceURI: sqlite3_column_type(stmt, 6) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 6)) : nil,
                 groupName: String(cString: sqlite3_column_text(stmt, 7)),
                 duration: sqlite3_column_double(stmt, 8),
-                albumArtURI: sqlite3_column_type(stmt, 9) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 9)) : nil
+                albumArtURI: sqlite3_column_type(stmt, 9) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 9)) : nil,
+                starred: sqlite3_column_int(stmt, 10) != 0
             )
             entries.append(entry)
         }
@@ -228,6 +233,16 @@ public final class PlayHistoryRepository {
         }
 
         return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+    }
+
+    func setStarred(id: UUID, starred: Bool) {
+        let sql = "UPDATE history SET starred = ? WHERE id = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, starred ? 1 : 0)
+        sqlite3_bind_text(stmt, 2, (id.uuidString as NSString).utf8String, -1, nil)
+        sqlite3_step(stmt)
     }
 
     func delete(ids: [UUID]) {

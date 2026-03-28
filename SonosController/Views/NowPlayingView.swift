@@ -198,6 +198,15 @@ struct NowPlayingView: View {
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
+
+                                Button { starCurrentTrack() } label: {
+                                    Image(systemName: isCurrentTrackStarred ? "star.fill" : "star")
+                                        .font(.caption)
+                                        .foregroundStyle(isCurrentTrackStarred ? .yellow : .secondary)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .tooltip(isCurrentTrackStarred ? "Starred" : "Star this track")
                             }
                         }
                     }
@@ -510,6 +519,20 @@ struct NowPlayingView: View {
         vm.copyTrackInfo()
         showCopied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + Timing.toastDismiss) { showCopied = false }
+    }
+
+    private func starCurrentTrack() {
+        guard !trackMetadata.title.isEmpty else { return }
+        sonosManager.playHistoryManager?.starCurrentTrack(
+            title: trackMetadata.title, artist: trackMetadata.artist
+        )
+    }
+
+    private var isCurrentTrackStarred: Bool {
+        guard !trackMetadata.title.isEmpty else { return false }
+        return sonosManager.playHistoryManager?.entries.contains {
+            $0.title == trackMetadata.title && $0.artist == trackMetadata.artist && $0.starred
+        } ?? false
     }
 
     private func performAction(_ id: String, _ action: @escaping () async throws -> Void) {

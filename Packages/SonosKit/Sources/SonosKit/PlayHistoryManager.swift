@@ -158,6 +158,31 @@ public final class PlayHistoryManager: ObservableObject {
         repo.countFiltered(since: since, until: until, room: room, searchText: searchText)
     }
 
+    /// Toggle starred status on an entry
+    public func toggleStar(id: UUID) {
+        guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
+        entries[idx].starred.toggle()
+        repo.setStarred(id: id, starred: entries[idx].starred)
+    }
+
+    /// Star the most recent entry matching this title+artist (for starring the currently playing track)
+    public func starCurrentTrack(title: String, artist: String) {
+        for i in entries.indices.reversed() {
+            if entries[i].title == title && entries[i].artist == artist {
+                if !entries[i].starred {
+                    entries[i].starred = true
+                    repo.setStarred(id: entries[i].id, starred: true)
+                }
+                return
+            }
+        }
+    }
+
+    /// All starred entries
+    public var starredEntries: [PlayHistoryEntry] {
+        entries.filter(\.starred).sorted { $0.timestamp > $1.timestamp }
+    }
+
     public func clearHistory() {
         entries.removeAll()
         lastLoggedTrack.removeAll()

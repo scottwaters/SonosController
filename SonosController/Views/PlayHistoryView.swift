@@ -117,13 +117,16 @@ struct PlayHistoryView: View {
 
             switch selectedTab {
             case 0:
-                PlayHistoryView2(entries: filteredEntries, expandedArtEntry: $expandedArtEntry, sourceLabel: sourceLabel) { action in
+                PlayHistoryView2(entries: filteredEntries, expandedArtEntry: $expandedArtEntry, sourceLabel: sourceLabel, onFilter: { action in
                     switch action {
                     case .search(let text): searchText = text
                     case .room(let room): filterRoom = room
                     case .source(let source): filterSource = source
                     }
-                }
+                }, onStar: { entry in
+                    historyManager.toggleStar(id: entry.id)
+                    refreshFilteredEntries()
+                })
             default:
                 PlayHistoryDashboard(entries: filteredEntriesUnsorted, expandedArtEntry: $expandedArtEntry)
                     .environmentObject(historyManager)

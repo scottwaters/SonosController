@@ -12,10 +12,12 @@ public struct PlayHistoryEntry: Identifiable, Codable {
     public var groupName: String
     public var duration: TimeInterval
     public var albumArtURI: String?
+    public var starred: Bool
 
     public init(id: UUID = UUID(), timestamp: Date = Date(), title: String, artist: String = "",
                 album: String = "", stationName: String = "", sourceURI: String? = nil,
-                groupName: String = "", duration: TimeInterval = 0, albumArtURI: String? = nil) {
+                groupName: String = "", duration: TimeInterval = 0, albumArtURI: String? = nil,
+                starred: Bool = false) {
         self.id = id
         self.timestamp = timestamp
         self.title = title
@@ -26,5 +28,6 @@ public struct PlayHistoryEntry: Identifiable, Codable {
         self.groupName = groupName
         self.duration = duration
         self.albumArtURI = albumArtURI
+        self.starred = starred
     }
 }
