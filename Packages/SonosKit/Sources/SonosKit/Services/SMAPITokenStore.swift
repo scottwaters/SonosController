@@ -32,7 +32,6 @@ public final class SMAPITokenStore: ObservableObject {
     public init() {
         self.fileURL = AppPaths.appSupportDirectory.appendingPathComponent("smapi_tokens.json")
         load()
-        migrateFromLegacyKeychain()
     }
 
     // MARK: - Public API
@@ -92,57 +91,6 @@ public final class SMAPITokenStore: ObservableObject {
         authenticatedServices = decoded
     }
 
-    // MARK: - Legacy Keychain Migration
-
-    /// Migrates tokens from legacy keychain (no kSecUseDataProtectionKeychain)
-    /// to the data protection keychain. Runs once — if tokens exist in legacy
-    /// but not in data protection, copies them over and deletes legacy entries.
-    private func migrateFromLegacyKeychain() {
-        for (sid, _) in authenticatedServices {
-            let tokenKey = "smapi_token_\(sid)"
-            let keyKey = "smapi_key_\(sid)"
-
-            // Check if already in data protection keychain
-            if getKeychainItem(key: tokenKey) != nil { continue }
-
-            // Try reading from legacy keychain
-            if let token = getLegacyKeychainItem(key: tokenKey),
-               let key = getLegacyKeychainItem(key: keyKey), !token.isEmpty {
-                // Write to data protection keychain
-                setKeychainItem(key: tokenKey, value: token)
-                setKeychainItem(key: keyKey, value: key)
-                // Delete from legacy
-                deleteLegacyKeychainItem(key: tokenKey)
-                deleteLegacyKeychainItem(key: keyKey)
-                sonosDebugLog("[KEYCHAIN] Migrated token for service \(sid)")
-            }
-        }
-    }
-
-    private func getLegacyKeychainItem(key: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let str = String(data: data, encoding: .utf8) else { return nil }
-        return str
-    }
-
-    private func deleteLegacyKeychainItem(key: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: key,
-        ]
-        SecItemDelete(query as CFDictionary)
-    }
-
     // MARK: - Keychain
 
     private let keychainService = "com.sonoscontroller.smapi"
@@ -153,7 +101,6 @@ public final class SMAPITokenStore: ObservableObject {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: key,
-            kSecUseDataProtectionKeychain as String: true,
         ]
         SecItemDelete(query as CFDictionary)
         var addQuery = query
@@ -172,7 +119,6 @@ public final class SMAPITokenStore: ObservableObject {
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseDataProtectionKeychain as String: true,
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -192,7 +138,6 @@ public final class SMAPITokenStore: ObservableObject {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: key,
-            kSecUseDataProtectionKeychain as String: true,
         ]
         let status = SecItemDelete(query as CFDictionary)
         if status != errSecSuccess && status != errSecItemNotFound {
