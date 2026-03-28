@@ -68,6 +68,7 @@ final class NowPlayingViewModel {
     var lastPositionTimestamp: Date = .distantPast
     var positionFrozenUntil: Date = .distantPast
     var progressTimer: Timer?
+    var metadataPollingTask: Task<Void, Never>?
 
     // MARK: - Transport UI
 
@@ -541,18 +542,32 @@ final class NowPlayingViewModel {
 
     func startProgressTimer() {
         stopProgressTimer()
-        // Position interpolation only — no network calls.
-        // TransportStrategy handles all SOAP polling and updates @Published state.
+        // Position interpolation — no network calls
         progressTimer = Timer.scheduledTimer(withTimeInterval: Timing.progressTimerInterval, repeats: true) { [weak self] _ in
             guard let self, !isDraggingSeek else { return }
             let now = Date()
             if now > positionFrozenUntil && transportState.isPlaying {
                 let elapsed = now.timeIntervalSince(lastPositionTimestamp)
                 let newPosition = lastKnownPosition + elapsed
-                // Only update if changed by ≥0.5s to avoid unnecessary SwiftUI re-renders
                 if abs(newPosition - smoothPosition) >= 0.5 {
                     smoothPosition = newPosition
                 }
+            }
+        }
+        // Lightweight metadata poll for active group — catches radio track changes
+        // that don't trigger UPnP events. Single getPositionInfo call every 5s.
+        metadataPollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                guard let coordinator = group.coordinator else { continue }
+                do {
+                    let position = try await sonosManager.getPositionInfo(group: group)
+                    let enriched = await enrichMetadata(position, state: transportState, coordinator: coordinator)
+                    sonosManager.transportDidUpdateTrackMetadata(group.coordinatorID, metadata: enriched)
+                    lastKnownPosition = enriched.position
+                    lastPositionTimestamp = Date()
+                } catch {}
             }
         }
     }
@@ -560,6 +575,8 @@ final class NowPlayingViewModel {
     func stopProgressTimer() {
         progressTimer?.invalidate()
         progressTimer = nil
+        metadataPollingTask?.cancel()
+        metadataPollingTask = nil
     }
 
     // MARK: - Fetch Current State
@@ -585,6 +602,16 @@ final class NowPlayingViewModel {
             smoothPosition = enrichedPosition.position
 
             crossfadeOn = (try? await sonosManager.getCrossfadeMode(group: group)) ?? false
+
+            // Fetch volume/mute for this group's members (may not be cached yet)
+            for member in group.members {
+                if let vol = try? await sonosManager.getVolume(device: member) {
+                    sonosManager.updateDeviceVolume(member.id, volume: vol)
+                }
+                if let muted = try? await sonosManager.getMute(device: member) {
+                    sonosManager.updateDeviceMute(member.id, muted: muted)
+                }
+            }
             syncVolumeFromManager()
             syncMuteFromManager()
         } catch {
