@@ -447,9 +447,33 @@ final class NowPlayingViewModel {
         art.setSearchKey(key)
         art.setWebArtResult(nil)
         Task {
-            if let artURL = await AlbumArtSearchService.shared.searchArtwork(
+            // Try primary search term first
+            var foundArt = await AlbumArtSearchService.shared.searchArtwork(
                 artist: artist, album: searchTerm
-            ) {
+            )
+
+            // If no result and search term has parentheses, try the text inside () as album
+            if foundArt == nil, let parenStart = searchTerm.firstIndex(of: "("),
+               let parenEnd = searchTerm.firstIndex(of: ")"), parenStart < parenEnd {
+                let insideParens = String(searchTerm[searchTerm.index(after: parenStart)..<parenEnd]).trimmingCharacters(in: .whitespaces)
+                if !insideParens.isEmpty {
+                    foundArt = await AlbumArtSearchService.shared.searchArtwork(
+                        artist: artist, album: insideParens
+                    )
+                }
+            }
+
+            // If still no result, try without parenthetical content
+            if foundArt == nil, searchTerm.contains("(") {
+                let cleaned = searchTerm.replacingOccurrences(of: "\\s*\\([^)]*\\)", with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+                if !cleaned.isEmpty && cleaned != searchTerm {
+                    foundArt = await AlbumArtSearchService.shared.searchArtwork(
+                        artist: artist, album: cleaned
+                    )
+                }
+            }
+
+            if let artURL = foundArt {
                 art.setWebArtResult(URL(string: artURL))
                 art.playHistoryManager?.updateArtwork(
                     forTitle: metadata.title, artist: metadata.artist, artURL: artURL
