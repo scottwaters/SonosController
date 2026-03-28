@@ -271,10 +271,19 @@ struct MenuBarPlayerView: View {
                         get: { volume },
                         set: { newVol in
                             guard let group = selectedGroup else { return }
-                            let intVol = Int(newVol)
+                            let oldVol = volume
+                            let proportional = UserDefaults.standard.bool(forKey: UDKey.proportionalGroupVolume)
+
                             for member in group.members {
-                                sonosManager.updateDeviceVolume(member.id, volume: intVol)
-                                Task { try? await sonosManager.setVolume(device: member, volume: intVol) }
+                                let currentVol = Double(sonosManager.deviceVolumes[member.id] ?? 0)
+                                let newMemberVol: Int
+                                if proportional && oldVol > 0 {
+                                    newMemberVol = Int(max(0, min(100, currentVol * (newVol / oldVol))))
+                                } else {
+                                    newMemberVol = Int(max(0, min(100, currentVol + (newVol - oldVol))))
+                                }
+                                sonosManager.updateDeviceVolume(member.id, volume: newMemberVol)
+                                Task { try? await sonosManager.setVolume(device: member, volume: newMemberVol) }
                             }
                         }
                     ), in: 0...100)

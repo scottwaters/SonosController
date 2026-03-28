@@ -350,7 +350,8 @@ struct NowPlayingView: View {
                                       speakerMutes: Binding(get: { vm.speakerMutes }, set: { vm.speakerMutes = $0 }),
                                       accentColor: sonosManager.resolvedAccentColor ?? .accentColor,
                                       onSetVolume: { device, vol in await vm.setSpeakerVolume(device: device, volume: vol) },
-                                      onToggleMute: { device, muted in await vm.setSpeakerMute(device: device, muted: muted) })
+                                      onToggleMute: { device, muted in await vm.setSpeakerMute(device: device, muted: muted) },
+                                      onDragStateChanged: { dragging in vm.isDraggingVolume = dragging })
                 }
             }
         }

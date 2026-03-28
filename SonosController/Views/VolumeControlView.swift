@@ -13,6 +13,7 @@ struct VolumeControlView: View {
     var accentColor: Color = .accentColor
     var onSetVolume: ((SonosDevice, Int) async -> Void)?
     var onToggleMute: ((SonosDevice, Bool) async -> Void)?
+    var onDragStateChanged: ((Bool) -> Void)?
 
     @State private var draggingSpeaker: String?
 
@@ -62,6 +63,7 @@ struct VolumeControlView: View {
                         range: 0...100
                     ) { editing in
                         draggingSpeaker = editing ? member.id : nil
+                        onDragStateChanged?(editing)
                         if !editing {
                             let vol = Int(speakerVolumes[member.id] ?? 0)
                             Task { await onSetVolume?(member, vol) }
