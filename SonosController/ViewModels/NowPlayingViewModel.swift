@@ -274,6 +274,21 @@ final class NowPlayingViewModel {
 
     // MARK: - Sync from Manager
 
+    /// Reset all local state when switching to a different group
+    func resetForGroupChange() {
+        isInitialized = false
+        speakerVolumes.removeAll()
+        speakerMutes.removeAll()
+        volume = 0
+        isMuted = false
+        smoothPosition = 0
+        lastKnownPosition = 0
+        lastPositionTimestamp = .distantPast
+        crossfadeOn = false
+        actionInFlight = nil
+        syncFromManager()
+    }
+
     func syncFromManager() {
         isInitialized = true
         syncVolumeFromManager()

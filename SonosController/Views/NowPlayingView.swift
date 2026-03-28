@@ -364,10 +364,9 @@ struct NowPlayingView: View {
         .onDisappear { stopProgressTimer() }
         .onChange(of: group.id) {
             vm.group = group
-            vm.art.displayedArtURL = nil
-            vm.art.radioTrackArtURL = nil
+            vm.art.reset()
+            vm.resetForGroupChange()
             startProgressTimer()
-            syncFromManager()
             Task { await fetchCurrentState() }
         }
         .onReceive(sonosManager.$deviceVolumes) { _ in syncVolumeFromManager() }
