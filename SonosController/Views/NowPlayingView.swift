@@ -373,6 +373,14 @@ struct NowPlayingView: View {
         .onReceive(sonosManager.$deviceVolumes) { _ in syncVolumeFromManager() }
         .onReceive(sonosManager.$deviceMutes) { _ in syncMuteFromManager() }
         .onChange(of: speakerMutes) { syncMasterMuteFromSpeakers() }
+        .onReceive(sonosManager.$groupPositions) { positions in
+            // Sync position from TransportStrategy updates for smooth interpolation
+            if let pos = positions[group.coordinatorID] {
+                vm.lastKnownPosition = pos
+                vm.lastPositionTimestamp = Date()
+                vm.smoothPosition = pos
+            }
+        }
         .onReceive(sonosManager.$groupTrackMetadata) { _ in
             // Force view to re-evaluate trackMetadata computed property
         }

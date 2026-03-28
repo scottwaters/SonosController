@@ -341,7 +341,7 @@ public final class HybridEventFirstTransport: TransportStrategy, @unchecked Send
         reconciliationTask?.cancel()
         reconciliationTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(10))
+                try? await Task.sleep(for: .seconds(30))
                 guard let self = self, self.isRunning else { return }
                 await self.reconcileAllGroups()
             }
@@ -493,7 +493,7 @@ public final class LegacyPollingTransport: TransportStrategy, @unchecked Sendabl
             while !Task.isCancelled {
                 guard let self = self, self.isRunning else { return }
                 await self.pollAllGroups()
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .seconds(5))
             }
         }
     }
