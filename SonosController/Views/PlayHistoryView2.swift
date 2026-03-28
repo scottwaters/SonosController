@@ -90,18 +90,6 @@ struct PlayHistoryView2: View {
         let timeStr = entry.timestamp.formatted(date: .omitted, time: .shortened)
 
         return HStack(alignment: .top, spacing: 0) {
-            // Timeline spine
-            VStack(spacing: 0) {
-                Circle()
-                    .fill(ServiceColor.color(for: source))
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 20)
-                Rectangle()
-                    .fill(.quaternary)
-                    .frame(width: 1)
-            }
-            .frame(width: 32)
-
             // Card content
             HStack(spacing: 14) {
                 // Art — larger for visual impact
@@ -199,7 +187,7 @@ struct PlayHistoryView2: View {
                 RoundedRectangle(cornerRadius: 10)
                     .strokeBorder(.quaternary.opacity(0.5), lineWidth: 0.5)
             )
-            .padding(.trailing, 20)
+            .padding(.horizontal, 16)
             .padding(.vertical, 4)
         }
         .contextMenu {

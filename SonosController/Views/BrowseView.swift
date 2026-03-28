@@ -595,7 +595,10 @@ struct BrowseItemRow: View {
             }
         }
         .onReceive(sonosManager.$discoveredArtURLs) { _ in
-            checkArtCache()
+            // Only check cache if we don't already have art — prevents flash from URL identity change
+            if resolvedArtURL == nil && item.albumArtURI == nil {
+                checkArtCache()
+            }
         }
     }
 
