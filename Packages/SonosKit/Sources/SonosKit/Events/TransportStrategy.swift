@@ -335,13 +335,13 @@ public final class HybridEventFirstTransport: TransportStrategy, @unchecked Send
     // MARK: - Reconciliation Polling
 
     /// Safety net: periodically polls full state to catch anything events missed.
-    /// Runs every 30 seconds. Also handles position updates since UPnP events
+    /// Runs every 15 seconds. Also handles position updates since UPnP events
     /// don't include elapsed position.
     private func startReconciliationPolling() {
         reconciliationTask?.cancel()
         reconciliationTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: .seconds(15))
                 guard let self = self, self.isRunning else { return }
                 await self.reconcileAllGroups()
             }
