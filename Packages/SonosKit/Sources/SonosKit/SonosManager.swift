@@ -438,6 +438,9 @@ public class SonosManager: ObservableObject {
 
             // Start or update transport strategy
             await startOrUpdateTransportStrategy()
+
+            // Immediate scan of all groups for current status
+            await scanAllGroups()
         } catch {
             sonosDebugLog("[DISCOVERY] Topology fetch failed: \(error)")
         }
@@ -467,6 +470,50 @@ public class SonosManager: ObservableObject {
             }
         }
         htSatChannelMaps = maps
+    }
+
+    // MARK: - Manual Status Scan
+
+    /// Scans all groups for current transport state, volume, mute.
+    /// Called on app launch after discovery completes.
+    public func scanAllGroups() async {
+        for group in groups {
+            await scanGroup(group)
+        }
+    }
+
+    /// Scans a single group for current transport state, track metadata, volume, mute.
+    /// Called when user selects a speaker/group.
+    public func scanGroup(_ group: SonosGroup) async {
+        guard let coordinator = group.coordinator else { return }
+        do {
+            let state = try await avTransport.getTransportInfo(device: coordinator)
+            let position = try await avTransport.getPositionInfo(device: coordinator)
+            let mode = try await avTransport.getTransportSettings(device: coordinator)
+
+            if groupTransportStates[coordinator.id] != state {
+                groupTransportStates[coordinator.id] = state
+            }
+            if groupPlayModes[coordinator.id] != mode {
+                groupPlayModes[coordinator.id] = mode
+            }
+
+            var enriched = position
+            if state.isActive,
+               let mediaInfo = try? await avTransport.getMediaInfo(device: coordinator) {
+                enriched.enrichFromMediaInfo(mediaInfo, device: coordinator)
+            }
+            transportDidUpdateTrackMetadata(coordinator.id, metadata: enriched)
+
+            for member in group.members {
+                let vol = try await renderingControl.getVolume(device: member)
+                let muted = try await renderingControl.getMute(device: member)
+                updateDeviceVolume(member.id, volume: vol)
+                updateDeviceMute(member.id, muted: muted)
+            }
+        } catch {
+            sonosDebugLog("[SCAN] Group scan failed for \(group.name): \(error)")
+        }
     }
 
     // MARK: - Transport Strategy Management

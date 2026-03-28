@@ -608,42 +608,23 @@ final class NowPlayingViewModel {
 
     // MARK: - Fetch Current State
 
-    /// One-time fetch on appear to populate initial state.
-    /// TransportStrategy handles ongoing updates via events + reconciliation polling.
+    /// Fetches live state for the selected group from speakers.
+    /// Delegates to SonosManager.scanGroup which updates all @Published state,
+    /// then syncs local ViewModel state from the updated values.
     func fetchCurrentState() async {
-        guard let coordinator = group.coordinator else { return }
-        do {
-            async let stateResult = sonosManager.getTransportState(group: group)
-            async let positionResult = sonosManager.getPositionInfo(group: group)
-            async let modeResult = sonosManager.getPlayMode(group: group)
-
-            let (state, position, mode) = try await (stateResult, positionResult, modeResult)
-            sonosManager.updateTransportState(group.coordinatorID, state: state)
-            sonosManager.updatePlayMode(group.coordinatorID, mode: mode)
-
-            let enrichedPosition = await enrichMetadata(position, state: state, coordinator: coordinator)
-
-            sonosManager.transportDidUpdateTrackMetadata(group.coordinatorID, metadata: enrichedPosition)
-            lastKnownPosition = enrichedPosition.position
-            lastPositionTimestamp = Date()
-            smoothPosition = enrichedPosition.position
-
-            crossfadeOn = (try? await sonosManager.getCrossfadeMode(group: group)) ?? false
-
-            // Fetch volume/mute for this group's members (may not be cached yet)
-            for member in group.members {
-                if let vol = try? await sonosManager.getVolume(device: member) {
-                    sonosManager.updateDeviceVolume(member.id, volume: vol)
-                }
-                if let muted = try? await sonosManager.getMute(device: member) {
-                    sonosManager.updateDeviceMute(member.id, muted: muted)
-                }
-            }
-            syncVolumeFromManager()
-            syncMuteFromManager()
-        } catch {
-            sonosDebugLog("[NOW-PLAYING] fetchCurrentState failed: \(error)")
+        // scanGroup fetches transport state, metadata, volume, mute for all members
+        if let manager = sonosManager as? SonosManager {
+            await manager.scanGroup(group)
         }
+
+        // Sync local state from updated @Published values
+        let meta = sonosManager.groupTrackMetadata[group.coordinatorID] ?? TrackMetadata()
+        lastKnownPosition = meta.position
+        lastPositionTimestamp = Date()
+        smoothPosition = meta.position
+        crossfadeOn = (try? await sonosManager.getCrossfadeMode(group: group)) ?? false
+        syncVolumeFromManager()
+        syncMuteFromManager()
     }
 
 }
