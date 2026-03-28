@@ -23,7 +23,11 @@ final class WindowManager {
 
     func togglePlayHistory() {
         if let existing = playHistoryWindow, existing.isVisible {
-            existing.close()
+            if existing.isKeyWindow {
+                existing.close()
+            } else {
+                existing.makeKeyAndOrderFront(nil)
+            }
             return
         }
         showPlayHistoryWindow()
