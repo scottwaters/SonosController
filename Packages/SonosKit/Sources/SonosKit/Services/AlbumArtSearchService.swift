@@ -94,12 +94,11 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
             return url
         }
 
-        // Strategy 3: Album search with artist + title (for soundtrack albums)
-        if !artist.isEmpty {
-            if let url = await iTunesSearch(query: "\(artist) \(title) soundtrack", entity: "album") {
-                cacheSet(cacheKey, url)
-                return url
-            }
+        // Strategy 3: Album search with title only (for soundtrack albums)
+        // Use title without artist — the artist (orchestra) is too generic for soundtrack matching
+        if let url = await iTunesSearch(query: "\(title) soundtrack", entity: "album") {
+            cacheSet(cacheKey, url)
+            return url
         }
 
         // Strategy 4: Cleaned title/artist fallback — strips source suffixes, special chars, multi-artist
@@ -146,6 +145,17 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
         }
         if let bracketIdx = cleaned.firstIndex(of: "[") {
             cleaned = String(cleaned[cleaned.startIndex..<bracketIdx])
+        }
+        // Strip common track-specific suffixes that don't identify the album
+        let suffixes = [" End Titles", " Main Theme", " Main Title", " End Credits",
+                        " Opening Credits", " Opening Theme", " Closing Credits",
+                        " Suite", " Finale", " Overture", " Prologue", " Epilogue",
+                        " Reprise", " Instrumental"]
+        for suffix in suffixes {
+            if cleaned.hasSuffix(suffix) {
+                cleaned = String(cleaned.dropLast(suffix.count))
+                break
+            }
         }
         return cleaned.trimmingCharacters(in: .whitespaces)
     }
