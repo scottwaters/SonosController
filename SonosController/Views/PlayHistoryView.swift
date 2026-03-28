@@ -13,8 +13,6 @@ struct PlayHistoryView: View {
     @State private var sortNewestFirst = true
     @State private var showClearConfirm = false
     @State private var selectedTab = 1
-    @State private var selectedEntryID: UUID?
-    @State private var hoveredEntryID: UUID?
     @State private var expandedArtEntry: PlayHistoryEntry?
     @State private var customDateFrom: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var customDateTo: Date = Date()
@@ -114,7 +112,6 @@ struct PlayHistoryView: View {
             Picker("", selection: $selectedTab) {
                 Text("Dashboard").tag(1)
                 Text("History").tag(0)
-                Text("History2").tag(2)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
@@ -123,8 +120,6 @@ struct PlayHistoryView: View {
 
             switch selectedTab {
             case 0:
-                historyContent
-            case 2:
                 PlayHistoryView2(entries: filteredEntries, expandedArtEntry: $expandedArtEntry, sourceLabel: sourceLabel)
             default:
                 PlayHistoryDashboard(entries: filteredEntriesUnsorted, expandedArtEntry: $expandedArtEntry)
@@ -327,196 +322,6 @@ struct PlayHistoryView: View {
 
     // MARK: - History Content
 
-    @ViewBuilder
-    private var historyContent: some View {
-        if filteredEntries.isEmpty {
-            emptyState
-        } else {
-            // Sort toggle row
-            HStack {
-                Spacer()
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { sortNewestFirst.toggle() }
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: sortNewestFirst ? "arrow.down" : "arrow.up")
-                            .font(.system(size: 9, weight: .bold))
-                        Text(sortNewestFirst ? "Newest First" : "Oldest First")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
-
-            historyList
-        }
-    }
-
-    // MARK: - Empty State
-
-    private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: hasActiveFilters ? "line.3.horizontal.decrease.circle" : "clock")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-            Text(hasActiveFilters ? "No matching entries" : "No play history yet")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-            if hasActiveFilters {
-                Text("Try adjusting your filters")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                Button("Clear Filters") {
-                    withAnimation {
-                        filterDateRange = .all
-                        filterRoom = nil
-                        filterSource = nil
-                        searchText = ""
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            } else {
-                Text("Play some music and your history will appear here")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // MARK: - History List
-
-    private var historyList: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(filteredEntries) { entry in
-                    historyRow(entry)
-                        .id(entry.id)
-                }
-            }
-        }
-    }
-
-    private func historyRow(_ entry: PlayHistoryEntry) -> some View {
-        let isSelected = selectedEntryID == entry.id
-        let isHovered = hoveredEntryID == entry.id
-        let source = sourceLabel(for: entry)
-
-        return HStack(spacing: 10) {
-            // Album art — fixed size anchor
-            CachedAsyncImage(url: entry.albumArtURI.flatMap { URL(string: $0) }, cornerRadius: 6)
-                .frame(width: 40, height: 40)
-                .onTapGesture { expandedArtEntry = entry }
-
-            // Track info — fills available space
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
-                HStack(spacing: 4) {
-                    if !entry.artist.isEmpty {
-                        Text(entry.artist)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    if !entry.album.isEmpty {
-                        Text("·")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.quaternary)
-                        Text(entry.album)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                    if !entry.stationName.isEmpty {
-                        Text("·")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.quaternary)
-                        Text(entry.stationName)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.orange.opacity(0.8))
-                            .lineLimit(1)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            // Right-aligned columns — all always present with fixed widths for alignment
-            Text(source)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .background(ServiceColor.color(for: source), in: Capsule())
-                .frame(width: 100, alignment: .center)
-
-            HStack(spacing: 3) {
-                Image(systemName: "hifispeaker")
-                    .font(.system(size: 9))
-                Text(entry.groupName.isEmpty ? "—" : entry.groupName)
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(.tertiary)
-            .frame(width: 100, alignment: .leading)
-
-            Text(entry.duration > 0 ? formatDuration(entry.duration) : "—")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .frame(width: 44, alignment: .trailing)
-
-            Text(entry.timestamp, format: .relative(presentation: .named))
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-                .frame(width: 85, alignment: .trailing)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Color.accentColor.opacity(0.15)
-                      : isHovered ? Color.primary.opacity(0.04)
-                      : Color.clear)
-                .padding(.horizontal, 8)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                selectedEntryID = selectedEntryID == entry.id ? nil : entry.id
-            }
-        }
-        .onHover { hovering in
-            hoveredEntryID = hovering ? entry.id : nil
-        }
-        .contextMenu {
-            copyEntryMenu(entry)
-            Divider()
-            if !entry.artist.isEmpty {
-                Button("Filter by \"\(entry.artist)\"") {
-                    searchText = entry.artist
-                }
-            }
-            if !entry.groupName.isEmpty {
-                Button("Filter by Room: \(entry.groupName)") {
-                    filterRoom = entry.groupName
-                }
-            }
-            Button("Filter by Source: \(source)") {
-                filterSource = source
-            }
-        }
-    }
-
-    private func formatDuration(_ seconds: TimeInterval) -> String {
-        let mins = Int(seconds) / 60
-        let secs = Int(seconds) % 60
-        return String(format: "%d:%02d", mins, secs)
-    }
 
     // MARK: - Copy
 
