@@ -737,6 +737,15 @@ struct FlowLayout: Layout {
 
 // MARK: - Apple Music Search
 
+// MARK: - Apple Music Search with Drill-Down
+
+/// Navigation level within the Apple Music search view
+private enum AMLevel: Hashable {
+    case search
+    case artistAlbums(artistId: Int, artistName: String)
+    case albumTracks(collectionId: Int, albumTitle: String)
+}
+
 struct AppleMusicSearchView: View {
     @EnvironmentObject var sonosManager: SonosManager
     @EnvironmentObject var smapiManager: SMAPIAuthManager
@@ -745,62 +754,91 @@ struct AppleMusicSearchView: View {
 
     @State private var searchText = ""
     @State private var entity: ServiceSearchEntity = .all
-    @State private var results: [BrowseItem] = []
-    @State private var isSearching = false
+    @State private var items: [BrowseItem] = []
+    @State private var isLoading = false
     @State private var hasSearched = false
     @State private var sn = 0
+    @State private var navStack: [AMLevel] = []
+
+    private var currentLevel: AMLevel { navStack.last ?? .search }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Search controls
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
-                        TextField("Search Apple Music...", text: $searchText)
-                            .textFieldStyle(.plain)
-                            .font(.callout)
-                            .onSubmit { performSearch() }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
-
+            // Header with back button for drill-down levels
+            if !navStack.isEmpty {
+                HStack(spacing: 6) {
                     Button {
-                        performSearch()
+                        navStack.removeLast()
                     } label: {
-                        Text("Search")
-                            .font(.caption)
+                        Image(systemName: "chevron.backward")
+                            .font(.system(size: 14, weight: .semibold))
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
+                    .buttonStyle(.plain)
 
-                Picker("", selection: $entity) {
-                    ForEach(ServiceSearchEntity.allCases, id: \.self) { e in
-                        Text(e.rawValue).tag(e)
-                    }
+                    Text(levelTitle)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+
+                    Spacer()
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.small)
-                .onChange(of: entity) {
-                    if hasSearched { performSearch() }
-                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+
+                Divider()
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
 
-            Divider()
+            // Search controls (only at search level)
+            if navStack.isEmpty {
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                            TextField("Search Apple Music...", text: $searchText)
+                                .textFieldStyle(.plain)
+                                .font(.callout)
+                                .onSubmit { performSearch() }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
 
-            // Results
-            if isSearching {
-                ProgressView("Searching Apple Music...")
+                        Button {
+                            performSearch()
+                        } label: {
+                            Text("Search")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+
+                    Picker("", selection: $entity) {
+                        ForEach(ServiceSearchEntity.allCases, id: \.self) { e in
+                            Text(e.rawValue).tag(e)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .onChange(of: entity) {
+                        if hasSearched { performSearch() }
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+
+                Divider()
+            }
+
+            // Content
+            if isLoading {
+                ProgressView(navStack.isEmpty ? "Searching Apple Music..." : "Loading...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if results.isEmpty && hasSearched {
+            } else if items.isEmpty && (hasSearched || !navStack.isEmpty) {
                 VStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .font(.title)
@@ -809,7 +847,7 @@ struct AppleMusicSearchView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if results.isEmpty {
+            } else if items.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "music.note.list")
                         .font(.title)
@@ -820,30 +858,11 @@ struct AppleMusicSearchView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(results) { item in
+                List(items) { item in
                     BrowseItemRow(item: item)
                         .contentShape(Rectangle())
-                        .onTapGesture {
-                            if item.isContainer {
-                                // Album — enqueue and play
-                                Task { try? await sonosManager.playBrowseItem(item, in: group!) }
-                            } else if item.isPlayable, group != nil {
-                                Task { try? await sonosManager.playBrowseItem(item, in: group!) }
-                            }
-                        }
-                        .contextMenu {
-                            if let group = group, item.isPlayable {
-                                Button("Play Now") {
-                                    Task { try? await sonosManager.playBrowseItem(item, in: group) }
-                                }
-                                Button("Play Next") {
-                                    Task { try? await sonosManager.addBrowseItemToQueue(item, in: group, playNext: true) }
-                                }
-                                Button("Add to Queue") {
-                                    Task { try? await sonosManager.addBrowseItemToQueue(item, in: group) }
-                                }
-                            }
-                        }
+                        .onTapGesture { handleTap(item) }
+                        .contextMenu { contextMenuItems(for: item) }
                 }
                 .listStyle(.plain)
             }
@@ -858,16 +877,113 @@ struct AppleMusicSearchView: View {
                 sn = smapiManager.serialNumber(for: ServiceID.appleMusic)
             }
         }
+        .onChange(of: navStack) {
+            if let level = navStack.last {
+                loadLevel(level)
+            }
+        }
     }
+
+    // MARK: - Level title
+
+    private var levelTitle: String {
+        switch currentLevel {
+        case .search: return "Search"
+        case .artistAlbums(_, let name): return name
+        case .albumTracks(_, let title): return title
+        }
+    }
+
+    // MARK: - Tap handling
+
+    private func handleTap(_ item: BrowseItem) {
+        switch item.itemClass {
+        case .musicArtist:
+            // Drill into artist's albums
+            if let artistId = Int(item.objectID.replacingOccurrences(of: "apple:artist:", with: "")) {
+                navStack.append(.artistAlbums(artistId: artistId, artistName: item.title))
+            }
+        case .musicAlbum:
+            // Drill into album's tracks
+            if let collectionId = Int(item.objectID.replacingOccurrences(of: "apple:album:", with: "")) {
+                navStack.append(.albumTracks(collectionId: collectionId, albumTitle: item.title))
+            }
+        default:
+            // Track — play it
+            if let group = group {
+                Task { try? await sonosManager.playBrowseItem(item, in: group) }
+            }
+        }
+    }
+
+    // MARK: - Context menus
+
+    @ViewBuilder
+    private func contextMenuItems(for item: BrowseItem) -> some View {
+        if let group = group {
+            let isAlbum = item.itemClass == .musicAlbum
+            let isTrack = item.itemClass == .musicTrack
+            let isPlayable = item.resourceURI != nil
+
+            if isPlayable {
+                Button("Play Now") {
+                    Task { try? await sonosManager.playBrowseItem(item, in: group) }
+                }
+                Button("Play Next") {
+                    Task { try? await sonosManager.addBrowseItemToQueue(item, in: group, playNext: true) }
+                }
+                Button("Add to Queue") {
+                    Task { try? await sonosManager.addBrowseItemToQueue(item, in: group) }
+                }
+                if isAlbum || isTrack {
+                    Divider()
+                    Button("Replace Queue") {
+                        Task {
+                            guard let coordinator = group.coordinator else { return }
+                            try? await sonosManager.clearQueue(group: group)
+                            try? await sonosManager.addBrowseItemToQueue(item, in: group)
+                            try? await sonosManager.play(group: group)
+                        }
+                    }
+                }
+            }
+
+            if isAlbum {
+                Divider()
+                Button("Show Tracks") {
+                    handleTap(item)
+                }
+            }
+        }
+    }
+
+    // MARK: - Data loading
 
     private func performSearch() {
         let query = searchText.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
-        isSearching = true
+        navStack.removeAll()
+        isLoading = true
         hasSearched = true
         Task {
-            results = await ServiceSearchProvider.shared.searchAppleMusic(query: query, entity: entity, sn: sn)
-            isSearching = false
+            items = await ServiceSearchProvider.shared.searchAppleMusic(query: query, entity: entity, sn: sn)
+            isLoading = false
+        }
+    }
+
+    private func loadLevel(_ level: AMLevel) {
+        isLoading = true
+        items = []
+        Task {
+            switch level {
+            case .search:
+                break
+            case .artistAlbums(let artistId, _):
+                items = await ServiceSearchProvider.shared.lookupArtistAlbums(artistId: artistId, sn: sn)
+            case .albumTracks(let collectionId, _):
+                items = await ServiceSearchProvider.shared.lookupAlbumTracks(collectionId: collectionId, sn: sn)
+            }
+            isLoading = false
         }
     }
 }

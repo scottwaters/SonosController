@@ -163,6 +163,54 @@ public final class ServiceSearchProvider {
         }
     }
 
+    // MARK: - Drill-Down Lookups
+
+    /// Fetch albums by a specific artist via iTunes lookup API.
+    public func lookupArtistAlbums(artistId: Int, sn: Int, limit: Int = 25) async -> [BrowseItem] {
+        guard let url = URL(string: "https://itunes.apple.com/lookup?id=\(artistId)&entity=album&limit=\(limit)") else {
+            return []
+        }
+        do {
+            let (data, response) = try await session.data(for: URLRequest(url: url))
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else { return [] }
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let results = json["results"] as? [[String: Any]] else { return [] }
+
+            let sid = ServiceID.appleMusic
+            let serviceType = (sid << 8) + 7
+            // First result is the artist itself — skip it
+            let albumResults = results.filter { ($0["wrapperType"] as? String) == "collection" }
+            return parseAlbumResults(albumResults, sid: sid, serviceType: serviceType, sn: sn)
+        } catch {
+            sonosDebugLog("[SERVICE_SEARCH] Artist album lookup failed: \(error)")
+            return []
+        }
+    }
+
+    /// Fetch tracks for a specific album via iTunes lookup API.
+    public func lookupAlbumTracks(collectionId: Int, sn: Int) async -> [BrowseItem] {
+        guard let url = URL(string: "https://itunes.apple.com/lookup?id=\(collectionId)&entity=song&limit=50") else {
+            return []
+        }
+        do {
+            let (data, response) = try await session.data(for: URLRequest(url: url))
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else { return [] }
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let results = json["results"] as? [[String: Any]] else { return [] }
+
+            let sid = ServiceID.appleMusic
+            let serviceType = (sid << 8) + 7
+            // First result is the album itself — skip it
+            let trackResults = results.filter { ($0["wrapperType"] as? String) == "track" }
+            return parseSongResults(trackResults, sid: sid, serviceType: serviceType, sn: sn)
+        } catch {
+            sonosDebugLog("[SERVICE_SEARCH] Album track lookup failed: \(error)")
+            return []
+        }
+    }
+
     // MARK: - DIDL Builders
 
     private func buildTrackDIDL(trackId: Int, collectionId: Int, title: String, artist: String, album: String, serviceType: Int) -> String {
