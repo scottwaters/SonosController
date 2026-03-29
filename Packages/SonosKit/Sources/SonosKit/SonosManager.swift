@@ -1200,6 +1200,21 @@ public class SonosManager: ObservableObject {
     public func addBrowseItemToQueue(_ item: BrowseItem, in group: SonosGroup, playNext: Bool = false, atPosition: Int = 0) async throws -> Int {
         guard let coordinator = group.coordinator else { return 0 }
 
+        // Determine insertion position
+        var insertAt = atPosition
+        if atPosition == 0 {
+            if playNext {
+                // Play next: insert after current track, or at start if queue is dormant
+                let posInfo = try? await avTransport.getPositionInfo(device: coordinator)
+                let currentTrack = posInfo?.trackNumber ?? 0
+                insertAt = currentTrack > 0 ? currentTrack + 1 : 1
+            } else {
+                // Add to queue: always append at end
+                let (_, total) = try await contentDirectory.browseQueue(device: coordinator, start: 0, count: 1)
+                insertAt = total + 1
+            }
+        }
+
         if let uri = item.resourceURI, !uri.isEmpty {
             let cached = CachedTrack(
                 title: item.title, artist: item.artist ?? "",
@@ -1209,7 +1224,6 @@ public class SonosManager: ObservableObject {
             // Cache track info for later recovery when speaker returns empty metadata
             if !item.title.isEmpty {
                 cachedTrackInfo[uri] = cached
-                // Also cache with decoded URI (speaker may return decoded version)
                 if let decoded = uri.removingPercentEncoding, decoded != uri {
                     cachedTrackInfo[decoded] = cached
                 }
@@ -1220,8 +1234,8 @@ public class SonosManager: ObservableObject {
             if meta.contains("&lt;") {
                 meta = XMLResponseParser.xmlUnescape(meta)
             }
-            sonosDebugLog("[QUEUE] Adding URI to queue: \(uri.prefix(60)) meta=\(meta.isEmpty ? "empty" : "\(meta.count) chars") playNext=\(playNext) atPos=\(atPosition)")
-            let result = try await contentDirectory.addURIToQueue(device: coordinator, uri: uri, metadata: meta, desiredFirstTrackNumberEnqueued: atPosition, enqueueAsNext: playNext)
+            sonosDebugLog("[QUEUE] Adding URI to queue: \(uri.prefix(60)) atPos=\(insertAt) playNext=\(playNext)")
+            let result = try await contentDirectory.addURIToQueue(device: coordinator, uri: uri, metadata: meta, desiredFirstTrackNumberEnqueued: insertAt, enqueueAsNext: false)
 
             // Cache by queue position for trackNumber-based recovery
             if !item.title.isEmpty && result > 0 {
@@ -1233,8 +1247,8 @@ public class SonosManager: ObservableObject {
             return result
         } else if item.isContainer {
             let containerURI = makeContainerURI(item)
-            sonosDebugLog("[QUEUE] Adding container to queue: \(containerURI.prefix(60))")
-            let result = try await contentDirectory.addURIToQueue(device: coordinator, uri: containerURI, desiredFirstTrackNumberEnqueued: atPosition, enqueueAsNext: playNext)
+            sonosDebugLog("[QUEUE] Adding container to queue: \(containerURI.prefix(60)) atPos=\(insertAt)")
+            let result = try await contentDirectory.addURIToQueue(device: coordinator, uri: containerURI, desiredFirstTrackNumberEnqueued: insertAt, enqueueAsNext: false)
             NotificationCenter.default.post(name: .queueChanged, object: nil)
             return result
         }
