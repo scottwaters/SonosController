@@ -967,13 +967,23 @@ struct AppleMusicSearchView: View {
         }
     }
 
-    /// Resolve album tracks via iTunes API, then add each to queue in order.
-    /// Avoids slow/shuffled speaker-side container resolution.
+    /// Resolve album tracks via iTunes API, then add each to queue sequentially.
+    /// Each addURIToQueue is awaited before the next to guarantee insertion order.
     private func enqueueAlbumTracks(_ album: BrowseItem, in group: SonosGroup, playNext: Bool) async {
         guard let collectionId = Int(album.objectID.replacingOccurrences(of: "apple:album:", with: "")) else { return }
         let tracks = await ServiceSearchProvider.shared.lookupAlbumTracks(collectionId: collectionId, sn: sn)
-        for track in tracks {
-            try? await sonosManager.addBrowseItemToQueue(track, in: group, playNext: playNext)
+        guard !tracks.isEmpty else { return }
+
+        if playNext {
+            // Insert in reverse so they end up in correct order after current track
+            for track in tracks.reversed() {
+                try? await sonosManager.addBrowseItemToQueue(track, in: group, playNext: true)
+            }
+        } else {
+            // Append at end — sequential awaits guarantee order
+            for track in tracks {
+                try? await sonosManager.addBrowseItemToQueue(track, in: group)
+            }
         }
     }
 
@@ -985,6 +995,7 @@ struct AppleMusicSearchView: View {
         if replace {
             try? await sonosManager.clearQueue(group: group)
         }
+        // Sequential awaits guarantee order
         for track in tracks {
             try? await sonosManager.addBrowseItemToQueue(track, in: group)
         }

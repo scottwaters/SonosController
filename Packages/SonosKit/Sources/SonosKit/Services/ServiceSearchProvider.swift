@@ -85,7 +85,17 @@ public final class ServiceSearchProvider {
     // MARK: - Result Parsers
 
     private func parseSongResults(_ results: [[String: Any]], sid: Int, serviceType: Int, sn: Int) -> [BrowseItem] {
-        results.compactMap { result in
+        // Sort by disc then track number to maintain album order
+        let sorted = results.sorted { a, b in
+            let discA = a["discNumber"] as? Int ?? 1
+            let discB = b["discNumber"] as? Int ?? 1
+            if discA != discB { return discA < discB }
+            let trackA = a["trackNumber"] as? Int ?? 0
+            let trackB = b["trackNumber"] as? Int ?? 0
+            return trackA < trackB
+        }
+
+        return sorted.compactMap { result in
             guard let trackId = result["trackId"] as? Int,
                   let trackName = result["trackName"] as? String,
                   let artistName = result["artistName"] as? String else {
