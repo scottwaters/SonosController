@@ -1497,6 +1497,16 @@ extension SonosManager: TransportStrategyDelegate {
         }
         groupTrackMetadata[groupID] = updated
 
+        // Ensure art URL from cache is available for history recording.
+        // Apple Music tracks may have /getaa? art (filtered by history) or no art,
+        // but we cached the iTunes art URL when adding to queue.
+        if updated.albumArtURI == nil || updated.albumArtURI?.contains("/getaa?") == true {
+            if let cachedArt = lookupCachedArt(uri: updated.trackURI, title: updated.title) {
+                updated.albumArtURI = cachedArt
+                groupTrackMetadata[groupID] = updated
+            }
+        }
+
         // Log to play history for all groups
         if let group = groups.first(where: { $0.coordinatorID == groupID || $0.id == groupID }) {
             playHistoryManager?.trackMetadataChanged(

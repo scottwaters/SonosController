@@ -107,8 +107,8 @@ public final class AVTransportService {
 
         // Debug: log what the speaker returns for service tracks
         if let uri = result["TrackURI"], uri.contains("x-sonos-http") {
-            let didlPreview = (result["TrackMetaData"] ?? "nil").prefix(200)
-            sonosDebugLog("[POSITION] Apple Music track — URI: \(uri.prefix(80)), Track#: \(result["Track"] ?? "nil"), DIDL: \(didlPreview)")
+            let didlFull = result["TrackMetaData"] ?? "nil"
+            sonosDebugLog("[POSITION] Apple Music track — URI: \(uri.prefix(80)), Track#: \(result["Track"] ?? "nil"), DIDL: \(didlFull)")
         }
 
         if let didl = result["TrackMetaData"], !didl.isEmpty,
@@ -175,7 +175,7 @@ public final class AVTransportService {
         }
 
         if let uri = result["TrackURI"], uri.contains("x-sonos-http") {
-            sonosDebugLog("[POSITION] Result — title: '\(metadata.title)', artist: '\(metadata.artist)', album: '\(metadata.album)', track#: \(metadata.trackNumber)")
+            sonosDebugLog("[POSITION] Result — title: '\(metadata.title)', artist: '\(metadata.artist)', album: '\(metadata.album)', art: '\(metadata.albumArtURI ?? "nil")', track#: \(metadata.trackNumber)")
         }
 
         return metadata
