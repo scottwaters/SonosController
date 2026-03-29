@@ -19,10 +19,14 @@ final class QueueViewModel: ObservableObject {
         let meta = sonosManager.groupTrackMetadata[group.coordinatorID]
         // Explicit queue source from GetMediaInfo (authoritative)
         if meta?.isQueueSource == true { return true }
-        // Radio/station — not queue. stationName is cleared by SonosManager
-        // when isQueueSource becomes true, so stale carry-forward is handled.
-        if let station = meta?.stationName, !station.isEmpty { return false }
-        if let uri = meta?.trackURI, URIPrefix.isRadio(uri) { return false }
+        // Radio/station: must have BOTH stationName AND radio URI.
+        // Apple Music queue tracks use x-sonosapi-hls-static URIs (looks like radio)
+        // but have empty stationName — so URI alone is not enough to exclude.
+        let hasStation = !(meta?.stationName.isEmpty ?? true)
+        let hasRadioURI = meta?.trackURI.map(URIPrefix.isRadio) ?? false
+        if hasStation && hasRadioURI { return false }
+        // stationName alone (no radio URI) — likely carry-forward, not definitive
+        // radioURI alone (no stationName) — likely Apple Music HLS, not radio
         // trackNumber within queue range
         if let trackNum = meta?.trackNumber, trackNum > 0, !queueItems.isEmpty,
            trackNum <= queueItems.count {
