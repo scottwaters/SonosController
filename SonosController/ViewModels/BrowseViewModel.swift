@@ -48,6 +48,7 @@ final class BrowseViewModel {
     var isSMAPI: Bool { smapiServiceURI != nil }
     var isSearch: Bool { objectID.hasPrefix("SEARCH:") }
     var isServiceSearch: Bool { objectID.hasPrefix("SERVICESEARCH:") }
+    var serviceSearchEntity: ServiceSearchEntity = .all
 
     /// The SMAPI item ID to browse (extracted from "SMAPI:sid:itemID" format or just the raw objectID)
     var smapiItemID: String {
@@ -102,7 +103,7 @@ final class BrowseViewModel {
                 try await loadSMAPIItems()
             } else if isServiceSearch {
                 let query = String(objectID.dropFirst("SERVICESEARCH:".count))
-                items = await ServiceSearchProvider.shared.searchAppleMusic(query: query, sn: serviceSearchSN)
+                items = await ServiceSearchProvider.shared.searchAppleMusic(query: query, entity: serviceSearchEntity, sn: serviceSearchSN)
                 totalItems = items.count
                 loadedCount = items.count
             } else if isSearch {

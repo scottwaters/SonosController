@@ -14,12 +14,6 @@ struct BrowseView: View {
 
     @State private var searchText = ""
     @State private var breadcrumbs: [BrowseDestination] = []
-    @State private var searchMode: SearchMode = .library
-
-    enum SearchMode: String, CaseIterable {
-        case library = "Library"
-        case appleMusic = "Apple Music"
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,23 +56,12 @@ struct BrowseView: View {
 
                 Spacer()
 
-                // Search mode picker
-                Picker("", selection: $searchMode) {
-                    ForEach(SearchMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 150)
-                .controlSize(.mini)
-
                 // Search field
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                         .font(.caption)
-                    TextField(searchMode == .library ? L10n.localSearch : "Search Apple Music", text: $searchText)
+                    TextField(L10n.localSearch, text: $searchText)
                         .textFieldStyle(.plain)
                         .font(.caption)
                         .onSubmit {
@@ -115,6 +98,10 @@ struct BrowseView: View {
                 let current = breadcrumbs.last ?? BrowseDestination(title: "", objectID: "")
                 if current.objectID == "RECENT:" {
                     RecentlyPlayedView(group: group)
+                } else if current.objectID == "APPLEMUSICPROMPT:" {
+                    AppleMusicSearchView(group: group, onNavigate: { dest in
+                        breadcrumbs.append(dest)
+                    })
                 } else {
                     BrowseListView(
                         title: current.title,
@@ -138,18 +125,10 @@ struct BrowseView: View {
     private func submitSearch() {
         let query = searchText.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
-        switch searchMode {
-        case .library:
-            breadcrumbs.append(BrowseDestination(
-                title: "Search: \(query)",
-                objectID: "SEARCH:\(query)"
-            ))
-        case .appleMusic:
-            breadcrumbs.append(BrowseDestination(
-                title: "Apple Music: \(query)",
-                objectID: "SERVICESEARCH:\(query)"
-            ))
-        }
+        breadcrumbs.append(BrowseDestination(
+            title: "Search: \(query)",
+            objectID: "SEARCH:\(query)"
+        ))
     }
 }
 
@@ -190,6 +169,16 @@ struct BrowseSectionsView: View {
                     }
                     .buttonStyle(.plain)
                 }
+            }
+
+            // Service Search
+            Section("Service Search") {
+                Button {
+                    onNavigate(BrowseDestination(title: "Search Apple Music", objectID: "APPLEMUSICPROMPT:"))
+                } label: {
+                    Label("Search Apple Music", systemImage: "magnifyingglass")
+                }
+                .buttonStyle(.plain)
             }
 
             // Connected Music Services (only user-authenticated services)
@@ -742,6 +731,143 @@ struct FlowLayout: Layout {
             subview.place(at: CGPoint(x: currentX, y: currentY), proposal: .unspecified)
             currentX += size.width + spacing
             lineHeight = max(lineHeight, size.height)
+        }
+    }
+}
+
+// MARK: - Apple Music Search
+
+struct AppleMusicSearchView: View {
+    @EnvironmentObject var sonosManager: SonosManager
+    @EnvironmentObject var smapiManager: SMAPIAuthManager
+    let group: SonosGroup?
+    let onNavigate: (BrowseDestination) -> Void
+
+    @State private var searchText = ""
+    @State private var entity: ServiceSearchEntity = .all
+    @State private var results: [BrowseItem] = []
+    @State private var isSearching = false
+    @State private var hasSearched = false
+    @State private var sn = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Search controls
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                        TextField("Search Apple Music...", text: $searchText)
+                            .textFieldStyle(.plain)
+                            .font(.callout)
+                            .onSubmit { performSearch() }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+
+                    Button {
+                        performSearch()
+                    } label: {
+                        Text("Search")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+
+                Picker("", selection: $entity) {
+                    ForEach(ServiceSearchEntity.allCases, id: \.self) { e in
+                        Text(e.rawValue).tag(e)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .onChange(of: entity) {
+                    if hasSearched { performSearch() }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            // Results
+            if isSearching {
+                ProgressView("Searching Apple Music...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if results.isEmpty && hasSearched {
+                VStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                    Text("No results found")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if results.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "music.note.list")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                    Text("Search for songs, albums, or artists")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(results) { item in
+                    BrowseItemRow(item: item)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if item.isContainer {
+                                // Album — enqueue and play
+                                Task { try? await sonosManager.playBrowseItem(item, in: group!) }
+                            } else if item.isPlayable, group != nil {
+                                Task { try? await sonosManager.playBrowseItem(item, in: group!) }
+                            }
+                        }
+                        .contextMenu {
+                            if let group = group, item.isPlayable {
+                                Button("Play Now") {
+                                    Task { try? await sonosManager.playBrowseItem(item, in: group) }
+                                }
+                                Button("Play Next") {
+                                    Task { try? await sonosManager.addBrowseItemToQueue(item, in: group, playNext: true) }
+                                }
+                                Button("Add to Queue") {
+                                    Task { try? await sonosManager.addBrowseItemToQueue(item, in: group) }
+                                }
+                            }
+                        }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .onAppear {
+            if smapiManager.serviceSerialNumbers.isEmpty {
+                Task {
+                    await smapiManager.discoverSerialNumbers(using: sonosManager)
+                    sn = smapiManager.serialNumber(for: ServiceID.appleMusic)
+                }
+            } else {
+                sn = smapiManager.serialNumber(for: ServiceID.appleMusic)
+            }
+        }
+    }
+
+    private func performSearch() {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return }
+        isSearching = true
+        hasSearched = true
+        Task {
+            results = await ServiceSearchProvider.shared.searchAppleMusic(query: query, entity: entity, sn: sn)
+            isSearching = false
         }
     }
 }
