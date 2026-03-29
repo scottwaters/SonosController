@@ -515,6 +515,13 @@ public class SonosManager: ObservableObject {
                 groupPlayModes[coordinator.id] = mode
             }
 
+            // Pre-fetch queue items so track info recovery works for service tracks
+            if lastQueueItems[coordinator.id] == nil || lastQueueItems[coordinator.id]?.isEmpty == true {
+                if let queueResult = try? await contentDirectory.browseQueue(device: coordinator, start: 0, count: 100) {
+                    lastQueueItems[coordinator.id] = queueResult.items
+                }
+            }
+
             var enriched = position
             if state.isActive,
                let mediaInfo = try? await avTransport.getMediaInfo(device: coordinator) {
@@ -833,6 +840,8 @@ public class SonosManager: ObservableObject {
     public func clearQueue(group: SonosGroup) async throws {
         guard let coordinator = group.coordinator else { return }
         try await contentDirectory.removeAllTracksFromQueue(device: coordinator)
+        lastQueueItems[group.coordinatorID] = nil
+        cachedTrackByPosition[group.coordinatorID] = nil
     }
 
     public func playTrackFromQueue(group: SonosGroup, trackNumber: Int) async throws {
@@ -1389,7 +1398,17 @@ extension SonosManager: TransportStrategyDelegate {
 
     public func transportDidUpdateTrackMetadata(_ groupID: String, metadata: TrackMetadata) {
         guard let existing = groupTrackMetadata[groupID] else {
-            groupTrackMetadata[groupID] = metadata
+            // First metadata — also try to populate queue cache if playing from queue
+            var initial = metadata
+            if initial.title.isEmpty, initial.trackNumber > 0,
+               let qi = lastQueueItems[groupID], initial.trackNumber - 1 < qi.count {
+                let item = qi[initial.trackNumber - 1]
+                initial.title = item.title
+                if initial.artist.isEmpty { initial.artist = item.artist }
+                if initial.album.isEmpty { initial.album = item.album }
+                if initial.albumArtURI == nil { initial.albumArtURI = item.albumArtURI }
+            }
+            groupTrackMetadata[groupID] = initial
             return
         }
 

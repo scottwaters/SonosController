@@ -46,9 +46,9 @@ final class QueueViewModel: ObservableObject {
             }
         }
 
-        // Fallback: use track number
-        if let trackNum = meta?.trackNumber, trackNum > 0, trackNum != currentTrack {
-            currentTrack = trackNum
+        // Fallback: use track number (1-based queue position from GetPositionInfo)
+        if let trackNum = meta?.trackNumber, trackNum > 0 {
+            if trackNum != currentTrack { currentTrack = trackNum }
         }
     }
 
