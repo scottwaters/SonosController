@@ -255,6 +255,9 @@ public class SonosManager: ObservableObject {
     struct CachedTrack { let title: String; let artist: String; let album: String; let artURL: String? }
     private var cachedTrackInfo: [String: CachedTrack] = [:]          // keyed by URI
     private var cachedTrackByPosition: [String: [Int: CachedTrack]] = [:] // keyed by groupID -> queue position
+
+    /// Last-fetched queue items per group — used for track info recovery
+    private var lastQueueItems: [String: [QueueItem]] = [:]
     private var refreshTimer: Timer?
     private var isRefreshingTopology = false  // serializes topology refreshes to prevent concurrent dictionary mutation
 
@@ -814,7 +817,12 @@ public class SonosManager: ObservableObject {
 
     public func getQueue(group: SonosGroup, start: Int = 0, count: Int = 100) async throws -> (items: [QueueItem], total: Int) {
         guard let coordinator = group.coordinator else { return ([], 0) }
-        return try await contentDirectory.browseQueue(device: coordinator, start: start, count: count)
+        let result = try await contentDirectory.browseQueue(device: coordinator, start: start, count: count)
+        // Cache queue items for track info recovery (Apple Music tracks may have empty GetPositionInfo)
+        if start == 0 && !result.items.isEmpty {
+            lastQueueItems[group.coordinatorID] = result.items
+        }
+        return result
     }
 
     public func removeFromQueue(group: SonosGroup, trackIndex: Int) async throws {
@@ -1406,9 +1414,19 @@ extension SonosManager: TransportStrategyDelegate {
                 }
             }
 
-            // Fall back to queue position match
+            // Fall back to queue position match (from addURIToQueue)
             if cached == nil, enriched.trackNumber > 0 {
                 cached = cachedTrackByPosition[groupID]?[enriched.trackNumber]
+            }
+
+            // Fall back to last-fetched queue items (from getQueue/browseQueue)
+            if cached == nil, enriched.trackNumber > 0,
+               let queueItems = lastQueueItems[groupID] {
+                let idx = enriched.trackNumber - 1 // queue items are 0-indexed, trackNumber is 1-indexed
+                if idx >= 0 && idx < queueItems.count {
+                    let qi = queueItems[idx]
+                    cached = CachedTrack(title: qi.title, artist: qi.artist, album: qi.album, artURL: qi.albumArtURI)
+                }
             }
 
             if let cached {
