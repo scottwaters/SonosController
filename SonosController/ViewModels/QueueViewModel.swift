@@ -14,11 +14,17 @@ final class QueueViewModel: ObservableObject {
     @Published var saveMessage: String?
     @Published var playingTrack: Int? // Track currently being started (shows spinner)
 
-    /// True when the speaker is playing a radio/stream, not the queue
+    /// True when the speaker is playing a radio/stream, not the queue.
+    /// Checks both stationName AND URI — stationName alone is insufficient because
+    /// it can carry forward from a previous radio session into queue playback.
     var isPlayingStation: Bool {
         let meta = sonosManager.groupTrackMetadata[group.coordinatorID]
-        if let stationName = meta?.stationName, !stationName.isEmpty { return true }
-        if let uri = meta?.trackURI, URIPrefix.isRadio(uri) { return true }
+        guard let uri = meta?.trackURI else { return false }
+        // Playing from queue uses x-sonos-http, x-rincon-queue, or similar — not radio
+        if URIPrefix.isRadio(uri) { return true }
+        // If URI is a queue reference, it's definitely not a station
+        if uri.hasPrefix(URIPrefix.rinconQueue) { return false }
+        // stationName alone doesn't mean it's a station — must also have a radio URI
         return false
     }
 
