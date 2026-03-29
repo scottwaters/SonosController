@@ -139,8 +139,8 @@ struct QueueView: View {
                         }
 
                         QueueItemRow(item: item,
-                                     isCurrentTrack: item.id == vm.currentTrack && !vm.isPlayingStation,
-                                     isPlaying: item.id == vm.currentTrack && !vm.isPlayingStation && vm.sonosManager.groupTransportStates[vm.group.coordinatorID]?.isPlaying == true,
+                                     isCurrentTrack: item.id == vm.currentTrack && vm.isPlayingFromQueue,
+                                     isPlaying: item.id == vm.currentTrack && vm.isPlayingFromQueue && vm.sonosManager.groupTransportStates[vm.group.coordinatorID]?.isPlaying == true,
                                      isLoading: vm.playingTrack == item.id)
                             .id(item.id)
                             .contentShape(Rectangle())
@@ -173,7 +173,7 @@ struct QueueView: View {
             }
         }
         .onChange(of: vm.currentTrack) {
-            guard vm.currentTrack > 0, !vm.isPlayingStation else { return }
+            guard vm.currentTrack > 0, vm.isPlayingFromQueue else { return }
             withAnimation(.easeInOut(duration: 0.3)) {
                 proxy.scrollTo(vm.currentTrack, anchor: .center)
             }

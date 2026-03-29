@@ -15,14 +15,23 @@ final class QueueViewModel: ObservableObject {
     @Published var playingTrack: Int? // Track currently being started (shows spinner)
 
     /// True when the speaker is NOT playing from the queue.
-    /// Uses CurrentURI-based detection: x-rincon-queue: means queue playback.
-    /// Favorites, radio, and direct streams are not queue sources.
-    var isPlayingStation: Bool {
+    /// Checks isQueueSource (from GetMediaInfo CurrentURI) first, then falls back
+    /// to matching the current track title against queue items.
+    var isPlayingFromQueue: Bool {
         let meta = sonosManager.groupTrackMetadata[group.coordinatorID]
-        // isQueueSource is set from GetMediaInfo CurrentURI (x-rincon-queue:)
-        if meta?.isQueueSource == true { return false }
-        // No queue source detected — not playing from queue
-        return true
+        // Explicit queue source detection from GetMediaInfo
+        if meta?.isQueueSource == true { return true }
+        // Fallback: if current track title matches a queue item, it's from the queue
+        if let title = meta?.title, !title.isEmpty, !queueItems.isEmpty {
+            let artist = meta?.artist ?? ""
+            if queueItems.contains(where: { $0.title == title && $0.artist == artist }) { return true }
+            if queueItems.contains(where: { $0.title == title }) { return true }
+        }
+        // Fallback: trackNumber matches a queue item position
+        if let trackNum = meta?.trackNumber, trackNum > 0, trackNum <= queueItems.count {
+            return true
+        }
+        return false
     }
 
     init(sonosManager: any QueueServices, group: SonosGroup) {
@@ -33,11 +42,11 @@ final class QueueViewModel: ObservableObject {
     /// Updates current track number from transport metadata
     func updateCurrentTrack() {
         let meta = sonosManager.groupTrackMetadata[group.coordinatorID]
-        let station = isPlayingStation
+        let playing = isPlayingFromQueue
 
-        sonosDebugLog("[QUEUE] updateCurrentTrack: title='\(meta?.title ?? "nil")' trackNum=\(meta?.trackNumber ?? -1) uri=\(String(meta?.trackURI?.prefix(50) ?? "nil")) isStation=\(station) currentTrack=\(currentTrack) queueCount=\(queueItems.count)")
+        sonosDebugLog("[QUEUE] updateCurrentTrack: title='\(meta?.title ?? "nil")' trackNum=\(meta?.trackNumber ?? -1) isQueue=\(playing) isQueueSource=\(meta?.isQueueSource ?? false) currentTrack=\(currentTrack) queueCount=\(queueItems.count)")
 
-        guard !station else { return }
+        guard playing else { return }
 
         // Always try title+artist match first — works for both shuffle and sequential
         if let title = meta?.title, !title.isEmpty, !queueItems.isEmpty {
