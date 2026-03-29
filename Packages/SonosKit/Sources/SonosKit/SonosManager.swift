@@ -250,10 +250,11 @@ public class SonosManager: ObservableObject {
 
     private var discoveredLocations: Set<String> = []  // de-dups SSDP responses
 
-    /// Cached track info by URI — populated when adding Service Search items to queue.
+    /// Cached track info — populated when adding Service Search items to queue.
     /// Used to recover title/artist when the speaker returns empty TrackMetaData.
     struct CachedTrack { let title: String; let artist: String; let album: String; let artURL: String? }
-    private var cachedTrackInfo: [String: CachedTrack] = [:]
+    private var cachedTrackInfo: [String: CachedTrack] = [:]          // keyed by URI
+    private var cachedTrackByPosition: [String: [Int: CachedTrack]] = [:] // keyed by groupID -> queue position
     private var refreshTimer: Timer?
     private var isRefreshingTopology = false  // serializes topology refreshes to prevent concurrent dictionary mutation
 
@@ -1183,12 +1184,18 @@ public class SonosManager: ObservableObject {
         guard let coordinator = group.coordinator else { return 0 }
 
         if let uri = item.resourceURI, !uri.isEmpty {
+            let cached = CachedTrack(
+                title: item.title, artist: item.artist ?? "",
+                album: item.album ?? "", artURL: item.albumArtURI
+            )
+
             // Cache track info for later recovery when speaker returns empty metadata
             if !item.title.isEmpty {
-                cachedTrackInfo[uri] = CachedTrack(
-                    title: item.title, artist: item.artist ?? "",
-                    album: item.album ?? "", artURL: item.albumArtURI
-                )
+                cachedTrackInfo[uri] = cached
+                // Also cache with decoded URI (speaker may return decoded version)
+                if let decoded = uri.removingPercentEncoding, decoded != uri {
+                    cachedTrackInfo[decoded] = cached
+                }
             }
 
             // Unescape metadata — browse parser stores it XML-escaped
@@ -1198,6 +1205,13 @@ public class SonosManager: ObservableObject {
             }
             sonosDebugLog("[QUEUE] Adding URI to queue: \(uri.prefix(60)) meta=\(meta.isEmpty ? "empty" : "\(meta.count) chars") playNext=\(playNext) atPos=\(atPosition)")
             let result = try await contentDirectory.addURIToQueue(device: coordinator, uri: uri, metadata: meta, desiredFirstTrackNumberEnqueued: atPosition, enqueueAsNext: playNext)
+
+            // Cache by queue position for trackNumber-based recovery
+            if !item.title.isEmpty && result > 0 {
+                let groupID = group.coordinatorID
+                if cachedTrackByPosition[groupID] == nil { cachedTrackByPosition[groupID] = [:] }
+                cachedTrackByPosition[groupID]?[result] = cached
+            }
             NotificationCenter.default.post(name: .queueChanged, object: nil)
             return result
         } else if item.isContainer {
@@ -1378,11 +1392,26 @@ extension SonosManager: TransportStrategyDelegate {
             return
         }
 
-        // Recover track info from cache first — Apple Music/service queue tracks
+        // Recover track info from cache — Apple Music/service queue tracks
         // often return empty TrackMetaData from GetPositionInfo.
         var enriched = metadata
-        if enriched.title.isEmpty, let uri = enriched.trackURI, !uri.isEmpty {
-            if let cached = cachedTrackInfo[uri] {
+        if enriched.title.isEmpty {
+            var cached: CachedTrack?
+
+            // Try URI match first (both encoded and decoded)
+            if let uri = enriched.trackURI, !uri.isEmpty {
+                cached = cachedTrackInfo[uri]
+                if cached == nil, let decoded = uri.removingPercentEncoding {
+                    cached = cachedTrackInfo[decoded]
+                }
+            }
+
+            // Fall back to queue position match
+            if cached == nil, enriched.trackNumber > 0 {
+                cached = cachedTrackByPosition[groupID]?[enriched.trackNumber]
+            }
+
+            if let cached {
                 enriched.title = cached.title
                 if enriched.artist.isEmpty { enriched.artist = cached.artist }
                 if enriched.album.isEmpty { enriched.album = cached.album }
