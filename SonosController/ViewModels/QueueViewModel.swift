@@ -14,21 +14,17 @@ final class QueueViewModel: ObservableObject {
     @Published var saveMessage: String?
     @Published var playingTrack: Int? // Track currently being started (shows spinner)
 
-    /// True when the speaker is NOT playing from the queue.
-    /// Checks isQueueSource (from GetMediaInfo CurrentURI) first, then falls back
-    /// to matching the current track title against queue items.
+    /// True when the speaker is playing from the queue.
     var isPlayingFromQueue: Bool {
         let meta = sonosManager.groupTrackMetadata[group.coordinatorID]
-        // Explicit queue source detection from GetMediaInfo
+        // If playing a radio/station, never show queue indicator
+        if let station = meta?.stationName, !station.isEmpty { return false }
+        if let uri = meta?.trackURI, URIPrefix.isRadio(uri) { return false }
+        // Explicit queue source detection from GetMediaInfo CurrentURI
         if meta?.isQueueSource == true { return true }
-        // Fallback: if current track title matches a queue item, it's from the queue
-        if let title = meta?.title, !title.isEmpty, !queueItems.isEmpty {
-            let artist = meta?.artist ?? ""
-            if queueItems.contains(where: { $0.title == title && $0.artist == artist }) { return true }
-            if queueItems.contains(where: { $0.title == title }) { return true }
-        }
-        // Fallback: trackNumber matches a queue item position
-        if let trackNum = meta?.trackNumber, trackNum > 0, trackNum <= queueItems.count {
+        // Fallback: trackNumber within queue range and queue is not empty
+        if let trackNum = meta?.trackNumber, trackNum > 0, !queueItems.isEmpty,
+           trackNum <= queueItems.count {
             return true
         }
         return false
