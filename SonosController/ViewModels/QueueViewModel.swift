@@ -15,16 +15,16 @@ final class QueueViewModel: ObservableObject {
     @Published var playingTrack: Int? // Track currently being started (shows spinner)
 
     /// True when the speaker is playing a radio/stream, not the queue.
-    /// Checks both stationName AND URI — stationName alone is insufficient because
-    /// it can carry forward from a previous radio session into queue playback.
+    /// Uses trackNumber as the primary indicator: if trackNumber > 0, the speaker
+    /// is playing from the queue regardless of URI scheme. Apple Music queue tracks
+    /// resolve to x-sonosapi-hls-static: URIs which look like radio but aren't.
     var isPlayingStation: Bool {
         let meta = sonosManager.groupTrackMetadata[group.coordinatorID]
-        guard let uri = meta?.trackURI else { return false }
-        // Playing from queue uses x-sonos-http, x-rincon-queue, or similar — not radio
-        if URIPrefix.isRadio(uri) { return true }
-        // If URI is a queue reference, it's definitely not a station
-        if uri.hasPrefix(URIPrefix.rinconQueue) { return false }
-        // stationName alone doesn't mean it's a station — must also have a radio URI
+        // trackNumber > 0 means playing from the queue — not a station
+        if let trackNum = meta?.trackNumber, trackNum > 0 { return false }
+        // No track number — check if stationName is set (radio/stream)
+        if let stationName = meta?.stationName, !stationName.isEmpty { return true }
+        if let uri = meta?.trackURI, URIPrefix.isRadio(uri) { return true }
         return false
     }
 
@@ -35,26 +35,38 @@ final class QueueViewModel: ObservableObject {
 
     /// Updates current track number from transport metadata
     func updateCurrentTrack() {
-        guard !isPlayingStation else { return }
         let meta = sonosManager.groupTrackMetadata[group.coordinatorID]
+        let station = isPlayingStation
+
+        sonosDebugLog("[QUEUE] updateCurrentTrack: title='\(meta?.title ?? "nil")' trackNum=\(meta?.trackNumber ?? -1) uri=\(String(meta?.trackURI?.prefix(50) ?? "nil")) isStation=\(station) currentTrack=\(currentTrack) queueCount=\(queueItems.count)")
+
+        guard !station else { return }
 
         // Always try title+artist match first — works for both shuffle and sequential
-        // (trackNumber can be wrong during shuffle transitions)
         if let title = meta?.title, !title.isEmpty, !queueItems.isEmpty {
             let artist = meta?.artist ?? ""
             if let match = queueItems.first(where: { $0.title == title && $0.artist == artist }) {
-                if match.id != currentTrack { currentTrack = match.id }
+                if match.id != currentTrack {
+                    sonosDebugLog("[QUEUE] Title+artist match: '\(title)' -> queue pos \(match.id)")
+                    currentTrack = match.id
+                }
                 return
             }
             if let match = queueItems.first(where: { $0.title == title }) {
-                if match.id != currentTrack { currentTrack = match.id }
+                if match.id != currentTrack {
+                    sonosDebugLog("[QUEUE] Title-only match: '\(title)' -> queue pos \(match.id)")
+                    currentTrack = match.id
+                }
                 return
             }
         }
 
         // Fallback: use track number (1-based queue position from GetPositionInfo)
         if let trackNum = meta?.trackNumber, trackNum > 0 {
-            if trackNum != currentTrack { currentTrack = trackNum }
+            if trackNum != currentTrack {
+                sonosDebugLog("[QUEUE] TrackNumber fallback: \(trackNum)")
+                currentTrack = trackNum
+            }
         }
     }
 
