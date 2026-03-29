@@ -123,6 +123,19 @@ public final class PlayHistoryManager: ObservableObject {
         )
         repo.insert(entry)
         entries.append(entry)
+
+        // If no art, search iTunes in background and backfill
+        if artURI == nil && !entry.title.isEmpty {
+            let title = entry.title
+            let artist = entry.artist
+            Task {
+                if let artURL = await AlbumArtSearchService.shared.searchArtwork(
+                    artist: artist, album: entry.album.isEmpty ? title : entry.album
+                ) {
+                    updateArtwork(forTitle: title, artist: artist, artURL: artURL)
+                }
+            }
+        }
     }
 
     /// Updates the album art URI for the most recent entry matching title+artist
