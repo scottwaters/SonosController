@@ -102,6 +102,8 @@ struct BrowseView: View {
                     AppleMusicSearchView(group: group, onNavigate: { dest in
                         breadcrumbs.append(dest)
                     })
+                } else if current.objectID == "TUNEINPROMPT:" {
+                    TuneInSearchView(group: group)
                 } else {
                     BrowseListView(
                         title: current.title,
@@ -177,6 +179,13 @@ struct BrowseSectionsView: View {
                     onNavigate(BrowseDestination(title: "Search Apple Music", objectID: "APPLEMUSICPROMPT:"))
                 } label: {
                     Label("Search Apple Music", systemImage: "magnifyingglass")
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    onNavigate(BrowseDestination(title: "Search TuneIn Radio", objectID: "TUNEINPROMPT:"))
+                } label: {
+                    Label("Search TuneIn Radio", systemImage: "radio")
                 }
                 .buttonStyle(.plain)
             }
@@ -1026,6 +1035,107 @@ struct AppleMusicSearchView: View {
                 items = await ServiceSearchProvider.shared.lookupAlbumTracks(collectionId: collectionId, sn: sn)
             }
             isLoading = false
+        }
+    }
+}
+
+// MARK: - TuneIn Radio Search
+
+struct TuneInSearchView: View {
+    @EnvironmentObject var sonosManager: SonosManager
+    let group: SonosGroup?
+
+    @State private var searchText = ""
+    @State private var results: [BrowseItem] = []
+    @State private var isSearching = false
+    @State private var hasSearched = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Search controls
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "radio")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                        TextField("Search TuneIn Radio...", text: $searchText)
+                            .textFieldStyle(.plain)
+                            .font(.callout)
+                            .onSubmit { performSearch() }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+
+                    Button {
+                        performSearch()
+                    } label: {
+                        Text("Search")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            // Results
+            if isSearching {
+                ProgressView("Searching TuneIn...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if results.isEmpty && hasSearched {
+                VStack(spacing: 8) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                    Text("No stations found")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if results.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                    Text("Search for radio stations")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(results) { item in
+                    BrowseItemRow(item: item)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard let group = group else { return }
+                            Task { try? await sonosManager.playBrowseItem(item, in: group) }
+                        }
+                        .contextMenu {
+                            if let group = group {
+                                Button("Play Now") {
+                                    Task { try? await sonosManager.playBrowseItem(item, in: group) }
+                                }
+                            }
+                        }
+                }
+                .listStyle(.plain)
+            }
+        }
+    }
+
+    private func performSearch() {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return }
+        isSearching = true
+        hasSearched = true
+        Task {
+            results = await ServiceSearchProvider.shared.searchTuneIn(query: query)
+            isSearching = false
         }
     }
 }

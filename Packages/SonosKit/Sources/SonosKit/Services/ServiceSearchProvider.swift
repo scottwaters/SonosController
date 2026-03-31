@@ -221,6 +221,62 @@ public final class ServiceSearchProvider {
         }
     }
 
+    // MARK: - TuneIn Radio (RadioTime OPML API)
+
+    /// Search TuneIn for radio stations via the public RadioTime OPML API.
+    /// No auth required. Returns BrowseItems with x-sonosapi-stream URIs.
+    public func searchTuneIn(query: String, limit: Int = 25) async -> [BrowseItem] {
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "http://opml.radiotime.com/Search.ashx?query=\(encoded)&formats=mp3,aac&render=json") else {
+            return []
+        }
+
+        do {
+            let (data, response) = try await session.data(for: URLRequest(url: url))
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else { return [] }
+
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let body = json["body"] as? [[String: Any]] else { return [] }
+
+            // Flatten: body may contain category groups with "children" arrays
+            var stations: [[String: Any]] = []
+            for item in body {
+                if let children = item["children"] as? [[String: Any]] {
+                    stations.append(contentsOf: children)
+                } else if item["type"] as? String == "audio" {
+                    stations.append(item)
+                }
+            }
+
+            return stations.prefix(limit).compactMap { station -> BrowseItem? in
+                guard let guideId = station["guide_id"] as? String,
+                      station["type"] as? String == "audio",
+                      let text = station["text"] as? String else { return nil }
+
+                let subtext = station["subtext"] as? String ?? ""
+                let imageURL = station["image"] as? String
+
+                let resourceURI = "x-sonosapi-stream:\(guideId)?sid=\(ServiceID.tuneIn)&flags=8224&sn=0"
+                let metadata = buildTuneInDIDL(guideId: guideId, title: text)
+
+                return BrowseItem(
+                    id: "tunein:\(guideId)",
+                    title: text,
+                    artist: subtext,
+                    album: "",
+                    albumArtURI: imageURL,
+                    itemClass: .radioStation,
+                    resourceURI: resourceURI,
+                    resourceMetadata: metadata
+                )
+            }
+        } catch {
+            sonosDebugLog("[SERVICE_SEARCH] TuneIn search failed: \(error)")
+            return []
+        }
+    }
+
     // MARK: - DIDL Builders
 
     private func buildTrackDIDL(trackId: Int, collectionId: Int, title: String, artist: String, album: String, serviceType: Int) -> String {
@@ -232,6 +288,12 @@ public final class ServiceSearchProvider {
     private func buildAlbumDIDL(collectionId: Int, title: String, artist: String, serviceType: Int) -> String {
         """
         <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="1006206calbum%3a\(collectionId)" parentID="" restricted="true"><dc:title>\(xmlEscape(title))</dc:title><dc:creator>\(xmlEscape(artist))</dc:creator><upnp:class>object.container.album.musicAlbum</upnp:class><desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">SA_RINCON\(serviceType)_X_#Svc\(serviceType)-0-Token</desc></item></DIDL-Lite>
+        """
+    }
+
+    private func buildTuneInDIDL(guideId: String, title: String) -> String {
+        """
+        <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="F00092020\(guideId)" parentID="L" restricted="true"><dc:title>\(xmlEscape(title))</dc:title><upnp:class>object.item.audioItem.audioBroadcast</upnp:class><desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">SA_RINCON3079_</desc></item></DIDL-Lite>
         """
     }
 
