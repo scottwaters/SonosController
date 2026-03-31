@@ -227,17 +227,24 @@ public final class ServiceSearchProvider {
     /// No auth required. Returns BrowseItems with x-sonosapi-stream URIs.
     public func searchTuneIn(query: String, limit: Int = 25) async -> [BrowseItem] {
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "http://opml.radiotime.com/Search.ashx?query=\(encoded)&formats=mp3,aac&render=json") else {
+              let url = URL(string: "https://opml.radiotime.com/Search.ashx?query=\(encoded)&formats=mp3,aac&render=json") else {
+            sonosDebugLog("[SERVICE_SEARCH] TuneIn: failed to build URL for query '\(query)'")
             return []
         }
 
         do {
             let (data, response) = try await session.data(for: URLRequest(url: url))
             guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else { return [] }
+                  (200...299).contains(httpResponse.statusCode) else {
+                sonosDebugLog("[SERVICE_SEARCH] TuneIn: HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+                return []
+            }
 
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let body = json["body"] as? [[String: Any]] else { return [] }
+                  let body = json["body"] as? [[String: Any]] else {
+                sonosDebugLog("[SERVICE_SEARCH] TuneIn: failed to parse JSON response")
+                return []
+            }
 
             // Flatten: body may contain category groups with "children" arrays
             var stations: [[String: Any]] = []
@@ -248,6 +255,8 @@ public final class ServiceSearchProvider {
                     stations.append(item)
                 }
             }
+
+            sonosDebugLog("[SERVICE_SEARCH] TuneIn: \(body.count) results, \(stations.count) stations for '\(query)'")
 
             return stations.prefix(limit).compactMap { station -> BrowseItem? in
                 guard let guideId = station["guide_id"] as? String,
