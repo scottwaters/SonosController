@@ -1191,12 +1191,13 @@ struct TuneInSearchView: View {
     }
 
     private func handleTap(_ item: BrowseItem) {
-        if item.isContainer {
-            // album field stores the browse URL for categories
+        // Stations with a resource URI should play, not drill down
+        if let uri = item.resourceURI, !uri.isEmpty, let group = group {
+            Task { try? await sonosManager.playBrowseItem(item, in: group) }
+        } else if item.isContainer {
+            // Categories store their browse URL in the album field
             let browseURL = item.album.isEmpty ? nil : item.album
             navStack.append(TuneInLevel(title: item.title, url: browseURL))
-        } else if let group = group, item.isPlayable {
-            Task { try? await sonosManager.playBrowseItem(item, in: group) }
         }
     }
 
