@@ -58,7 +58,10 @@ public final class SMAPIAuthManager: ObservableObject {
 
     /// Known services that don't support third-party AppLink auth
     private static let unsupportedAppLink: Set<Int> = [
+        144, // Calm Radio — AppLink auth fails; use dedicated browse view instead
+        201, // Amazon Music — returns empty auth URL; requires Amazon's own OAuth
         204, // Apple Music — requires native iOS/macOS SDK for OAuth
+        284, // YouTube Music — returns empty auth URL; requires Google's own OAuth
         333, // TuneIn (New) — auth polling returns server errors; use existing Sonos account instead
         254, // TuneIn — Anonymous auth, doesn't need AppLink
     ]

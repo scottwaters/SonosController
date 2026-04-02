@@ -1178,9 +1178,11 @@ public class SonosManager: ObservableObject {
                 }
             } else {
                 // Direct playback — singles, radio streams, etc.
+                sonosDebugLog("[PLAYBACK] SetAVTransportURI: \(uri.prefix(80))")
                 try await withStaleHandling(for: group.name) {
+                    let effectiveMeta = meta
                     try await avTransport.setAVTransportURI(
-                        device: coordinator, uri: uri, metadata: meta
+                        device: coordinator, uri: uri, metadata: effectiveMeta
                     )
                     try await avTransport.play(device: coordinator)
                 }

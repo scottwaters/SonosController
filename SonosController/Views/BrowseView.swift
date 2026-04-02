@@ -104,6 +104,13 @@ struct BrowseView: View {
                     })
                 } else if current.objectID == "TUNEINPROMPT:" {
                     TuneInSearchView(group: group)
+                } else if current.objectID == "CALMRADIOPROMPT:" {
+                    CalmRadioBrowseView(group: group)
+                } else if current.objectID.hasPrefix("SMAPISEARCHPROMPT:") {
+                    let sidStr = current.objectID.replacingOccurrences(of: "SMAPISEARCHPROMPT:", with: "")
+                    let sid = Int(sidStr) ?? 0
+                    let name = ServiceID.knownNames[sid] ?? "Music Service"
+                    SMAPIServiceSearchView(group: group, serviceID: sid, serviceName: name)
                 } else {
                     BrowseListView(
                         title: current.title,
@@ -150,6 +157,60 @@ struct BrowseDestination: Hashable {
     }
 }
 
+// MARK: - Collapsible Section Header
+
+private struct CollapsibleSectionHeader: View {
+    let title: String
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        Button {
+            isExpanded.toggle()
+        } label: {
+            HStack {
+                Text(title)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Service Search Ordering
+
+private struct ServiceSearchEntry: Identifiable {
+    let key: String       // Unique key for persistence (e.g. "applemusic", "tunein", "smapi:12")
+    let title: String
+    let objectID: String
+    let icon: String
+    var id: String { key }
+}
+
+private enum ServiceSearchOrder {
+    private static let udKey = "serviceSearchOrder"
+
+    static func save(_ keys: [String]) {
+        UserDefaults.standard.set(keys, forKey: udKey)
+    }
+
+    static func ordered(_ entries: [ServiceSearchEntry]) -> [ServiceSearchEntry] {
+        guard let savedKeys = UserDefaults.standard.stringArray(forKey: udKey) else { return entries }
+        var result: [ServiceSearchEntry] = []
+        // Add entries in saved order
+        for key in savedKeys {
+            if let entry = entries.first(where: { $0.key == key }) {
+                result.append(entry)
+            }
+        }
+        // Append any new entries not in saved order
+        for entry in entries where !savedKeys.contains(entry.key) {
+            result.append(entry)
+        }
+        return result
+    }
+}
+
 struct BrowseSectionsView: View {
     @EnvironmentObject var sonosManager: SonosManager
     @EnvironmentObject var playHistoryManager: PlayHistoryManager
@@ -158,6 +219,45 @@ struct BrowseSectionsView: View {
     let onNavigate: (BrowseDestination) -> Void
 
     @State private var isLoading = true
+    @AppStorage("browse_serviceSearch_expanded") private var serviceSearchExpanded = true
+    @AppStorage("browse_musicServices_expanded") private var musicServicesExpanded = true
+    @AppStorage("browse_favorites_expanded") private var favoritesExpanded = true
+    @AppStorage("browse_library_expanded") private var libraryExpanded = true
+
+    /// Authenticated SMAPI services that support search (excludes services with dedicated views)
+    private var smapiSearchableServices: [SMAPIServiceDescriptor] {
+        guard smapiManager.isEnabled else { return [] }
+        return smapiManager.authenticatedServiceList.filter { svc in
+            svc.id != ServiceID.appleMusic && svc.id != ServiceID.tuneIn &&
+            svc.id != ServiceID.tuneInNew && svc.id != ServiceID.calmRadio
+        }
+    }
+
+    /// All service search entries in user-defined order
+    private var orderedServiceEntries: [ServiceSearchEntry] {
+        var entries: [ServiceSearchEntry] = [
+            ServiceSearchEntry(key: "applemusic", title: "Search Apple Music", objectID: "APPLEMUSICPROMPT:", icon: "magnifyingglass"),
+            ServiceSearchEntry(key: "tunein", title: "Search TuneIn Radio", objectID: "TUNEINPROMPT:", icon: "radio"),
+            ServiceSearchEntry(key: "calmradio", title: "Calm Radio", objectID: "CALMRADIOPROMPT:", icon: "leaf"),
+        ]
+        for service in smapiSearchableServices {
+            entries.append(ServiceSearchEntry(
+                key: "smapi:\(service.id)",
+                title: "Search \(service.name)",
+                objectID: "SMAPISEARCHPROMPT:\(service.id)",
+                icon: "magnifyingglass"
+            ))
+        }
+        return ServiceSearchOrder.ordered(entries)
+    }
+
+    private func moveServiceEntry(from index: Int, by offset: Int) {
+        var entries = orderedServiceEntries
+        let dest = index + offset
+        guard dest >= 0, dest < entries.count else { return }
+        entries.swapAt(index, dest)
+        ServiceSearchOrder.save(entries.map(\.key))
+    }
 
     var body: some View {
         List {
@@ -173,39 +273,49 @@ struct BrowseSectionsView: View {
                 }
             }
 
-            // Service Search
-            Section("Service Search") {
-                Button {
-                    onNavigate(BrowseDestination(title: "Search Apple Music", objectID: "APPLEMUSICPROMPT:"))
-                } label: {
-                    Label("Search Apple Music", systemImage: "magnifyingglass")
+            // Service Search — ordered, reorderable
+            Section {
+                CollapsibleSectionHeader(title: "Service Search", isExpanded: $serviceSearchExpanded)
+                if serviceSearchExpanded {
+                    ForEach(Array(orderedServiceEntries.enumerated()), id: \.element.id) { index, entry in
+                        Button {
+                            onNavigate(BrowseDestination(title: entry.title, objectID: entry.objectID))
+                        } label: {
+                            Label(entry.title, systemImage: entry.icon)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            if index > 0 {
+                                Button("Move Up") { moveServiceEntry(from: index, by: -1) }
+                            }
+                            if index < orderedServiceEntries.count - 1 {
+                                Button("Move Down") { moveServiceEntry(from: index, by: 1) }
+                            }
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
-
-                Button {
-                    onNavigate(BrowseDestination(title: "Search TuneIn Radio", objectID: "TUNEINPROMPT:"))
-                } label: {
-                    Label("Search TuneIn Radio", systemImage: "radio")
-                }
-                .buttonStyle(.plain)
             }
 
-            // Connected Music Services (only user-authenticated services)
+            // Connected Music Services — only services not already shown in Service Search
             if smapiManager.isEnabled {
-                let connected = smapiManager.authenticatedServiceList
+                let searchableIDs = Set(smapiSearchableServices.map(\.id))
+                let connected = smapiManager.authenticatedServiceList.filter { !searchableIDs.contains($0.id) }
                 if !connected.isEmpty {
-                    Section("Music Services") {
-                        ForEach(connected, id: \.id) { service in
-                            Button {
-                                onNavigate(BrowseDestination(
-                                    title: service.name,
-                                    objectID: "SMAPI:\(service.id):root",
-                                    smapiService: service
-                                ))
-                            } label: {
-                                Label(service.name, systemImage: "music.note.house")
+                    Section {
+                        CollapsibleSectionHeader(title: "Music Services", isExpanded: $musicServicesExpanded)
+                        if musicServicesExpanded {
+                            ForEach(connected, id: \.id) { service in
+                                Button {
+                                    onNavigate(BrowseDestination(
+                                        title: service.name,
+                                        objectID: "SMAPI:\(service.id):root",
+                                        smapiService: service
+                                    ))
+                                } label: {
+                                    Label(service.name, systemImage: "music.note.house")
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -226,27 +336,33 @@ struct BrowseSectionsView: View {
                 }.sorted { a, _ in a.objectID.hasPrefix("S:") }
 
                 if !nonLibrary.isEmpty {
-                    Section("Favorites & Services") {
-                        ForEach(nonLibrary) { section in
-                            Button {
-                                onNavigate(BrowseDestination(title: section.title, objectID: section.objectID))
-                            } label: {
-                                Label(section.title, systemImage: section.icon)
+                    Section {
+                        CollapsibleSectionHeader(title: "Favorites & Services", isExpanded: $favoritesExpanded)
+                        if favoritesExpanded {
+                            ForEach(nonLibrary) { section in
+                                Button {
+                                    onNavigate(BrowseDestination(title: section.title, objectID: section.objectID))
+                                } label: {
+                                    Label(section.title, systemImage: section.icon)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
 
                 if !library.isEmpty {
-                    Section("Local Library") {
-                        ForEach(library) { section in
-                            Button {
-                                onNavigate(BrowseDestination(title: section.title, objectID: section.objectID))
-                            } label: {
-                                Label(section.title, systemImage: section.icon)
+                    Section {
+                        CollapsibleSectionHeader(title: "Local Library", isExpanded: $libraryExpanded)
+                        if libraryExpanded {
+                            ForEach(library) { section in
+                                Button {
+                                    onNavigate(BrowseDestination(title: section.title, objectID: section.objectID))
+                                } label: {
+                                    Label(section.title, systemImage: section.icon)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -768,6 +884,7 @@ struct AppleMusicSearchView: View {
     @State private var hasSearched = false
     @State private var sn = 0
     @State private var navStack: [AMLevel] = []
+    @State private var itemsCache: [Int: [BrowseItem]] = [:]
 
     private var currentLevel: AMLevel { navStack.last ?? .search }
 
@@ -800,6 +917,18 @@ struct AppleMusicSearchView: View {
             // Search controls (only at search level)
             if navStack.isEmpty {
                 VStack(spacing: 8) {
+                    Picker("", selection: $entity) {
+                        ForEach(ServiceSearchEntity.allCases, id: \.self) { e in
+                            Text(e.rawValue).tag(e)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .onChange(of: entity) {
+                        if hasSearched { performSearch() }
+                    }
+
                     HStack(spacing: 8) {
                         HStack(spacing: 4) {
                             Image(systemName: "magnifyingglass")
@@ -823,18 +952,6 @@ struct AppleMusicSearchView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-
-                    Picker("", selection: $entity) {
-                        ForEach(ServiceSearchEntity.allCases, id: \.self) { e in
-                            Text(e.rawValue).tag(e)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .onChange(of: entity) {
-                        if hasSearched { performSearch() }
                     }
                 }
                 .padding(.horizontal, 10)
@@ -887,7 +1004,10 @@ struct AppleMusicSearchView: View {
             }
         }
         .onChange(of: navStack) {
-            if let level = navStack.last {
+            let depth = navStack.count
+            if let cached = itemsCache[depth] {
+                items = cached
+            } else if let level = navStack.last {
                 loadLevel(level)
             }
         }
@@ -908,17 +1028,16 @@ struct AppleMusicSearchView: View {
     private func handleTap(_ item: BrowseItem) {
         switch item.itemClass {
         case .musicArtist:
-            // Drill into artist's albums
             if let artistId = Int(item.objectID.replacingOccurrences(of: "apple:artist:", with: "")) {
+                itemsCache[navStack.count] = items
                 navStack.append(.artistAlbums(artistId: artistId, artistName: item.title))
             }
         case .musicAlbum:
-            // Drill into album's tracks
             if let collectionId = Int(item.objectID.replacingOccurrences(of: "apple:album:", with: "")) {
+                itemsCache[navStack.count] = items
                 navStack.append(.albumTracks(collectionId: collectionId, albumTitle: item.title))
             }
         default:
-            // Track — play it
             if let group = group {
                 Task { try? await sonosManager.playBrowseItem(item, in: group) }
             }
@@ -1014,11 +1133,17 @@ struct AppleMusicSearchView: View {
         let query = searchText.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
         navStack.removeAll()
+        itemsCache.removeAll()
         isLoading = true
         hasSearched = true
         Task {
             items = await ServiceSearchProvider.shared.searchAppleMusic(query: query, entity: entity, sn: sn)
             isLoading = false
+            // Resolve missing artist artwork in background (iTunes API doesn't return art for artists)
+            if items.contains(where: { $0.itemClass == .musicArtist && $0.albumArtURI == nil }) {
+                items = await ServiceSearchProvider.shared.resolveArtistArtwork(for: items)
+            }
+            itemsCache[0] = items
         }
     }
 
@@ -1063,6 +1188,7 @@ struct TuneInSearchView: View {
     @State private var isLoading = false
     @State private var hasSearched = false
     @State private var navStack: [TuneInLevel] = []
+    @State private var itemsCache: [Int: [BrowseItem]] = [:] // depth → items
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1182,7 +1308,12 @@ struct TuneInSearchView: View {
             if tab == .browse { loadBrowse() }
         }
         .onChange(of: navStack) {
-            if let level = navStack.last {
+            let depth = navStack.count
+            if let cached = itemsCache[depth] {
+                // Popped back — restore cached items for this level
+                items = cached
+            } else if let level = navStack.last {
+                // Drilled forward — load new content
                 loadCategory(url: level.url)
             } else if tab == .browse {
                 loadBrowse()
@@ -1195,7 +1326,8 @@ struct TuneInSearchView: View {
         if let uri = item.resourceURI, !uri.isEmpty, let group = group {
             Task { try? await sonosManager.playBrowseItem(item, in: group) }
         } else if item.isContainer {
-            // Categories store their browse URL in the album field
+            // Cache current items before drilling in
+            itemsCache[navStack.count] = items
             let browseURL = item.album.isEmpty ? nil : item.album
             navStack.append(TuneInLevel(title: item.title, url: browseURL))
         }
@@ -1205,6 +1337,7 @@ struct TuneInSearchView: View {
         isLoading = true
         Task {
             items = await ServiceSearchProvider.shared.browseTuneIn()
+            itemsCache[0] = items  // Cache root browse
             isLoading = false
         }
     }
@@ -1224,9 +1357,462 @@ struct TuneInSearchView: View {
         isLoading = true
         hasSearched = true
         navStack.removeAll()
+        itemsCache.removeAll()
         Task {
             items = await ServiceSearchProvider.shared.searchTuneIn(query: query)
+            itemsCache[0] = items  // Cache root search results
             isLoading = false
         }
     }
 }
+
+// MARK: - Calm Radio Browse
+
+struct CalmRadioBrowseView: View {
+    @EnvironmentObject var sonosManager: SonosManager
+    @EnvironmentObject var smapiManager: SMAPIAuthManager
+    let group: SonosGroup?
+
+    @State private var categories: [ServiceSearchProvider.CalmRadioCategory] = []
+    @State private var isLoading = true
+    @State private var selectedCategory: ServiceSearchProvider.CalmRadioCategory?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if isLoading {
+                ProgressView("Loading Calm Radio...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if categories.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "leaf")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                    Text("No channels available")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // Category picker
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(categories) { cat in
+                            Button {
+                                selectedCategory = cat
+                            } label: {
+                                Text(cat.name)
+                                    .font(.caption)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(selectedCategory?.id == cat.id
+                                        ? Color.accentColor.opacity(0.2)
+                                        : Color(nsColor: .quaternaryLabelColor).opacity(0.3),
+                                        in: RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                }
+
+                Divider()
+
+                // Channel list
+                if let cat = selectedCategory {
+                    List(cat.channels) { item in
+                        BrowseItemRow(item: item)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if let group = group {
+                                    Task { try? await sonosManager.playBrowseItem(item, in: group) }
+                                }
+                            }
+                            .contextMenu {
+                                if let group = group, item.resourceURI != nil {
+                                    Button("Play Now") {
+                                        Task { try? await sonosManager.playBrowseItem(item, in: group) }
+                                    }
+                                    Button("Play Next") {
+                                        Task { try? await sonosManager.addBrowseItemToQueue(item, in: group, playNext: true) }
+                                    }
+                                    Button("Add to Queue") {
+                                        Task { try? await sonosManager.addBrowseItemToQueue(item, in: group) }
+                                    }
+                                }
+                            }
+                    }
+                    .listStyle(.plain)
+                }
+            }
+        }
+        .onAppear {
+            Task {
+                let sn = smapiManager.serialNumber(for: ServiceID.calmRadio)
+                categories = await ServiceSearchProvider.shared.browseCalmRadio(sn: sn)
+                selectedCategory = categories.first
+                isLoading = false
+            }
+        }
+    }
+}
+
+// MARK: - SMAPI Service Search (Spotify, Amazon Music, etc.)
+
+private struct SMAPISearchCategoryItem: Identifiable, Hashable {
+    let id: String   // SMAPI search ID (e.g., "tracks", "artists")
+    let title: String // Display name (e.g., "Tracks", "Artists")
+}
+
+private struct SMAPISearchLevel: Equatable {
+    let title: String
+    let containerID: String
+}
+
+struct SMAPIServiceSearchView: View {
+    @EnvironmentObject var sonosManager: SonosManager
+    @EnvironmentObject var smapiManager: SMAPIAuthManager
+    let group: SonosGroup?
+    let serviceID: Int
+    let serviceName: String
+
+    @State private var searchText = ""
+    @State private var categories: [SMAPISearchCategoryItem] = []
+    @State private var selectedCategory: SMAPISearchCategoryItem?
+    @State private var items: [BrowseItem] = []
+    @State private var isLoading = false
+    @State private var hasSearched = false
+    @State private var navStack: [SMAPISearchLevel] = []
+    @State private var categoriesLoaded = false
+    @State private var itemsCache: [Int: [BrowseItem]] = [:]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Back button for drill-down
+            if !navStack.isEmpty {
+                HStack(spacing: 6) {
+                    Button {
+                        navStack.removeLast()
+                    } label: {
+                        Image(systemName: "chevron.backward")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+
+                    Text(navStack.last?.title ?? "")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+
+                Divider()
+            }
+
+            // Search controls (only at root level)
+            if navStack.isEmpty {
+                VStack(spacing: 8) {
+                    if categories.count > 1 {
+                        Picker("", selection: $selectedCategory) {
+                            ForEach(categories) { cat in
+                                Text(cat.title).tag(Optional(cat))
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .controlSize(.small)
+                        .onChange(of: selectedCategory) {
+                            if hasSearched { performSearch() }
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                            TextField("Search \(serviceName)...", text: $searchText)
+                                .textFieldStyle(.plain)
+                                .font(.callout)
+                                .onSubmit { performSearch() }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+
+                        Button {
+                            performSearch()
+                        } label: {
+                            Text("Search")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+
+                Divider()
+            }
+
+            // Content
+            if isLoading {
+                ProgressView(navStack.isEmpty ? "Searching \(serviceName)..." : "Loading...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if items.isEmpty && (hasSearched || !navStack.isEmpty) {
+                VStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                    Text("No results found")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if items.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "music.note.list")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                    Text("Search for songs, albums, or artists")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(items) { item in
+                    BrowseItemRow(item: item)
+                        .contentShape(Rectangle())
+                        .onTapGesture { handleTap(item) }
+                        .contextMenu { contextMenuItems(for: item) }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .onChange(of: navStack) {
+            let depth = navStack.count
+            if let cached = itemsCache[depth] {
+                items = cached
+            } else if let level = navStack.last {
+                isLoading = true
+                items = []
+                Task {
+                    guard let (token, uri, sn) = serviceCredentials() else {
+                        isLoading = false
+                        return
+                    }
+                    items = await ServiceSearchProvider.shared.browseSMAPI(
+                        id: level.containerID, serviceID: serviceID,
+                        serviceURI: uri, token: token, sn: sn)
+                    isLoading = false
+                }
+            }
+        }
+        .onAppear {
+            guard !categoriesLoaded else { return }
+            categoriesLoaded = true
+            // Load cached categories immediately for instant UI
+            let cacheKey = "smapiSearchCategories_\(serviceID)"
+            if let cached = UserDefaults.standard.array(forKey: cacheKey) as? [[String: String]], !cached.isEmpty {
+                categories = [SMAPISearchCategoryItem(id: "all", title: "All")]
+                    + cached.compactMap { d in
+                        guard let id = d["id"], let title = d["title"] else { return nil }
+                        return SMAPISearchCategoryItem(id: id, title: title)
+                    }
+                selectedCategory = categories.first
+            } else {
+                setDefaultCategories()
+            }
+            // Refresh from service in background
+            Task {
+                guard let (token, uri, _) = serviceCredentials() else { return }
+                let client = SMAPIClient()
+                if let discovered = try? await client.getSearchCategories(serviceURI: uri, token: token),
+                   !discovered.isEmpty {
+                    let newCats = [SMAPISearchCategoryItem(id: "all", title: "All")]
+                        + discovered.map { SMAPISearchCategoryItem(id: $0.id, title: $0.title) }
+                    if newCats.map(\.id) != categories.map(\.id) {
+                        categories = newCats
+                        if selectedCategory == nil || !newCats.contains(where: { $0.id == selectedCategory?.id }) {
+                            selectedCategory = newCats.first
+                        }
+                    }
+                    // Cache for next time
+                    let toCache = discovered.map { ["id": $0.id, "title": $0.title] }
+                    UserDefaults.standard.set(toCache, forKey: cacheKey)
+                }
+            }
+        }
+    }
+
+    private func setDefaultCategories() {
+        categories = [
+            SMAPISearchCategoryItem(id: "all", title: "All"),
+            SMAPISearchCategoryItem(id: "track", title: "Tracks"),
+            SMAPISearchCategoryItem(id: "artist", title: "Artists"),
+            SMAPISearchCategoryItem(id: "album", title: "Albums"),
+        ]
+        selectedCategory = categories.first
+    }
+
+    // MARK: - Tap handling
+
+    private func handleTap(_ item: BrowseItem) {
+        if let uri = item.resourceURI, !uri.isEmpty, !item.isContainer {
+            if let group = group {
+                Task {
+                    do {
+                        try await sonosManager.playBrowseItem(item, in: group)
+                    } catch {
+                        sonosDebugLog("[SMAPI_SEARCH] Play failed for \(item.title): \(error)")
+                    }
+                }
+            }
+        } else if item.isContainer {
+            itemsCache[navStack.count] = items
+            let containerID = item.objectID.replacingOccurrences(of: "smapi:\(serviceID):", with: "")
+            navStack.append(SMAPISearchLevel(title: item.title, containerID: containerID))
+        }
+    }
+
+    // MARK: - Context menus
+
+    @ViewBuilder
+    private func contextMenuItems(for item: BrowseItem) -> some View {
+        if let group = group {
+            let isAlbum = item.itemClass == .musicAlbum || (item.isContainer && item.objectID.contains("album"))
+            let isPlayable = item.resourceURI != nil
+
+            if isAlbum {
+                Button("Play Now") {
+                    Task { await playContainer(item, in: group) }
+                }
+                Button("Play Next") {
+                    Task { await enqueueContainer(item, in: group, playNext: true) }
+                }
+                Button("Add to Queue") {
+                    Task { await enqueueContainer(item, in: group, playNext: false) }
+                }
+                Divider()
+                Button("Replace Queue") {
+                    Task { await playContainer(item, in: group) }
+                }
+                Divider()
+                Button("Show Tracks") {
+                    handleTap(item)
+                }
+            } else if item.isContainer {
+                Button("Browse") { handleTap(item) }
+                Divider()
+                Button("Play All") {
+                    Task { await playContainer(item, in: group) }
+                }
+                Button("Add All to Queue") {
+                    Task { await enqueueContainer(item, in: group, playNext: false) }
+                }
+            } else if isPlayable {
+                Button("Play Now") {
+                    Task { try? await sonosManager.playBrowseItem(item, in: group) }
+                }
+                Button("Play Next") {
+                    Task { try? await sonosManager.addBrowseItemToQueue(item, in: group, playNext: true) }
+                }
+                Button("Add to Queue") {
+                    Task { try? await sonosManager.addBrowseItemToQueue(item, in: group) }
+                }
+                Divider()
+                Button("Replace Queue") {
+                    Task {
+                        try? await sonosManager.clearQueue(group: group)
+                        try? await sonosManager.addBrowseItemToQueue(item, in: group)
+                        try? await sonosManager.play(group: group)
+                    }
+                }
+            }
+        }
+    }
+
+    private func enqueueContainer(_ container: BrowseItem, in group: SonosGroup, playNext: Bool) async {
+        let containerID = container.objectID.replacingOccurrences(of: "smapi:\(serviceID):", with: "")
+        guard let (token, uri, sn) = serviceCredentials() else { return }
+        let tracks = await ServiceSearchProvider.shared.browseSMAPI(
+            id: containerID, serviceID: serviceID, serviceURI: uri, token: token, sn: sn)
+        let playable = tracks.filter { $0.resourceURI != nil && !$0.isContainer }
+        let ordered = playNext ? playable.reversed() : playable
+        for track in ordered {
+            try? await sonosManager.addBrowseItemToQueue(track, in: group, playNext: playNext)
+        }
+    }
+
+    private func playContainer(_ container: BrowseItem, in group: SonosGroup) async {
+        let containerID = container.objectID.replacingOccurrences(of: "smapi:\(serviceID):", with: "")
+        guard let (token, uri, sn) = serviceCredentials() else { return }
+        let tracks = await ServiceSearchProvider.shared.browseSMAPI(
+            id: containerID, serviceID: serviceID, serviceURI: uri, token: token, sn: sn)
+        let playable = tracks.filter { $0.resourceURI != nil && !$0.isContainer }
+        guard !playable.isEmpty else { return }
+        try? await sonosManager.clearQueue(group: group)
+        for track in playable {
+            try? await sonosManager.addBrowseItemToQueue(track, in: group)
+        }
+        try? await sonosManager.play(group: group)
+    }
+
+    // MARK: - Data loading
+
+    private func performSearch() {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return }
+        let searchID = selectedCategory?.id ?? "all"
+        navStack.removeAll()
+        itemsCache.removeAll()
+        isLoading = true
+        hasSearched = true
+        Task {
+            guard let (token, uri, sn) = serviceCredentials() else {
+                isLoading = false
+                return
+            }
+            if searchID == "all" {
+                let realCategories = categories.filter { $0.id != "all" && $0.id != "playlist" }
+                let categoriesToSearch = realCategories.isEmpty
+                    ? [("track", 20), ("album", 10), ("artist", 5)]
+                    : realCategories.map { ($0.id, $0.id == "track" ? 20 : ($0.id == "album" ? 10 : 5)) }
+
+                items = await withTaskGroup(of: [BrowseItem].self) { group in
+                    for (catID, limit) in categoriesToSearch {
+                        group.addTask {
+                            await ServiceSearchProvider.shared.searchSMAPI(
+                                term: query, searchID: catID, serviceID: self.serviceID,
+                                serviceURI: uri, token: token, sn: sn, count: limit)
+                        }
+                    }
+                    var all: [BrowseItem] = []
+                    for await batch in group {
+                        all.append(contentsOf: batch)
+                    }
+                    return all
+                }
+            } else {
+                items = await ServiceSearchProvider.shared.searchSMAPI(
+                    term: query, searchID: searchID, serviceID: serviceID,
+                    serviceURI: uri, token: token, sn: sn)
+            }
+            itemsCache[0] = items
+            isLoading = false
+        }
+    }
+
+    private func serviceCredentials() -> (SMAPIToken, String, Int)? {
+        guard let token = smapiManager.tokenStore.getToken(for: serviceID),
+              let service = smapiManager.availableServices.first(where: { $0.id == serviceID }) else {
+            return nil
+        }
+        let sn = smapiManager.serialNumber(for: serviceID)
+        return (token, service.secureUri, sn)
+    }
+}
+

@@ -285,6 +285,22 @@ public final class HybridEventFirstTransport: TransportStrategy, @unchecked Send
             metadata.trackURI = event.currentTrackURI
             metadata.enrichFromDIDL(didlXML, device: device)
 
+            // Radio/stream: parse r:streamContent for current track info (Artist - Title)
+            // enrichFromDIDL only extracts dc:title (station name) — the actual song info
+            // lives in r:streamContent which must be parsed separately.
+            let unescaped = didlXML.contains("&lt;") ? XMLResponseParser.xmlUnescape(didlXML) : didlXML
+            if let parsed = XMLResponseParser.parseDIDLMetadata(unescaped) {
+                if !parsed.streamContent.isEmpty {
+                    let parts = parsed.streamContent.components(separatedBy: " - ")
+                    if parts.count >= 2 {
+                        metadata.artist = parts[0].trimmingCharacters(in: .whitespaces)
+                        metadata.title = parts.dropFirst().joined(separator: " - ").trimmingCharacters(in: .whitespaces)
+                    } else {
+                        metadata.title = parsed.streamContent
+                    }
+                }
+            }
+
             if let durStr = event.currentTrackDuration {
                 metadata.duration = TrackMetadata.parseTimeString(durStr)
             }

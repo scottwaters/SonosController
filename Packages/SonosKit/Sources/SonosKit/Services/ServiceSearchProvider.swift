@@ -150,7 +150,6 @@ public final class ServiceSearchProvider {
     }
 
     private func parseArtistResults(_ results: [[String: Any]]) -> [BrowseItem] {
-        // Artist results are informational — no direct playback URI
         results.compactMap { result in
             guard let artistId = result["artistId"] as? Int,
                   let artistName = result["artistName"] as? String else {
@@ -170,6 +169,50 @@ public final class ServiceSearchProvider {
                 resourceURI: nil,
                 resourceMetadata: nil
             )
+        }
+    }
+
+    /// Fetches artist artwork by looking up their first album.
+    /// iTunes API doesn't return artwork for musicArtist entity — use album art as fallback.
+    public func resolveArtistArtwork(for items: [BrowseItem]) async -> [BrowseItem] {
+        await withTaskGroup(of: (Int, String?).self) { group in
+            for (index, item) in items.enumerated() {
+                guard item.itemClass == .musicArtist, item.albumArtURI == nil,
+                      let artistId = Int(item.objectID.replacingOccurrences(of: "apple:artist:", with: "")) else {
+                    continue
+                }
+                group.addTask {
+                    guard let url = URL(string: "https://itunes.apple.com/lookup?id=\(artistId)&entity=album&limit=1") else {
+                        return (index, nil)
+                    }
+                    do {
+                        let (data, _) = try await self.session.data(for: URLRequest(url: url))
+                        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              let results = json["results"] as? [[String: Any]] else { return (index, nil) }
+                        let album = results.first { ($0["wrapperType"] as? String) == "collection" }
+                        let artURL = self.upscaleArt(album?["artworkUrl100"] as? String)
+                        return (index, artURL)
+                    } catch {
+                        return (index, nil)
+                    }
+                }
+            }
+            var updated = items
+            for await (index, artURL) in group {
+                if let art = artURL, index < updated.count {
+                    updated[index] = BrowseItem(
+                        id: updated[index].objectID,
+                        title: updated[index].title,
+                        artist: updated[index].artist,
+                        album: updated[index].album,
+                        albumArtURI: art,
+                        itemClass: updated[index].itemClass,
+                        resourceURI: updated[index].resourceURI,
+                        resourceMetadata: updated[index].resourceMetadata
+                    )
+                }
+            }
+            return updated
         }
     }
 
@@ -364,6 +407,124 @@ public final class ServiceSearchProvider {
         return nil
     }
 
+    // MARK: - Calm Radio (Public API)
+
+    /// Calm Radio category with nested channels
+    public struct CalmRadioCategory: Identifiable {
+        public let id: Int
+        public let name: String
+        public let channels: [BrowseItem]
+    }
+
+    /// Fetch Calm Radio categories and channels from the public API.
+    /// Returns top-level categories (Wellness, Nature, Classical, etc.) each containing playable channels.
+    public func browseCalmRadio(sn: Int) async -> [CalmRadioCategory] {
+        guard let url = URL(string: "https://api.calmradio.com/channels.json") else { return [] }
+        do {
+            let (data, response) = try await session.data(for: URLRequest(url: url))
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else { return [] }
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+
+            // Also fetch category names
+            let catNames = await fetchCalmRadioCategoryNames()
+            let sid = ServiceID.calmRadio
+            let serviceType = (sid << 8) + 7 // 36871
+
+            return json.compactMap { entry -> CalmRadioCategory? in
+                let catID = entry["category"] as? Int ?? 0
+                let channels = entry["channels"] as? [[String: Any]] ?? []
+                let catName = catNames[catID] ?? "Category \(catID)"
+                guard !channels.isEmpty else { return nil }
+
+                let items = channels.compactMap { ch -> BrowseItem? in
+                    guard let chID = ch["id"] as? Int,
+                          let title = ch["title"] as? String else { return nil }
+
+                    let imagePath = ch["image"] as? String ?? ""
+                    let imageURL = imagePath.isEmpty ? nil : "https://arts.calmradio.com\(imagePath)"
+                    let cleanTitle = title.replacingOccurrences(of: "CALMRADIO - ", with: "")
+
+                    let resourceURI = "x-sonosapi-stream:stream%3a\(chID)%3a192?sid=\(sid)&flags=8224&sn=\(sn)"
+                    let metadata = buildCalmRadioDIDL(channelId: chID, title: cleanTitle, serviceType: serviceType)
+
+                    return BrowseItem(
+                        id: "calm:\(chID)",
+                        title: cleanTitle,
+                        artist: "",
+                        album: "",
+                        albumArtURI: imageURL,
+                        itemClass: .radioStation,
+                        resourceURI: resourceURI,
+                        resourceMetadata: metadata
+                    )
+                }
+                return CalmRadioCategory(id: catID, name: catName, channels: items)
+            }
+        } catch {
+            sonosDebugLog("[SERVICE_SEARCH] Calm Radio browse failed: \(error)")
+            return []
+        }
+    }
+
+    private func fetchCalmRadioCategoryNames() async -> [Int: String] {
+        guard let url = URL(string: "https://api.calmradio.com/categories.json") else { return [:] }
+        do {
+            let (data, _) = try await session.data(for: URLRequest(url: url))
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [:] }
+            var names: [Int: String] = [:]
+            for topLevel in json {
+                for cat in topLevel["categories"] as? [[String: Any]] ?? [] {
+                    if let id = cat["id"] as? Int, let name = cat["name"] as? String {
+                        names[id] = name.capitalized
+                    }
+                }
+            }
+            return names
+        } catch {
+            return [:]
+        }
+    }
+
+    private func buildCalmRadioDIDL(channelId: Int, title: String, serviceType: Int) -> String {
+        """
+        <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="10092020stream%3a\(channelId)%3a192" parentID="" restricted="true"><dc:title>\(xmlEscape(title))</dc:title><upnp:class>object.item.audioItem.audioBroadcast</upnp:class><desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">SA_RINCON\(serviceType)_X_#Svc\(serviceType)-0-Token</desc></item></DIDL-Lite>
+        """
+    }
+
+    // MARK: - SMAPI Search (Spotify, Amazon Music, etc.)
+
+    /// Search any authenticated SMAPI service. Uses the service's SOAP search endpoint.
+    /// Returns BrowseItems with proper playback URIs and metadata.
+    public func searchSMAPI(term: String, searchID: String = "track", serviceID: Int,
+                            serviceURI: String, token: SMAPIToken, sn: Int,
+                            index: Int = 0, count: Int = 25) async -> [BrowseItem] {
+        let client = SMAPIClient()
+        do {
+            let result = try await client.search(serviceURI: serviceURI, token: token,
+                                                  searchID: searchID, term: term,
+                                                  index: index, count: count)
+            return result.items.map { smapiItemToBrowseItem($0, serviceID: serviceID, sn: sn) }
+        } catch {
+            sonosDebugLog("[SERVICE_SEARCH] SMAPI search failed for sid=\(serviceID): \(error)")
+            return []
+        }
+    }
+
+    /// Browse into a container on any authenticated SMAPI service.
+    public func browseSMAPI(id: String, serviceID: Int, serviceURI: String, token: SMAPIToken,
+                            sn: Int, index: Int = 0, count: Int = 50) async -> [BrowseItem] {
+        let client = SMAPIClient()
+        do {
+            let result = try await client.getMetadata(serviceURI: serviceURI, token: token,
+                                                       id: id, index: index, count: count)
+            return result.items.map { smapiItemToBrowseItem($0, serviceID: serviceID, sn: sn) }
+        } catch {
+            sonosDebugLog("[SERVICE_SEARCH] SMAPI browse failed for sid=\(serviceID) id=\(id): \(error)")
+            return []
+        }
+    }
+
     // MARK: - DIDL Builders
 
     private func buildTrackDIDL(trackId: Int, collectionId: Int, title: String, artist: String, album: String, serviceType: Int) -> String {
@@ -382,6 +543,81 @@ public final class ServiceSearchProvider {
         """
         <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="F00092020\(guideId)" parentID="L" restricted="true"><dc:title>\(xmlEscape(title))</dc:title><upnp:class>object.item.audioItem.audioBroadcast</upnp:class><desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">SA_RINCON3079_</desc></item></DIDL-Lite>
         """
+    }
+
+    /// Builds DIDL metadata matching the exact format Sonos favorites use for service tracks.
+    /// Based on r:resMD from actual Sonos Favorite browse response.
+    private func buildSMAPIDIDL(id: String, title: String, artist: String, album: String,
+                                itemType: String, serviceType: Int) -> String {
+        let upnpClass = itemType == "track" ? "object.item.audioItem.musicTrack" : "object.item.audioItem.audioBroadcast"
+        // Sonos item ID: prefix + URL-encoded service ID (colons → %3a)
+        let encodedID = id.replacingOccurrences(of: ":", with: "%3a")
+        let idPrefix = itemType == "track" ? "10032020" : "1004206c"
+        return """
+        <DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="\(idPrefix)\(encodedID)" parentID="" restricted="true"><dc:title>\(xmlEscape(title))</dc:title><upnp:class>\(upnpClass)</upnp:class><desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">SA_RINCON\(serviceType)_X_#Svc\(serviceType)-0-Token</desc></item></DIDL-Lite>
+        """
+    }
+
+    // MARK: - Per-Service URI Construction
+
+    /// Known RINCON service types — SMAPI sid does not always match RINCON sid.
+    private static let rinconServiceTypes: [Int: Int] = [:] // Reserved for future overrides
+
+    /// Services that use a custom URI prefix instead of x-sonos-http
+    private static let serviceURIPrefixes: [Int: String] = [
+        ServiceID.spotify: "x-sonos-spotify:",
+    ]
+
+    /// Returns the correct RINCON service type for a given SMAPI service ID.
+    private func rinconServiceType(for serviceID: Int) -> Int {
+        Self.rinconServiceTypes[serviceID] ?? (serviceID << 8) + 7
+    }
+
+    /// Builds the correct playback URI for a track from an SMAPI service.
+    /// Colons in service-specific IDs (e.g. spotify:track:xxx) must be percent-encoded to %3a.
+    private func buildPlayURI(itemID: String, itemType: String, serviceID: Int, sn: Int) -> String {
+        let prefix = Self.serviceURIPrefixes[serviceID] ?? "x-sonos-http:"
+        // Percent-encode first, then replace colons with lowercase %3a (Sonos is case-sensitive).
+        // Also lowercase any uppercase hex from addingPercentEncoding (e.g. %3A → %3a).
+        var encodedID = (itemID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? itemID)
+            .replacingOccurrences(of: ":", with: "%3a")
+        // Force lowercase hex — Sonos rejects uppercase percent-encoding for Spotify URIs
+        encodedID = encodedID.replacingOccurrences(of: "%3A", with: "%3a")
+        if itemType == "stream" || itemType == "program" {
+            return "x-sonosapi-stream:\(encodedID)?sid=\(serviceID)&flags=8224&sn=\(sn)"
+        }
+        return "\(prefix)\(encodedID)?sid=\(serviceID)&flags=8224&sn=\(sn)"
+    }
+
+    /// Converts an SMAPIMediaItem to a BrowseItem with correct per-service URI and metadata.
+    public func smapiItemToBrowseItem(_ smapi: SMAPIMediaItem, serviceID: Int, sn: Int) -> BrowseItem {
+        let serviceType = rinconServiceType(for: serviceID)
+        let playURI: String?
+        if !smapi.canBrowse && !smapi.id.isEmpty {
+            playURI = buildPlayURI(itemID: smapi.id, itemType: smapi.itemType, serviceID: serviceID, sn: sn)
+        } else {
+            playURI = smapi.uri.isEmpty ? nil : smapi.uri
+        }
+
+        let didlMeta: String?
+        if let uri = playURI, !smapi.canBrowse {
+            didlMeta = buildSMAPIDIDL(id: smapi.id, title: smapi.title, artist: smapi.artist,
+                                      album: smapi.album, itemType: smapi.itemType,
+                                      serviceType: serviceType)
+        } else {
+            didlMeta = nil
+        }
+
+        return BrowseItem(
+            id: "smapi:\(serviceID):\(smapi.id)",
+            title: smapi.title,
+            artist: smapi.artist,
+            album: smapi.album,
+            albumArtURI: smapi.albumArtURI.isEmpty ? nil : smapi.albumArtURI,
+            itemClass: smapi.canBrowse ? .container : (smapi.itemType == "album" ? .musicAlbum : .musicTrack),
+            resourceURI: playURI,
+            resourceMetadata: didlMeta
+        )
     }
 
     // MARK: - Helpers

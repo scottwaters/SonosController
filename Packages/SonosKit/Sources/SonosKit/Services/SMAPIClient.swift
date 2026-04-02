@@ -172,6 +172,13 @@ public final class SMAPIClient {
         return parseMediaList(result)
     }
 
+    /// Discovers available search categories for a service by browsing the "search" container.
+    /// Returns category IDs like ["tracks", "artists", "albums", "playlists"].
+    public func getSearchCategories(serviceURI: String, token: SMAPIToken) async throws -> [(id: String, title: String)] {
+        let result = try await getMetadata(serviceURI: serviceURI, token: token, id: "search", index: 0, count: 50)
+        return result.items.map { ($0.id, $0.title) }
+    }
+
     // MARK: - Internal
 
     private func buildAuthenticatedEnvelope(token: SMAPIToken, bodyContent: String) -> String {
@@ -408,6 +415,7 @@ public final class SMAPIClient {
         str.replacingOccurrences(of: "&", with: "&amp;")
            .replacingOccurrences(of: "<", with: "&lt;")
            .replacingOccurrences(of: ">", with: "&gt;")
+           .replacingOccurrences(of: "\"", with: "&quot;")
     }
 }
 

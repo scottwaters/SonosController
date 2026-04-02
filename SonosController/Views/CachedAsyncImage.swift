@@ -12,10 +12,16 @@ struct CachedAsyncImage: View {
     @State private var image: NSImage?
     @State private var isLoading = false
 
+    /// Check cache synchronously in body — avoids flicker on scroll recycling
+    private var cachedImage: NSImage? {
+        guard let url = url else { return nil }
+        return ImageCache.shared.image(for: url)
+    }
+
     var body: some View {
         Group {
-            if let image = image {
-                Image(nsImage: image)
+            if let img = image ?? cachedImage {
+                Image(nsImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
@@ -31,6 +37,18 @@ struct CachedAsyncImage: View {
         }
         .onAppear { loadImage() }
         .onChange(of: url) { loadImage() }
+    }
+
+    /// Center-crops an image to a square, keeping the shorter dimension and trimming the longer.
+    private static func cropToSquare(_ source: NSImage) -> NSImage {
+        let size = source.size
+        guard size.width != size.height, size.width > 0, size.height > 0 else { return source }
+        let side = min(size.width, size.height)
+        let origin = CGPoint(x: (size.width - side) / 2, y: (size.height - side) / 2)
+        let cropRect = CGRect(origin: origin, size: CGSize(width: side, height: side))
+        guard let cgImage = source.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let cropped = cgImage.cropping(to: cropRect) else { return source }
+        return NSImage(cgImage: cropped, size: CGSize(width: side, height: side))
     }
 
     private func loadImage() {
@@ -52,9 +70,10 @@ struct CachedAsyncImage: View {
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
                 if let nsImage = NSImage(data: data) {
-                    ImageCache.shared.store(nsImage, for: url)
+                    let squared = Self.cropToSquare(nsImage)
+                    ImageCache.shared.store(squared, for: url)
                     await MainActor.run {
-                        image = nsImage
+                        image = squared
                     }
                 }
             } catch {
