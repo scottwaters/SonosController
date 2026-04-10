@@ -19,7 +19,6 @@ Tested against a live Sonos system with 16 speakers across 10 zones, a large loc
 ### Music Services
 - **TuneIn, Calm Radio, Sonos Radio, Apple Music** — browse and search with no sign-in required, individually toggleable in Settings
 - **Spotify** — full browse, search, and playback via AppLink authentication
-- **40+ additional services** — Deezer, TIDAL, Qobuz, SoundCloud, iHeartRadio, Plex, and more via SMAPI AppLink/DeviceLink
 - **Sonos Radio search** — search stations via anonymous SMAPI
 - **Apple Music playback** — search via iTunes API, direct playback when Apple Music is connected in the Sonos app with one favorited song
 - **Service availability status** — clear indicators in Settings showing what works, what needs connection, what's blocked
