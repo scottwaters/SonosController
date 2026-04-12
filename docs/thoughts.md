@@ -69,6 +69,34 @@
 - Search history / recent searches
 - Search suggestions / autocomplete
 
+### Navidrome / Subsonic Integration
+- Self-hosted music server with open Subsonic REST API
+- Simple auth: username + salted MD5 token (no OAuth, no browser redirects)
+- Direct HTTP streaming — Sonos plays via `SetAVTransportURI` with `x-rincon-mp3radio://` prefix
+- Endpoints: `getArtists`, `getAlbum`, `getAlbumList2`, `search3`, `stream`, `getCoverArt`, `getPlaylists`, `getRandomSongs`
+- Could sync `star`/`unstar` with our star system and `scrobble` with our history
+- Needs: settings UI (server URL, username, password), Subsonic API client, browse view, search, playback
+- No subscription, no API keys, fully open source
+
+### Apple Music MusicKit (Conditional)
+- MusicKit framework available for macOS — gives access to personalized content (Made for You, recommendations, recently played, charts, Replay stats)
+- Requires Apple Developer account + MusicKit signing key — cannot be embedded in public repo
+- Approach: load key from `.gitignored` config file, feature only activates when key present
+- `#if canImport(MusicKit)` conditional compilation so public builds skip gracefully
+- Use for **browse/discovery only** — playback still via existing `x-sonos-http:` + `sn` approach
+- Lower priority than Navidrome since current iTunes Search + sn already covers search and playback
+
+### Plex
+- Already available as SMAPI service (ID 212, AppLink auth) — test via Other Services first
+- Direct API integration only worth it if SMAPI doesn't work
+- REST API with `X-Plex-Token` auth — user provides server URL + token
+- Can browse music libraries, search, stream tracks, get artwork
+
+### Pandora
+- No public API (shut down years ago)
+- Geographically restricted to US
+- Available as Sonos SMAPI service (ID 519) — test via Other Services, no direct integration
+
 ### Queue Improvements
 - Undo for queue remove/clear operations
 - Queue history (recently played queue configurations)
