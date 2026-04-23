@@ -7,6 +7,12 @@ import SonosKit
 import UniformTypeIdentifiers
 
 struct QueueView: View {
+    /// External prop — the group currently selected in the sidebar. When the
+    /// user switches speakers, SwiftUI passes a new value here and we need
+    /// to push it into the view model (which otherwise holds onto the
+    /// group captured at StateObject construction) and reload the queue.
+    let group: SonosGroup
+
     @StateObject private var vm: QueueViewModel
     @State private var dropTargetIndex: Int?
     @State private var showSavePlaylist = false
@@ -15,6 +21,7 @@ struct QueueView: View {
     @EnvironmentObject private var sonosManager: SonosManager
 
     init(group: SonosGroup, sonosManager: SonosManager) {
+        self.group = group
         _vm = StateObject(wrappedValue: QueueViewModel(sonosManager: sonosManager, group: group))
     }
 
@@ -25,12 +32,26 @@ struct QueueView: View {
             content
         }
         .onAppear { Task { await vm.loadQueue() } }
-        .onChange(of: vm.group.id) { Task { await vm.loadQueue() } }
+        .onChange(of: group.id) { _, newID in
+            // Propagate the speaker-selection change into the view model,
+            // then refresh the queue from the newly-selected coordinator.
+            vm.group = group
+            vm.queueItems = []
+            vm.currentTrack = 0
+            Task { await vm.loadQueue() }
+            _ = newID
+        }
         .onReceive(sonosManager.$groupTrackMetadata) { _ in
             vm.updateCurrentTrack()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .queueChanged)) { _ in
-            Task { await vm.loadQueue() }
+        .onReceive(NotificationCenter.default.publisher(for: .queueChanged)) { note in
+            // Fast path — the sender told us exactly what was appended. Skips
+            // the Browse(Q:0) round-trip, which is expensive on S1 coordinators.
+            if let items = note.userInfo?[QueueChangeKey.optimisticItems] as? [QueueItem] {
+                vm.optimisticallyAppend(items)
+            } else {
+                Task { await vm.loadQueue() }
+            }
         }
         .alert("Save as Playlist", isPresented: $showSavePlaylist) {
             TextField("Playlist name", text: $newPlaylistName)
@@ -62,6 +83,14 @@ struct QueueView: View {
         HStack {
             Text(L10n.queue)
                 .font(.headline)
+            // Small inline spinner during reloads or add-in-flight — shown
+            // when busy but items are already present (e.g., post-add
+            // reconcile or per-track batch mid-loop). The queue list stays
+            // visible; the spinner hints that something is happening
+            // without commandeering the whole panel.
+            if (vm.isLoading || sonosManager.isAddingToQueue) && !vm.queueItems.isEmpty {
+                ProgressView().controlSize(.small)
+            }
             Spacer()
             Text("\(vm.totalTracks) \(L10n.tracks)")
                 .font(.caption)
@@ -81,11 +110,15 @@ struct QueueView: View {
             .disabled(vm.queueItems.isEmpty)
 
             Button { Task { await vm.clearQueue() } } label: {
-                Image(systemName: "trash").font(.caption)
+                if vm.isClearing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "trash").font(.caption)
+                }
             }
             .buttonStyle(.plain)
             .tooltip(L10n.clearQueue)
-            .disabled(vm.queueItems.isEmpty)
+            .disabled(vm.queueItems.isEmpty || vm.isClearing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -93,14 +126,26 @@ struct QueueView: View {
 
     @ViewBuilder
     private var content: some View {
-        if vm.isLoading || vm.isShuffling {
+        if vm.isShuffling {
+            // Full-screen spinner during a shuffle (user-initiated, brief).
             VStack(spacing: 8) {
                 ProgressView()
-                if vm.isShuffling {
-                    Text("Shuffling...")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("Shuffling...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxHeight: .infinity)
+        } else if (vm.isLoading || sonosManager.isAddingToQueue) && vm.queueItems.isEmpty {
+            // Full-screen spinner when we have nothing to show — first launch,
+            // speaker switch, cleared queue, or an add-to-queue in flight on
+            // a currently-empty queue. On a reload where items are already
+            // present, the inline header spinner is used instead so the list
+            // stays visible.
+            VStack(spacing: 8) {
+                ProgressView()
+                Text(sonosManager.isAddingToQueue ? "Adding to queue…" : "Loading queue…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .frame(maxHeight: .infinity)
         } else if vm.queueItems.isEmpty {

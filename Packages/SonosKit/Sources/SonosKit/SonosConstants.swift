@@ -250,6 +250,17 @@ public extension Notification.Name {
     static let queueChanged = Notification.Name("sonosQueueChanged")
 }
 
+/// Keys used on `.queueChanged` notifications.
+public enum QueueChangeKey {
+    /// An array of `QueueItem` the view can append directly without
+    /// re-fetching the whole queue from the coordinator. If absent,
+    /// subscribers should do a full reload instead. Present on single- or
+    /// multi-track adds where we know the resulting track numbers; absent
+    /// on container adds (server-side expansion) or when the SOAP response
+    /// didn't include a usable track number.
+    public static let optimisticItems = "optimisticItems"
+}
+
 // MARK: - App Support Directory
 
 public enum AppPaths {

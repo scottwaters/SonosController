@@ -1166,22 +1166,13 @@ struct AppleMusicSearchView: View {
         }
     }
 
-    /// Resolve album tracks via iTunes API, then add each to queue.
+    /// Resolve album tracks via iTunes API, then add them all to queue in a
+    /// single SOAP round-trip via AddMultipleURIsToQueue.
     private func enqueueAlbumTracks(_ album: BrowseItem, in group: SonosGroup, playNext: Bool) async {
         guard let collectionId = Int(album.objectID.replacingOccurrences(of: "apple:album:", with: "")) else { return }
         let tracks = await ServiceSearchProvider.shared.lookupAlbumTracks(collectionId: collectionId, sn: sn)
         guard !tracks.isEmpty else { return }
-
-        if playNext {
-            // Insert in reverse so they end up in correct order after current track
-            for track in tracks.reversed() {
-                try? await sonosManager.addBrowseItemToQueue(track, in: group, playNext: true)
-            }
-        } else {
-            for track in tracks {
-                try? await sonosManager.addBrowseItemToQueue(track, in: group)
-            }
-        }
+        try? await sonosManager.addBrowseItemsToQueue(tracks, in: group, playNext: playNext)
     }
 
     /// Clear queue, add album tracks in order, play from track 1.
@@ -1192,9 +1183,7 @@ struct AppleMusicSearchView: View {
         if replace {
             try? await sonosManager.clearQueue(group: group)
         }
-        for track in tracks {
-            try? await sonosManager.addBrowseItemToQueue(track, in: group)
-        }
+        try? await sonosManager.addBrowseItemsToQueue(tracks, in: group, playNext: false)
         try? await sonosManager.play(group: group)
     }
 
@@ -1813,10 +1802,8 @@ struct SMAPIServiceSearchView: View {
         let tracks = await ServiceSearchProvider.shared.browseSMAPI(
             id: containerID, serviceID: serviceID, serviceURI: uri, token: token, sn: sn)
         let playable = tracks.filter { $0.resourceURI != nil && !$0.isContainer }
-        let ordered = playNext ? playable.reversed() : playable
-        for track in ordered {
-            try? await sonosManager.addBrowseItemToQueue(track, in: group, playNext: playNext)
-        }
+        guard !playable.isEmpty else { return }
+        try? await sonosManager.addBrowseItemsToQueue(playable, in: group, playNext: playNext)
     }
 
     private func playContainer(_ container: BrowseItem, in group: SonosGroup) async {
@@ -1827,9 +1814,7 @@ struct SMAPIServiceSearchView: View {
         let playable = tracks.filter { $0.resourceURI != nil && !$0.isContainer }
         guard !playable.isEmpty else { return }
         try? await sonosManager.clearQueue(group: group)
-        for track in playable {
-            try? await sonosManager.addBrowseItemToQueue(track, in: group)
-        }
+        try? await sonosManager.addBrowseItemsToQueue(playable, in: group, playNext: false)
         try? await sonosManager.play(group: group)
     }
 

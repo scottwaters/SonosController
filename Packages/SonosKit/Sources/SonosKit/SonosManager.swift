@@ -113,6 +113,13 @@ public class SonosManager: ObservableObject {
     /// Set when user initiates playback, cleared only when speaker confirms playing
     @Published public var awaitingPlayback: [String: Bool] = [:]
 
+    /// True while an add-to-queue operation is in flight for any group.
+    /// QueueView observes this to show an in-progress indicator alongside
+    /// its own `isLoading` flag — on S1 the per-track fallback loop can
+    /// take 30 s or more and the user needs visible confirmation that
+    /// something is happening the whole time, not just at the end.
+    @Published public var isAddingToQueue: Bool = false
+
     /// Drag state for cross-view drag-and-drop (browse → queue)
     public var draggedBrowseItem: BrowseItem?
 
@@ -260,12 +267,14 @@ public class SonosManager: ObservableObject {
     private var lastQueueItems: [String: [QueueItem]] = [:]
     private var refreshTimer: Timer?
     private var refreshingHouseholds: Set<String> = []  // serializes topology refreshes per household (S1/S2 coexist)
+    /// Last successful topology refresh per household. Used to throttle —
+    /// within one 30 s rescan cycle we typically receive ~13 SSDP responses
+    /// that would each otherwise trigger their own GetZoneGroupState call.
+    /// S1 hardware is request-sensitive and can start returning inconsistent
+    /// data under pressure, so we skip refreshes within 10 s of the last one.
+    private var lastTopologyRefreshAt: [String: Date] = [:]
+    private let topologyRefreshMinInterval: TimeInterval = 10  // seconds
 
-    /// Last time each group ID appeared in a topology response. Used to
-    /// smooth over the Sonos quirk where different speakers in the same
-    /// household report slightly different ZoneGroupState views.
-    private var groupLastSeenInTopology: [String: Date] = [:]
-    private let groupRemovalGrace: TimeInterval = 30  // seconds
 
     // MARK: - Transport Strategy
 
@@ -398,14 +407,16 @@ public class SonosManager: ObservableObject {
                 swGen: desc.swGen
             )
 
-            // Preserve any previously-resolved household on transient fetch failure.
-            // Without this, a GetHouseholdID timeout on rescan would wipe the stored
-            // household and cause the device to drop out of its section until the
-            // next successful fetch — the speaker-flicker failure mode.
+            // A speaker's household ID doesn't change at runtime (it's factory-set
+            // and only updated by factory reset). Once resolved, never re-query —
+            // this removes one SOAP round-trip per SSDP response per speaker, which
+            // matters a lot for S1 hardware that's sensitive to request pressure.
             let existing = devices[device.id]
             device.householdID = existing?.householdID
-            if let resolved = try? await zoneTopology.getHouseholdID(device: device), !resolved.isEmpty {
-                device.householdID = resolved
+            if device.householdID == nil {
+                if let resolved = try? await zoneTopology.getHouseholdID(device: device), !resolved.isEmpty {
+                    device.householdID = resolved
+                }
             }
 
             sonosDebugLog("[DISCOVERY] \(desc.roomName) swGen=\(desc.swGen) softwareVersion=\(desc.softwareVersion) household=\(device.householdID ?? "<nil>")")
@@ -422,12 +433,25 @@ public class SonosManager: ObservableObject {
         }
     }
 
-    public func refreshTopology(from device: SonosDevice) async {
+    public func refreshTopology(from device: SonosDevice, force: Bool = false) async {
         // Serialize per-household so S1 and S2 refreshes don't block each other but also
         // don't race within a single household (main-actor re-entry across awaits).
         // Use source device UUID when householdID is not yet known (first discovery).
         let refreshKey = device.householdID ?? device.id
         guard !refreshingHouseholds.contains(refreshKey) else { return }
+
+        // Throttle: skip refreshes that arrive within the minimum interval of
+        // the previous successful refresh for this household. Keeps SSDP
+        // response bursts (sub/satellite/coordinator all advertising per rescan)
+        // from generating redundant GetZoneGroupState calls. User-initiated
+        // group changes pass `force: true` to bypass this throttle and get
+        // immediate UI feedback on the group/ungroup action.
+        if !force,
+           let last = lastTopologyRefreshAt[refreshKey],
+           Date().timeIntervalSince(last) < topologyRefreshMinInterval {
+            return
+        }
+
         refreshingHouseholds.insert(refreshKey)
         defer { refreshingHouseholds.remove(refreshKey) }
 
@@ -446,6 +470,14 @@ public class SonosManager: ObservableObject {
             let sourceSoftwareVersion = device.softwareVersion
             let sourceSwGen = device.swGen
 
+            // Trust the source's topology response as the authoritative view
+            // of the household. Attempts to smooth over transient inconsistency
+            // between different speakers' ZoneGroupState responses caused
+            // phantom groups to accumulate (a group would be reported by one
+            // speaker after it had been dissolved, then preserved forever by
+            // the "keep what we haven't explicitly seen removed" logic). A
+            // straightforward latest-response-wins model is eventually
+            // consistent with reality, which is preferable to the phantom.
             var newGroups: [SonosGroup] = []
             for gd in groupData {
                 var members: [SonosDevice] = []
@@ -504,28 +536,15 @@ public class SonosManager: ObservableObject {
                 return patched
             }
 
-            // Refresh last-seen timestamps for every group in this response.
-            let now = Date()
-            let newGroupIDs = Set(newGroups.map(\.id))
-            for id in newGroupIDs { groupLastSeenInTopology[id] = now }
-
-            // Grace window: keep any group from THIS household that's missing from
-            // the new response but was seen recently by another source. Different
-            // Sonos speakers can return subtly different ZoneGroupState views, so
-            // a single source's topology must not be treated as authoritative for
-            // immediate removal — otherwise groups flicker in and out as different
-            // speakers trigger refreshes across the 30 s rescan cycle.
-            let retainedMissingGroups = backfilledGroups.filter { existing in
-                existing.householdID == household &&
-                !newGroupIDs.contains(existing.id) &&
-                (groupLastSeenInTopology[existing.id].map { now.timeIntervalSince($0) < groupRemovalGrace } ?? false)
-            }
-
-            // Merge by household: replace groups belonging to the source's household
-            // (except the ones retained by the grace window), preserve groups from
-            // other households (S1 and S2 coexist on same LAN).
+            // Simple, correct merge: the source's full topology response
+            // replaces every group in its household. Other-household groups
+            // (S1 while refreshing S2 and vice versa) are preserved untouched.
+            // No grace windows: user-initiated grouping/ungrouping actions need
+            // immediate UI feedback, and any smoothing we layer on top of
+            // Sonos's topology inconsistency ends up creating stale/phantom
+            // groups that are worse than the underlying flicker.
             let otherHouseholdGroups = backfilledGroups.filter { $0.householdID != household }
-            let mergedGroups = (otherHouseholdGroups + newGroups + retainedMissingGroups)
+            let mergedGroups = (otherHouseholdGroups + newGroups)
                 .sorted { $0.name < $1.name }
 
             // Only update groups if topology actually changed — prevents UI flash.
@@ -553,12 +572,15 @@ public class SonosManager: ObservableObject {
                         memberDiffs.append("\(id): [\(oldMembers)] -> [\(newMembers)]")
                     }
                 }
-                sonosDebugLog("[MERGE] household=\(household) newCount=\(newGroups.count) retained=\(retainedMissingGroups.count) totalCount=\(mergedGroups.count) changed=true added=\(added) removed=\(removed) memberDiffs=\(memberDiffs)")
+                sonosDebugLog("[MERGE] source=\(device.roomName) household=\(household) newCount=\(newGroups.count) totalCount=\(mergedGroups.count) changed=true added=\(added) removed=\(removed) memberDiffs=\(memberDiffs)")
                 self.groups = mergedGroups
                 saveCache()
             } else {
-                sonosDebugLog("[MERGE] household=\(household) newCount=\(newGroups.count) retained=\(retainedMissingGroups.count) totalCount=\(mergedGroups.count) changed=false")
+                sonosDebugLog("[MERGE] source=\(device.roomName) household=\(household) newCount=\(newGroups.count) totalCount=\(mergedGroups.count) changed=false")
             }
+
+            // Record the successful refresh so the throttle can skip bursts.
+            lastTopologyRefreshAt[refreshKey] = Date()
 
             // Parse home theater channel maps
             parseHTChannelMaps(from: groupData)
@@ -1041,12 +1063,14 @@ public class SonosManager: ObservableObject {
     public func joinGroup(device: SonosDevice, toCoordinator coordinator: SonosDevice) async throws {
         let uri = "x-rincon:\(coordinator.id)"
         try await avTransport.setAVTransportURI(device: device, uri: uri)
-        await refreshTopology(from: coordinator)
+        // User-initiated change — bypass the throttle so the sidebar reflects
+        // the new grouping immediately.
+        await refreshTopology(from: coordinator, force: true)
     }
 
     public func ungroupDevice(_ device: SonosDevice) async throws {
         try await avTransport.becomeCoordinatorOfStandaloneGroup(device: device)
-        await refreshTopology(from: device)
+        await refreshTopology(from: device, force: true)
     }
 
     // MARK: - Alarms
@@ -1314,8 +1338,151 @@ public class SonosManager: ObservableObject {
     }
 
     @discardableResult
+    /// Posts a `.queueChanged` notification. When `optimisticItems` is
+    /// non-empty, subscribers (QueueView) append the items directly and skip
+    /// the full `Browse(Q:0)` round-trip. When empty, subscribers do a full
+    /// reload. Use the plural form for both single- and multi-track adds.
+    private func postQueueChanged(optimisticItems: [QueueItem]) {
+        if optimisticItems.isEmpty {
+            NotificationCenter.default.post(name: .queueChanged, object: nil)
+        } else {
+            NotificationCenter.default.post(
+                name: .queueChanged,
+                object: nil,
+                userInfo: [QueueChangeKey.optimisticItems: optimisticItems]
+            )
+        }
+    }
+
+    /// Batch-adds multiple tracks to the queue in a single SOAP call instead
+    /// of issuing one `AddURIToQueue` per track. On S1 hardware this is the
+    /// difference between "5 seconds per track" and "roughly one round-trip
+    /// for the whole set." Returns the queue position of the first track.
+    ///
+    /// `playNext == true` inserts the batch after the current track in the
+    /// same order; otherwise the batch appends to the end of the queue.
+    ///
+    /// Only items with a non-empty `resourceURI` are enqueued. Container
+    /// items (which would expand server-side to many tracks) are skipped —
+    /// use `addBrowseItemToQueue` individually for those.
+    @discardableResult
+    public func addBrowseItemsToQueue(_ items: [BrowseItem], in group: SonosGroup, playNext: Bool = false) async throws -> Int {
+        guard !items.isEmpty else { return 0 }
+        if items.count == 1 {
+            return try await addBrowseItemToQueue(items[0], in: group, playNext: playNext)
+        }
+        guard let coordinator = group.coordinator else { return 0 }
+        isAddingToQueue = true
+        defer { isAddingToQueue = false }
+
+        var uris: [String] = []
+        var metas: [String] = []
+        var optimisticSource: [BrowseItem] = []
+        for item in items {
+            guard let uri = item.resourceURI, !uri.isEmpty, !item.isContainer else { continue }
+            uris.append(uri)
+            var meta = item.resourceMetadata ?? ""
+            if meta.contains("&lt;") {
+                meta = XMLResponseParser.xmlUnescape(meta)
+            }
+            metas.append(meta)
+            optimisticSource.append(item)
+        }
+        guard !uris.isEmpty else { return 0 }
+
+        var insertAt = 0
+        if playNext {
+            let posInfo = try? await avTransport.getPositionInfo(device: coordinator)
+            let currentTrack = posInfo?.trackNumber ?? 0
+            insertAt = currentTrack > 0 ? currentTrack + 1 : 1
+        }
+
+        sonosDebugLog("[QUEUE] Batch add \(uris.count) URIs at pos \(insertAt) playNext=\(playNext)")
+
+        // Show an immediate "Adding..." banner so the user knows something's
+        // happening — batch adds on S1 hardware can take 20-40 s and the
+        // user-perceived silence is exactly the bug we're fixing.
+        ErrorHandler.shared.info("Adding \(uris.count) tracks…")
+
+        // Try the single-SOAP batch action first. Sonos caps each call at
+        // 16 items, so chunk the input and send multiple batches if needed.
+        // If the speaker rejects the wire format (fault 402 "Invalid Args")
+        // or doesn't support the action, fall back to sequential single adds.
+        var firstTrack = 0
+        var numAdded = 0
+        var batchSucceeded = false
+        do {
+            let chunkSize = 16
+            var nextInsertAt = insertAt
+            for chunkStart in stride(from: 0, to: uris.count, by: chunkSize) {
+                let end = min(chunkStart + chunkSize, uris.count)
+                let uriChunk = Array(uris[chunkStart..<end])
+                let metaChunk = Array(metas[chunkStart..<end])
+                let result = try await contentDirectory.addMultipleURIsToQueue(
+                    device: coordinator,
+                    uris: uriChunk, metadatas: metaChunk,
+                    desiredFirstTrackNumberEnqueued: nextInsertAt,
+                    enqueueAsNext: false
+                )
+                sonosDebugLog("[QUEUE] Batch chunk \(chunkStart)-\(end-1): firstTrack=\(result.firstTrackNumber) numAdded=\(result.numAdded)")
+                if firstTrack == 0 && result.firstTrackNumber > 0 { firstTrack = result.firstTrackNumber }
+                numAdded += result.numAdded
+                // Next chunk goes after the ones we just added (only relevant
+                // when playNext/insertAt > 0; append mode keeps nextInsertAt=0).
+                if nextInsertAt > 0 { nextInsertAt += result.numAdded }
+            }
+            batchSucceeded = numAdded > 0
+        } catch {
+            sonosDebugLog("[QUEUE] Batch add threw: \(error). Falling back to per-track adds.")
+            firstTrack = 0
+            numAdded = 0
+        }
+
+        if !batchSucceeded {
+            sonosDebugLog("[QUEUE] Entering per-track fallback for \(uris.count) items")
+            firstTrack = 0
+            numAdded = 0
+            for (i, item) in optimisticSource.enumerated() {
+                guard let uri = item.resourceURI, !uri.isEmpty else { continue }
+                var meta = item.resourceMetadata ?? ""
+                if meta.contains("&lt;") { meta = XMLResponseParser.xmlUnescape(meta) }
+                let target = insertAt > 0 ? insertAt + i : 0
+                do {
+                    let pos = try await contentDirectory.addURIToQueue(
+                        device: coordinator, uri: uri, metadata: meta,
+                        desiredFirstTrackNumberEnqueued: target, enqueueAsNext: false
+                    )
+                    sonosDebugLog("[QUEUE] Per-track fallback \(i+1)/\(uris.count) '\(item.title)' -> pos=\(pos)")
+                    if firstTrack == 0 && pos > 0 { firstTrack = pos }
+                    if pos > 0 { numAdded += 1 }
+                } catch {
+                    sonosDebugLog("[QUEUE] Per-track fallback add FAILED for '\(item.title)': \(error)")
+                    ErrorHandler.shared.handle(error, context: "QUEUE", userFacing: true)
+                    // Abort the rest of the loop — if the speaker is rejecting
+                    // one track it will likely reject the rest too, and we
+                    // don't want to hammer it.
+                    break
+                }
+            }
+            sonosDebugLog("[QUEUE] Per-track fallback complete: added=\(numAdded)")
+        }
+
+        // Batch adds trigger a full queue reload instead of optimistic append.
+        // The slowness on S1 means the user has already waited; one extra
+        // Browse(Q:0) round-trip is negligible compared to the batch duration,
+        // and a real reload guarantees the queue panel matches the speaker's
+        // actual state — including any tracks that failed mid-loop.
+        postQueueChanged(optimisticItems: [])
+        if numAdded > 0 {
+            ErrorHandler.shared.info("\(L10n.addToQueue): \(numAdded) \(numAdded == 1 ? "track" : "tracks")")
+        }
+        return firstTrack
+    }
+
     public func addBrowseItemToQueue(_ item: BrowseItem, in group: SonosGroup, playNext: Bool = false, atPosition: Int = 0) async throws -> Int {
         guard let coordinator = group.coordinator else { return 0 }
+        isAddingToQueue = true
+        defer { isAddingToQueue = false }
 
         // Determine insertion position
         var insertAt = atPosition
@@ -1325,11 +1492,11 @@ public class SonosManager: ObservableObject {
                 let posInfo = try? await avTransport.getPositionInfo(device: coordinator)
                 let currentTrack = posInfo?.trackNumber ?? 0
                 insertAt = currentTrack > 0 ? currentTrack + 1 : 1
-            } else {
-                // Add to queue: always append at end
-                let (_, total) = try await contentDirectory.browseQueue(device: coordinator, start: 0, count: 1)
-                insertAt = total + 1
             }
+            // Append to end: leave insertAt = 0. Sonos's DesiredFirstTrackNumberEnqueued=0
+            // means "append at end", so we skip the extra Browse round-trip that was
+            // previously used solely to count the current queue size. S1 hardware
+            // feels this difference — one fewer SOAP call per Add to Queue.
         }
 
         if let uri = item.resourceURI, !uri.isEmpty {
@@ -1352,7 +1519,15 @@ public class SonosManager: ObservableObject {
                 meta = XMLResponseParser.xmlUnescape(meta)
             }
             sonosDebugLog("[QUEUE] Adding URI to queue: \(uri.prefix(60)) atPos=\(insertAt) playNext=\(playNext)")
-            let result = try await contentDirectory.addURIToQueue(device: coordinator, uri: uri, metadata: meta, desiredFirstTrackNumberEnqueued: insertAt, enqueueAsNext: false)
+            let result: Int
+            do {
+                result = try await contentDirectory.addURIToQueue(device: coordinator, uri: uri, metadata: meta, desiredFirstTrackNumberEnqueued: insertAt, enqueueAsNext: false)
+                sonosDebugLog("[QUEUE] Add OK: trackNumber=\(result)")
+            } catch {
+                sonosDebugLog("[QUEUE] Add FAILED: \(error)")
+                ErrorHandler.shared.handle(error, context: "QUEUE", userFacing: true)
+                throw error
+            }
 
             // Cache by queue position for trackNumber-based recovery
             if !item.title.isEmpty && result > 0 {
@@ -1360,13 +1535,36 @@ public class SonosManager: ObservableObject {
                 if cachedTrackByPosition[groupID] == nil { cachedTrackByPosition[groupID] = [:] }
                 cachedTrackByPosition[groupID]?[result] = cached
             }
-            NotificationCenter.default.post(name: .queueChanged, object: nil)
+            // Optimistic-update payload: the QueueView appends this item directly
+            // instead of re-fetching the whole queue from the coordinator. On S1
+            // hardware the full Browse round-trip after each add adds ~3-5 s of
+            // delay per track; this eliminates it. Fallback reload happens only
+            // when we don't know the resulting track number (result == 0).
+            let optimistic: [QueueItem] = result > 0 ? [QueueItem(
+                id: result,
+                title: item.title,
+                artist: item.artist ?? "",
+                album: item.album ?? "",
+                albumArtURI: item.albumArtURI,
+                duration: ""
+            )] : []
+            postQueueChanged(optimisticItems: optimistic)
+            // Visible confirmation — context-menu Add-to-Queue actions would
+            // otherwise produce no on-screen feedback when the queue panel
+            // isn't open.
+            if result > 0 {
+                let msg = item.title.isEmpty ? L10n.addToQueue : "\(L10n.addToQueue): \(item.title)"
+                ErrorHandler.shared.info(msg)
+            }
             return result
         } else if item.isContainer {
             let containerURI = makeContainerURI(item)
             sonosDebugLog("[QUEUE] Adding container to queue: \(containerURI.prefix(60)) atPos=\(insertAt)")
             let result = try await contentDirectory.addURIToQueue(device: coordinator, uri: containerURI, desiredFirstTrackNumberEnqueued: insertAt, enqueueAsNext: false)
-            NotificationCenter.default.post(name: .queueChanged, object: nil)
+            // Containers expand to multiple tracks server-side — we can't build
+            // an optimistic item list without fetching the queue, so fall back
+            // to a full reload here. Same-file single-track adds are optimistic.
+            postQueueChanged(optimisticItems: [])
             return result
         }
         sonosDebugLog("[QUEUE] Cannot add to queue: no URI for '\(item.title)' objectID=\(item.objectID)")

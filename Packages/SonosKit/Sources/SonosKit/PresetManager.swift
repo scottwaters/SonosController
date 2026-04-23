@@ -188,7 +188,7 @@ public final class PresetManager: ObservableObject {
 
         if topologyChanged {
             try? await Task.sleep(nanoseconds: Timing.presetStepDelay)
-            await manager.refreshTopology(from: coordinator)
+            await manager.refreshTopology(from: coordinator, force: true)
             try? await Task.sleep(nanoseconds: Timing.presetStepDelay)
         }
 

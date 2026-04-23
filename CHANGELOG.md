@@ -1,5 +1,95 @@
 # Changelog
 
+## v3.51 — 2026-04-23
+
+Performance-focused maintenance release targeting Sonos S1 hardware and other
+request-sensitive coordinators, plus the queue-visibility polish that surfaced
+while diagnosing it.
+
+### S1 performance
+- **`GetHouseholdID` cached per device** — speakers' household IDs never change
+  at runtime. Previously we re-queried on every SSDP response (13+ extra SOAP
+  calls per 30-second rescan cycle); now fetched exactly once per device for
+  the app's lifetime.
+- **Topology refresh throttling (10 s per household)** — SSDP response bursts
+  (home-theater bundles advertising each sub-device separately) no longer
+  trigger back-to-back `GetZoneGroupState` calls. User-initiated group changes
+  (`joinGroup`, `ungroupDevice`, preset apply) pass `force: true` to bypass
+  the throttle for immediate UI feedback.
+- **Removed redundant queue pre-count** — `AddURIToQueue` used to do an extra
+  `Browse(Q:0) count=1` just to compute the insertion position before the
+  actual add. Sonos's `DesiredFirstTrackNumberEnqueued=0` natively means
+  "append at end"; the pre-count is gone, cutting one round-trip per add.
+- **Single-track optimistic queue append** — single-track `AddURIToQueue` now
+  posts the new `QueueItem` via a userInfo payload on `.queueChanged` so the
+  queue panel appends it locally without an extra `Browse(Q:0)` reload. Per
+  single-track add: 3 SOAP calls → 1.
+- **Batch track adds via `AddMultipleURIsToQueue`** — album adds and multi-
+  select enqueues now go through a single SOAP call per 16-track chunk (Sonos
+  firmware limit) instead of N sequential `AddURIToQueue` calls. On S2 a
+  14-track album completes in ~1-2 s.
+- **Auto-fallback to per-track on batch rejection** — if the firmware rejects
+  the batch action (UPnPError 402 or similar), the code transparently falls
+  back to sequential `AddURIToQueue` with the already-known URIs. Slower but
+  always works on the S1 firmware versions that don't accept the batch form.
+- **Corrected `AddMultipleURIsToQueue` wire format** — original implementation
+  was double-escaping each DIDL (pre-escape + envelope escape) producing
+  `&amp;lt;DIDL…` on the wire, which the speaker parsed as invalid args and
+  rejected with 402. Now follows the SoCo / node-sonos-ts / jishi convention:
+  raw DIDL joined with a single ASCII space, single XML-escape at envelope
+  level only.
+- **Per-track fallback breaks on first timeout** — avoids hammering an already-
+  unresponsive S1 with a dozen more doomed SOAP calls after the first one
+  times out. Whatever succeeded before the break is reported; the failure
+  surfaces in the red error banner.
+
+### Queue visibility
+- **Clear Queue spinner** — the trash icon swaps to a spinner while the
+  `RemoveAllTracksFromQueue` SOAP is in flight.
+- **Queue loading spinner on every load** — `loadQueue` now always sets
+  `isLoading = true` at the start. Full-screen "Loading queue…" spinner when
+  the panel has no items to show (first launch, speaker switch, cleared
+  queue). Inline header spinner when items are already present, so the
+  existing list stays visible during a background reload.
+- **"Adding to queue…" spinner during in-flight adds** — new `@Published
+  isAddingToQueue` on `SonosManager` drives a spinner in the queue panel
+  while a batch add is progressing, not only during the final reload. On
+  S1 where the per-track fallback takes 30-40 s, the spinner covers the
+  whole operation.
+- **Green info banner on successful adds** — `ErrorHandler.info(_:)` shows a
+  transient green banner at the top of the window ("Add to Queue: 14
+  tracks"). An immediate "Adding N tracks…" banner appears the moment the
+  action is invoked, so the user gets feedback before any SOAP round-trip
+  completes. Red error banner surfaces SOAP faults that were previously
+  being swallowed by `try?`.
+
+### Queue synchronisation
+- **Speaker-switch queue reload** — `QueueView` now reacts to the external
+  `group` prop changing (previously the `@StateObject` held on to the
+  originally-captured group). Switching speakers now clears the queue,
+  updates `vm.group`, and triggers `loadQueue` against the new coordinator.
+
+### Bug fixes
+- **"+ Float Play 5 + Office" display glitch** — `SonosGroup.name` no longer
+  emits a leading "+ " when the coordinator isn't present in the members
+  list (transient topology inconsistency edge case).
+
+### Removed
+- **Topology grace windows** — the group-level and member-level grace timers
+  introduced earlier in v3.5 turned out to create phantom groups under
+  Sonos's topology eventual-consistency quirks, and to delay user-initiated
+  grouping actions by up to 30 s. Replaced by a simple latest-response-wins
+  merge that accurately reflects what the most recent speaker said.
+
+### Known limitations
+- Switching speakers while a multi-track batch add is in flight can leave
+  the queue panel targeting the wrong coordinator for its post-add reload —
+  tracked under the top High Priority item in `docs/TODO.md` for a proper
+  fix. Workaround: wait for the green "Add to Queue: N tracks" banner before
+  switching rooms.
+
+---
+
 ## v3.5 — 2026-04-23
 
 ### New Features

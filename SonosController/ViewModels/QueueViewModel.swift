@@ -5,7 +5,9 @@ import SonosKit
 @MainActor
 final class QueueViewModel: ObservableObject {
     var sonosManager: any QueueServices
-    let group: SonosGroup
+    /// Mutable so `QueueView` can push a new selected-speaker group into the
+    /// view model when the user switches rooms in the sidebar.
+    var group: SonosGroup
 
     @Published var queueItems: [QueueItem] = []
     @Published var currentTrack: Int = 0
@@ -71,10 +73,24 @@ final class QueueViewModel: ObservableObject {
         }
     }
 
+    /// Appends tracks the user just added, without hitting the speaker again.
+    /// A real `loadQueue` later will reconcile. Skips items whose id already
+    /// exists so a racing real reload doesn't produce duplicates.
+    func optimisticallyAppend(_ items: [QueueItem]) {
+        let existing = Set(queueItems.map(\.id))
+        let fresh = items.filter { !existing.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        queueItems.append(contentsOf: fresh)
+        totalTracks = max(totalTracks, queueItems.map(\.id).max() ?? totalTracks)
+    }
+
     func loadQueue() async {
-        // Only show loading spinner on first load — reloads keep current items visible
-        let isFirstLoad = queueItems.isEmpty && isLoading
-        if isFirstLoad { isLoading = true }
+        // Show the spinner whenever we're actually fetching. Covers first
+        // launch, speaker switch (queueItems just got cleared), and the
+        // post-add reload after a batch — all cases where the user should
+        // see that something is happening rather than a stale or empty list.
+        isLoading = true
+        defer { isLoading = false }
         do {
             let (items, total) = try await sonosManager.getQueue(group: group, start: 0, count: 100)
             queueItems = items
@@ -84,7 +100,6 @@ final class QueueViewModel: ObservableObject {
         } catch {
             ErrorHandler.shared.handle(error, context: "QUEUE")
         }
-        isLoading = false
     }
 
     func playTrack(_ trackNumber: Int) async {
@@ -109,7 +124,11 @@ final class QueueViewModel: ObservableObject {
         }
     }
 
+    @Published var isClearing = false
+
     func clearQueue() async {
+        isClearing = true
+        defer { isClearing = false }
         do {
             try await sonosManager.clearQueue(group: group)
             queueItems = []

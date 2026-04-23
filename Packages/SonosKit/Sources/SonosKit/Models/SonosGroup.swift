@@ -37,6 +37,10 @@ public struct SonosGroup: Identifiable, Hashable {
             .filter { $0.id != coordinatorID }
             .map(\.roomName)
             .sorted()
-        return ([coordName] + others).joined(separator: " + ")
+        // If the coordinator isn't in the members list (transient topology
+        // inconsistency), skip the empty coordName instead of emitting a
+        // leading "+ " prefix in the join.
+        let parts = coordName.isEmpty ? others : [coordName] + others
+        return parts.joined(separator: " + ")
     }
 }

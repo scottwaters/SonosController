@@ -107,6 +107,30 @@ struct ContentView: View {
                 .background(.red.opacity(0.1))
             }
 
+            // Info / success banner (e.g. "Added to queue: <track>")
+            if errorHandler.showInfo, let infoMsg = errorHandler.currentInfo {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text(infoMsg)
+                        .font(.caption)
+                        .lineLimit(2)
+                    Spacer()
+                    Button {
+                        errorHandler.dismissInfo()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.green.opacity(0.1))
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             // Stale data / cache banner
             if let message = sonosManager.staleMessage {
                 HStack(spacing: 8) {

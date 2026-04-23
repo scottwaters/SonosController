@@ -182,6 +182,53 @@ public final class ContentDirectoryService {
         return Int(result["FirstTrackNumberEnqueued"] ?? "0") ?? 0
     }
 
+    /// Adds multiple tracks in a single SOAP round-trip. Max 16 items per call
+    /// (Sonos firmware limit — callers should chunk larger batches). Returns
+    /// the queue position of the first track added and the number of tracks
+    /// successfully enqueued.
+    ///
+    /// Wire format (verified against SoCo, jishi/node-sonos-discovery, and
+    /// node-sonos-ts — they all agree):
+    /// - `EnqueuedURIs` — URIs joined with a single ASCII space.
+    /// - `EnqueuedURIsMetaData` — **raw** DIDL-Lite XML strings joined with a
+    ///   single ASCII space. Do NOT pre-escape. The SOAPClient performs the
+    ///   single XML-entity escape pass required at envelope level. Escaping
+    ///   here as well would produce `&amp;lt;DIDL…` on the wire — the
+    ///   speaker unescapes once, sees `&lt;DIDL…` instead of `<DIDL…`, and
+    ///   rejects the request with UPnPError 402 (Invalid Args).
+    public func addMultipleURIsToQueue(
+        device: SonosDevice,
+        uris: [String],
+        metadatas: [String],
+        desiredFirstTrackNumberEnqueued: Int = 0,
+        enqueueAsNext: Bool = false
+    ) async throws -> (firstTrackNumber: Int, numAdded: Int) {
+        precondition(uris.count == metadatas.count, "uris and metadatas must be the same length")
+        guard !uris.isEmpty else { return (0, 0) }
+        let joinedURIs = uris.joined(separator: " ")
+        let joinedMeta = metadatas.joined(separator: " ")
+        let result = try await soap.send(
+            to: device.baseURL,
+            path: "/MediaRenderer/AVTransport/Control",
+            service: "AVTransport",
+            action: "AddMultipleURIsToQueue",
+            arguments: [
+                ("InstanceID", "0"),
+                ("UpdateID", "0"),
+                ("NumberOfURIs", "\(uris.count)"),
+                ("EnqueuedURIs", joinedURIs),
+                ("EnqueuedURIsMetaData", joinedMeta),
+                ("ContainerURI", ""),
+                ("ContainerMetaData", ""),
+                ("DesiredFirstTrackNumberEnqueued", "\(desiredFirstTrackNumberEnqueued)"),
+                ("EnqueueAsNext", enqueueAsNext ? "1" : "0")
+            ]
+        )
+        let first = Int(result["FirstTrackNumberEnqueued"] ?? "0") ?? 0
+        let added = Int(result["NumTracksAdded"] ?? "0") ?? 0
+        return (first, added)
+    }
+
     // MARK: - Playlist Management (Saved Queues)
 
     /// Creates a new Sonos playlist from the current queue

@@ -14,7 +14,35 @@ public final class ErrorHandler: ObservableObject {
     /// Whether to show the error as a banner
     @Published public var showError = false
 
+    /// Transient informational message (e.g. "Added 5 tracks to queue").
+    /// Auto-dismisses after a few seconds. Uses a separate banner style
+    /// from errors so failures stay visually distinct.
+    @Published public var currentInfo: String?
+    @Published public var showInfo = false
+
     private init() {}
+
+    /// Shows a transient info banner (used for successful actions the user
+    /// needs visible confirmation of — e.g. "Added to queue" from a context
+    /// menu that has no other on-screen feedback).
+    public func info(_ message: String) {
+        currentInfo = message
+        showInfo = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Timing.errorAutoDismiss)
+            // Only clear if the same message is still showing — otherwise
+            // a newer info would be cut short by this earlier timer.
+            if self.currentInfo == message {
+                self.showInfo = false
+                self.currentInfo = nil
+            }
+        }
+    }
+
+    public func dismissInfo() {
+        showInfo = false
+        currentInfo = nil
+    }
 
     /// Handles an error — logs it and optionally shows to user
     public func handle(_ error: Error, context: String, userFacing: Bool = false) {
