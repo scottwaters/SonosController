@@ -12,9 +12,13 @@ struct MusicServicesSettingsSection: View {
     @State private var searchText = ""
     @State private var showHelp = false
 
-    // Services confirmed working with AppLink auth
+    // Services confirmed working with AppLink auth. Plex (sid=212) was
+    // verified by live `getAppLink` probe (2026-04-24) — returns a
+    // usable Plex OAuth regUrl, unlike Apple Music / YouTube Music /
+    // SoundCloud which all 403 at the Sonos-identity gate.
     private static let testedAppLinkServices: Set<Int> = [
         ServiceID.spotify,
+        ServiceID.plex,
     ]
 
     // Services that cannot use AppLink (require native OAuth or are broken)
@@ -142,7 +146,7 @@ struct MusicServicesSettingsSection: View {
                 }
             }
 
-            Text("Spotify has been tested and confirmed working. Connect your account, then add one favorited song through the Sonos app to enable full browsing and playback.")
+            Text("Spotify and Plex have been tested and confirmed working. Connect your account; for Spotify, then add one favorited song through the Sonos app to enable full browsing and playback. Plex streams from your own server, so once connected the search works against your library directly.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }

@@ -4,11 +4,10 @@ Tracking cross-release work items too small for GitHub issues but worth remember
 
 ## Post-v3.6
 
-### Plex integration
-- Sonos SMAPI endpoint for Plex (sid=212, URI `https://sonos.plex.tv/v2.2/soap`) uses the **standard SMAPI AppLink flow** — confirmed by live probe (2026-04-24): `getAppLink` returned HTTP 200 with a usable `regUrl` pointing to `app.plex.tv/auth`.
-- Reuses the existing `SMAPIClient.getAppLink` / `getDeviceAuthToken` / `search` / `getMetadata` code paths already proven with Spotify.
-- Plex streams audio directly from the **user's own server** (no third-party CDN, no short-lived signatures) so playback on Sonos should be reliable.
-- Scope: wire up auth → add Plex tab in BrowseView → verify DIDL format for `AddURIToQueue` against Plex's returned URIs.
+### Plex integration — DONE v3.7
+- Promoted to `MusicServicesView.testedAppLinkServices` so it appears with a "Connect" button in Settings → Music (same UX as Spotify).
+- Search and browse use the existing generic `searchSMAPI` / `browseSMAPI` paths. Playback DIDL built from `SA_RINCON<sid>_X_#Svc<sid>-0-Token` pattern, which Plex accepts.
+- Streams come from the user's own Plex Media Server — no third-party CDN, no short-lived signatures.
 
 ### SoundCloud integration — blocked
 - Sonos SMAPI endpoint for SoundCloud (sid=160) returns `Client.NOT_AUTHORIZED` (403) when `getAppLink` is called from a non-Sonos client. Confirmed by live probe (2026-04-24).

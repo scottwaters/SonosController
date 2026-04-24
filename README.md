@@ -114,12 +114,9 @@ Services are managed in **Settings → Music**. Each can be individually enabled
 | Service | Browse | Search | Playback | Notes |
 |---------|:------:|:------:|:--------:|-------|
 | **Spotify** | ✓ | ✓ | ✓ | AppLink authentication. Connect in Settings, then add one favorited song via the Sonos app |
+| **Plex** *(v3.7)* | ✓ | ✓ | ✓ | AppLink authentication via [app.plex.tv/auth](https://app.plex.tv/auth). Streams from your own Plex Media Server — no third-party CDN, no short-lived signatures |
 
 #### Available — Connection Required (Untested)
-
-| Service | Likely to work | Notes |
-|---------|:-------------:|-------|
-| **Plex** (sid=212) | ✓ | SMAPI AppLink returns a usable Plex `regUrl` when probed — integration planned for a future release (see TODO.md) |
 
 40+ additional services are available via SMAPI AppLink/DeviceLink and may work — connect via **Settings → Music → Other Services**. Results are not guaranteed.
 
