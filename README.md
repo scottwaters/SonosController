@@ -18,6 +18,16 @@ Tested against a live Sonos system with 16 speakers across 10 zones, a large loc
 
 ---
 
+## What's New in v3.6
+
+- **Last.fm scrobbling** — new Scrobbling tab in Settings. Register your own Last.fm API app (BYO — no bundled credentials, no shared quota), paste the API key + shared secret, connect via the browser-based approval flow. Submissions come entirely from the local play-history table — no additional network traffic to your speakers. Filter by room and music service; a Filter Preview disclosure shows exactly what would send and what's blocked (with sample rows) so "why isn't this scrobbling?" has an answer without log-diving. Auto-scrobble every 5 minutes is opt-in; manual "Scrobble Pending Now" is always available.
+- **Scroll-wheel volume + middle-click mute** — scroll on the selected speaker to adjust volume (300 ms debounced so rapid flicks don't stack SOAP calls), middle-click to toggle mute.
+- **Unified Keychain store** — all credentials (SMAPI tokens + Last.fm API app + session keys) live in one Keychain item with automatic migration from the old per-service locations. Result: one "Always Allow" prompt per rebuild instead of one per credential.
+- **Music-service filter fixed** — the scrobbling filter's service matcher now uses authoritative Sonos service IDs (confirmed by a live `ListAvailableServices` probe): Apple Music (sid=204), Spotify (12), TuneIn (254), SoundCloud (160), Sonos Radio (303), Calm Radio (144), YouTube Music (284), Amazon Music (201). Previous guesses were silently dropping matches for several services.
+- **Radio streams now scrobble** — tracks with `duration=0` (Sonos's value for continuous streams) are treated as unknown-duration and passed to Last.fm, which applies its own rules.
+- **Paste restored in Settings** — ⌘V in the credential text fields works again.
+- **Service-status matrix in the README** — the Music Services section now says which services this app can drive directly vs. which are locked to Sonos's own apps (Apple Music as SMAPI, Amazon Music, YouTube Music, SoundCloud — confirmed by live probe).
+
 ## What's New in v3.5
 
 - **Sonos S1 + S2 coexistence** — legacy S1 speakers and modern S2 speakers on the same network now show up together in the sidebar, grouped by system with a horizontal divider. If you only have one system, nothing changes.
@@ -64,6 +74,8 @@ Useful for sharing, logging, or searching another platform.
 **Playback controls** — play, pause, stop, skip, seek with a draggable slider and smooth position interpolation. Shuffle, repeat (off / all / one), crossfade, sleep timer. Pause-all / Resume-all from the toolbar menu.
 
 **Volume** — master slider covers the whole group (proportional or linear mode). Individual per-speaker sliders with drag protection. Mute toggle per speaker and master. Bass, treble, loudness, and Home Theater EQ (sub/surround levels, night mode, dialog enhancement) via the EQ panel.
+
+**Scroll-wheel + middle-click** *(v3.6)* — hover over the Now Playing view and scroll the mouse wheel to adjust the master volume of the selected speaker. Middle-click anywhere on the view toggles mute. Discrete steps, debounced so rapid flicks don't spam the speaker with SOAP calls.
 
 ### Browse & Library
 
@@ -144,6 +156,8 @@ The **History** timeline groups tracks by day with album art, artist, album, ser
 - **Copy Title / Copy Artist** — copy individual fields
 - **Filter by artist, room, or source** — instantly filter the history view
 
+**Last.fm scrobbling** *(v3.6)* — listening history doubles as the source for Last.fm scrobbling. Everything is submitted from the local SQLite table, not by tapping the speakers again; filter by room and music service so you can (for example) scrobble only what plays in the office, excluding the kids' bedroom. See the **Scrobbling** tab in Settings — fully documented in [What's New in v3.6](#whats-new-in-v36) above.
+
 ### Menu Bar Mode
 
 ![Menu Bar Mini Player](screenshots/v3/menubar.png)
@@ -164,10 +178,11 @@ The preset editor shows all EQ controls including Home Theater settings: Night M
 
 ![Settings — Display tab](screenshots/v3/settings_themes.png)
 
-Settings are organised into three tabs:
+Settings are organised into four tabs:
 
 - **Display** — Language (13 languages), theme (System / Light / Dark), custom colours for accent / playing zone / inactive zone icons, menu-bar controls toggle
 - **Music** — Playback options (Classic Shuffle, Proportional Group Volume), Play History toggle with stats, Music Services management (enable search services, connect Spotify, service status)
+- **Scrobbling** *(new in v3.6)* — Connect Last.fm (BYO API app — register at [last.fm/api/account/create](https://www.last.fm/api/account/create), paste your key + shared secret, approve via browser). Filter which rooms and music services to scrobble, run on demand or auto-scrobble every 5 minutes. Includes a Filter Preview diagnostic showing why specific pending tracks aren't going through, and a Recent Non-Scrobbled list surfacing Last.fm's per-track rejections.
 - **System** — Communication mode (Event-Driven / Legacy Polling), Startup mode (Quick Start / Classic), image-cache controls (size limit, age limit, clear)
 
 ### Privacy & Local-Only Operation
