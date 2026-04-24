@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 public final class SMAPIAuthManager: ObservableObject {
-    public let client = SMAPIClient()
+    public let client = SMAPIClient.shared
     public let tokenStore = SMAPITokenStore()
 
     @Published public var availableServices: [SMAPIServiceDescriptor] = []
@@ -161,26 +161,28 @@ public final class SMAPIAuthManager: ObservableObject {
         authError = nil
 
         do {
-            let (regUrl, linkCode) = try await client.getAppLink(
+            let link = try await client.getAppLink(
                 serviceURI: service.secureUri,
                 householdID: householdID,
                 deviceID: deviceID
             )
 
-            if regUrl.isEmpty {
+            if link.regUrl.isEmpty {
                 authError = "\(service.name) did not return an authorization URL. This service may not support third-party authentication."
                 isAuthenticating = false
                 return nil
             }
 
-            sonosDebugLog("[SMAPI] Auth started for \(service.name)")
+            sonosDebugLog("[SMAPI] Auth started for \(service.name) (linkDeviceId=\(link.linkDeviceId ?? "<none>"))")
 
-            // Start polling for auth completion in background
+            // Start polling for auth completion in background. The session
+            // linkDeviceId (if the service minted one — e.g. Plex) must be
+            // echoed back verbatim or `getDeviceAuthToken` faults.
             authTask = Task {
-                await pollForAuth(service: service, linkCode: linkCode)
+                await pollForAuth(service: service, linkCode: link.linkCode, linkDeviceId: link.linkDeviceId)
             }
 
-            return regUrl
+            return link.regUrl
         } catch {
             authError = "Failed to start authentication: \(error.localizedDescription)"
             isAuthenticating = false
@@ -199,7 +201,7 @@ public final class SMAPIAuthManager: ObservableObject {
     }
 
     /// Polls the service for auth completion (user needs to authorize in browser)
-    private func pollForAuth(service: SMAPIServiceDescriptor, linkCode: String) async {
+    private func pollForAuth(service: SMAPIServiceDescriptor, linkCode: String, linkDeviceId: String?) async {
         guard let deviceID else { return }
         for _ in 0..<60 { // Poll for up to 5 minutes (60 * 5s)
             guard !Task.isCancelled else {
@@ -213,7 +215,8 @@ public final class SMAPIAuthManager: ObservableObject {
                     serviceURI: service.secureUri,
                     householdID: householdID,
                     deviceID: deviceID,
-                    linkCode: linkCode
+                    linkCode: linkCode,
+                    linkDeviceId: linkDeviceId
                 ) {
                     // Success!
                     let token = SMAPIToken(

@@ -503,7 +503,7 @@ public final class ServiceSearchProvider {
     public func searchSMAPI(term: String, searchID: String = "track", serviceID: Int,
                             serviceURI: String, token: SMAPIToken, sn: Int,
                             index: Int = 0, count: Int = 25) async -> [BrowseItem] {
-        let client = SMAPIClient()
+        let client = SMAPIClient.shared
         do {
             let result = try await client.search(serviceURI: serviceURI, token: token,
                                                   searchID: searchID, term: term,
@@ -518,7 +518,7 @@ public final class ServiceSearchProvider {
     /// Browse into a container on any authenticated SMAPI service.
     public func browseSMAPI(id: String, serviceID: Int, serviceURI: String, token: SMAPIToken,
                             sn: Int, index: Int = 0, count: Int = 50) async -> [BrowseItem] {
-        let client = SMAPIClient()
+        let client = SMAPIClient.shared
         do {
             let result = try await client.getMetadata(serviceURI: serviceURI, token: token,
                                                        id: id, index: index, count: count)
@@ -535,7 +535,7 @@ public final class ServiceSearchProvider {
     public func searchSMAPIAnonymous(term: String, searchID: String = "track", serviceID: Int,
                                      serviceURI: String, deviceID: String, householdID: String = "",
                                      sn: Int, index: Int = 0, count: Int = 25) async -> [BrowseItem] {
-        let client = SMAPIClient()
+        let client = SMAPIClient.shared
         do {
             let result = try await client.searchAnonymous(serviceURI: serviceURI, deviceID: deviceID,
                                                            householdID: householdID,
@@ -552,7 +552,7 @@ public final class ServiceSearchProvider {
     public func browseSMAPIAnonymous(id: String, serviceID: Int, serviceURI: String,
                                      deviceID: String, householdID: String = "",
                                      sn: Int, index: Int = 0, count: Int = 50) async -> [BrowseItem] {
-        let client = SMAPIClient()
+        let client = SMAPIClient.shared
         do {
             let result = try await client.getMetadataAnonymous(serviceURI: serviceURI, deviceID: deviceID,
                                                                 householdID: householdID,
@@ -607,6 +607,27 @@ public final class ServiceSearchProvider {
         ServiceID.spotify: "x-sonos-spotify:",
     ]
 
+    /// File-extension hint appended before the `?sid=…` query string.
+    /// Sonos uses the extension to pre-select a codec path and rejects
+    /// URIs without one (UPnP 714 "illegal MIME type") for services that
+    /// serve raw HTTP streams — Apple Music uses `.mp4`, Plex uses `.mp3`.
+    /// Services that already embed the media type in their URI (Spotify's
+    /// `x-sonos-spotify:` scheme) don't need this.
+    private static let serviceURIExtensions: [Int: String] = [
+        ServiceID.appleMusic: ".mp4",
+        ServiceID.plex: ".mp3",
+    ]
+
+    /// Playback-flag override. The third bit (value 8) tells the speaker
+    /// to resolve the URI via SMAPI `getMediaURI` instead of HTTP-GET'ing
+    /// it directly. Services that stream from their own CDN (Apple Music,
+    /// Plex) need this; services with an embedded URI scheme (Spotify)
+    /// don't. 8232 = 0x2028 vs the default 8224 = 0x2020.
+    private static let serviceFlagsOverrides: [Int: Int] = [
+        ServiceID.appleMusic: 8232,
+        ServiceID.plex: 8232,
+    ]
+
     /// Returns the correct RINCON service type for a given SMAPI service ID.
     private func rinconServiceType(for serviceID: Int) -> Int {
         Self.rinconServiceTypes[serviceID] ?? (serviceID << 8) + 7
@@ -625,7 +646,9 @@ public final class ServiceSearchProvider {
         if itemType == "stream" || itemType == "program" {
             return "x-sonosapi-stream:\(encodedID)?sid=\(serviceID)&flags=8224&sn=\(sn)"
         }
-        return "\(prefix)\(encodedID)?sid=\(serviceID)&flags=8224&sn=\(sn)"
+        let ext = Self.serviceURIExtensions[serviceID] ?? ""
+        let flags = Self.serviceFlagsOverrides[serviceID] ?? 8224
+        return "\(prefix)\(encodedID)\(ext)?sid=\(serviceID)&flags=\(flags)&sn=\(sn)"
     }
 
     /// Converts an SMAPIMediaItem to a BrowseItem with correct per-service URI and metadata.

@@ -200,7 +200,7 @@ struct PlayHistoryDashboard: View {
     private var themePicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text("Theme")
+                Text(L10n.themeLabel)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
 
@@ -211,7 +211,7 @@ struct PlayHistoryDashboard: View {
                         HStack(spacing: 4) {
                             ProgressView()
                                 .controlSize(.mini)
-                            Text("Updating...")
+                            Text(L10n.updatingEllipsis)
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }
@@ -222,13 +222,13 @@ struct PlayHistoryDashboard: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.system(size: 10))
-                                Text("Refresh Stats")
+                                Text(L10n.refreshStats)
                                     .font(.system(size: 10))
                             }
                             .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("Refresh daily summary and recalculate stats")
+                        .help(L10n.refreshDailySummary)
                     }
 
                     if let lastRollup = historyManager.lastRollupDate {
@@ -291,7 +291,7 @@ struct PlayHistoryDashboard: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .help("Custom Theme Editor")
+                .help(L10n.customThemeEditor)
 
                 Spacer()
             }
@@ -332,10 +332,10 @@ struct PlayHistoryDashboard: View {
             Image(systemName: "chart.bar.xaxis")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
-            Text("No listening data yet")
+            Text(L10n.noListeningDataYet)
                 .font(.title3)
                 .foregroundStyle(.secondary)
-            Text("Play some music and your stats will appear here")
+            Text(L10n.statsAppearHere)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -346,10 +346,10 @@ struct PlayHistoryDashboard: View {
 
     private var heroStats: some View {
         HStack(spacing: 16) {
-            statCard(icon: "play.circle.fill", value: animatedPlays, label: "Total Plays", format: { "\(Int($0))" })
-            statCard(icon: "clock.fill", value: animatedHours, label: "Hours Listened", format: { String(format: "%.1fh", $0) })
-            statCard(icon: "person.2.fill", value: animatedArtists, label: "Artists", format: { "\(Int($0))" })
-            statCard(icon: "hifispeaker.2.fill", value: animatedRooms, label: "Rooms", format: { "\(Int($0))" })
+            statCard(icon: "play.circle.fill", value: animatedPlays, label: L10n.statTotalPlays, format: { "\(Int($0))" })
+            statCard(icon: "clock.fill", value: animatedHours, label: L10n.statHoursListened, format: { String(format: "%.1fh", $0) })
+            statCard(icon: "person.2.fill", value: animatedArtists, label: L10n.statArtists, format: { "\(Int($0))" })
+            statCard(icon: "hifispeaker.2.fill", value: animatedRooms, label: L10n.rooms, format: { "\(Int($0))" })
         }
     }
 
@@ -402,7 +402,7 @@ struct PlayHistoryDashboard: View {
                 let avg = data.map(\.1).reduce(0, +) / max(data.count, 1)
 
                 HStack {
-                    Text("Listening Activity")
+                    Text(L10n.listeningActivity)
                         .font(.headline)
                     Spacer()
                     if let hDay = hoveredDay,
@@ -415,7 +415,7 @@ struct PlayHistoryDashboard: View {
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("Last 30 days · avg: \(avg)")
+                        Text(L10n.last30DaysAverage(avg))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -462,7 +462,7 @@ struct PlayHistoryDashboard: View {
                 let data = hourlyDistribution
 
                 HStack {
-                    Text("Peak Listening Hours")
+                    Text(L10n.peakListeningHours)
                         .font(.headline)
                     Spacer()
                     if let hHour = hoveredHour, let match = data.first(where: { $0.0 == hHour }) {
@@ -474,7 +474,7 @@ struct PlayHistoryDashboard: View {
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("Peak: \(formatHour(peakHour))")
+                        Text(L10n.peakHourFormat(formatHour(peakHour)))
                             .font(.caption)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 8)
@@ -534,12 +534,12 @@ struct PlayHistoryDashboard: View {
     private var topArtistsChart: some View {
         dashboardCard {
             VStack(alignment: .leading, spacing: 12) {
-                Label("Top Artists", systemImage: "music.mic")
+                Label(L10n.topArtists, systemImage: "music.mic")
                     .font(.headline)
 
                 let artists = mostPlayedArtists.prefix(8)
                 if artists.isEmpty {
-                    Text("No data").font(.caption).foregroundStyle(.tertiary)
+                    Text(L10n.noData).font(.caption).foregroundStyle(.tertiary)
                 } else {
                     Chart {
                         ForEach(Array(artists.enumerated()), id: \.offset) { _, item in
@@ -575,12 +575,12 @@ struct PlayHistoryDashboard: View {
     private var topSourcesChart: some View {
         dashboardCard {
             VStack(alignment: .leading, spacing: 12) {
-                Label("Top Sources", systemImage: "dot.radiowaves.left.and.right")
+                Label(L10n.topSources, systemImage: "dot.radiowaves.left.and.right")
                     .font(.headline)
 
                 let sources = Array(sourceDistribution.prefix(8))
                 if sources.isEmpty {
-                    Text("No data").font(.caption).foregroundStyle(.tertiary)
+                    Text(L10n.noData).font(.caption).foregroundStyle(.tertiary)
                 } else {
                     ZStack {
                         Chart {
@@ -628,7 +628,7 @@ struct PlayHistoryDashboard: View {
     private var recentTimeline: some View {
         dashboardCard {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Recent Activity", systemImage: "clock.arrow.circlepath")
+                Label(L10n.recentActivity, systemImage: "clock.arrow.circlepath")
                     .font(.headline)
 
                 let recent = historyManager.recentlyPlayed(limit: 10)
@@ -685,12 +685,12 @@ struct PlayHistoryDashboard: View {
 
     private var quickStatsPills: some View {
         HStack(spacing: 12) {
-            statPill(icon: "flame.fill", label: "Streak", value: "\(currentStreak)d", color: currentStreak >= 7 ? .orange : .secondary)
-            statPill(icon: "trophy.fill", label: "Best", value: "\(listeningStreak)d", color: .yellow)
-            statPill(icon: "chart.line.uptrend.xyaxis", label: "Avg/Day", value: String(format: "%.1f", averagePlaysPerDay), color: effectivePrimary)
-            statPill(icon: "opticaldisc.fill", label: "Albums", value: "\(uniqueAlbumCount)", color: effectiveSecondary)
-            statPill(icon: "antenna.radiowaves.left.and.right", label: "Stations", value: "\(uniqueStationCount)", color: .orange)
-            statPill(icon: "star.fill", label: "Starred", value: "\(starredCount)", color: .yellow)
+            statPill(icon: "flame.fill", label: L10n.statStreak, value: "\(currentStreak)d", color: currentStreak >= 7 ? .orange : .secondary)
+            statPill(icon: "trophy.fill", label: L10n.statBest, value: "\(listeningStreak)d", color: .yellow)
+            statPill(icon: "chart.line.uptrend.xyaxis", label: L10n.statAvgPerDay, value: String(format: "%.1f", averagePlaysPerDay), color: effectivePrimary)
+            statPill(icon: "opticaldisc.fill", label: L10n.statAlbums, value: "\(uniqueAlbumCount)", color: effectiveSecondary)
+            statPill(icon: "antenna.radiowaves.left.and.right", label: L10n.statStations, value: "\(uniqueStationCount)", color: .orange)
+            statPill(icon: "star.fill", label: L10n.statStarred, value: "\(starredCount)", color: .yellow)
             Spacer()
         }
     }
@@ -722,7 +722,7 @@ struct PlayHistoryDashboard: View {
                 let data = dayOfWeekDistribution
 
                 HStack {
-                    Text("Day of Week")
+                    Text(L10n.dayOfWeek)
                         .font(.headline)
                     Spacer()
                     if let hDay = hoveredWeekday, let match = data.first(where: { $0.0 == hDay }) {
@@ -758,12 +758,12 @@ struct PlayHistoryDashboard: View {
     private var topTracksChart: some View {
         dashboardCard {
             VStack(alignment: .leading, spacing: 12) {
-                Label("Top Tracks", systemImage: "music.note")
+                Label(L10n.topTracks, systemImage: "music.note")
                     .font(.headline)
 
                 let tracks = mostPlayedTracks.prefix(8)
                 if tracks.isEmpty {
-                    Text("No data").font(.caption).foregroundStyle(.tertiary)
+                    Text(L10n.noData).font(.caption).foregroundStyle(.tertiary)
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(Array(tracks.enumerated()), id: \.offset) { idx, item in
@@ -805,12 +805,12 @@ struct PlayHistoryDashboard: View {
     private var topStationsChart: some View {
         dashboardCard {
             VStack(alignment: .leading, spacing: 12) {
-                Label("Top Stations", systemImage: "antenna.radiowaves.left.and.right")
+                Label(L10n.topStations, systemImage: "antenna.radiowaves.left.and.right")
                     .font(.headline)
 
                 let stations = mostPlayedStations.prefix(8)
                 if stations.isEmpty {
-                    Text("No station data").font(.caption).foregroundStyle(.tertiary)
+                    Text(L10n.noStationData).font(.caption).foregroundStyle(.tertiary)
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(Array(stations.enumerated()), id: \.offset) { idx, item in
@@ -847,12 +847,12 @@ struct PlayHistoryDashboard: View {
     private var topAlbumsChart: some View {
         dashboardCard {
             VStack(alignment: .leading, spacing: 12) {
-                Label("Top Albums", systemImage: "square.stack")
+                Label(L10n.topAlbums, systemImage: "square.stack")
                     .font(.headline)
 
                 let albums = mostPlayedAlbums.prefix(8)
                 if albums.isEmpty {
-                    Text("No data").font(.caption).foregroundStyle(.tertiary)
+                    Text(L10n.noData).font(.caption).foregroundStyle(.tertiary)
                 } else {
                     Chart {
                         ForEach(Array(albums.enumerated()), id: \.offset) { _, item in
@@ -887,7 +887,7 @@ struct PlayHistoryDashboard: View {
     private var roomChart: some View {
         dashboardCard {
             VStack(alignment: .leading, spacing: 12) {
-                Label("Room Usage", systemImage: "hifispeaker.2")
+                Label(L10n.roomUsage, systemImage: "hifispeaker.2")
                     .font(.headline)
 
                 let rooms = roomDistribution.prefix(8)

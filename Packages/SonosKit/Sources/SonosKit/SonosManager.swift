@@ -317,8 +317,17 @@ public class SonosManager: ObservableObject {
         let savedAppearance = UserDefaults.standard.string(forKey: UDKey.appearanceMode) ?? AppearanceMode.system.rawValue
         self.appearanceMode = AppearanceMode(rawValue: savedAppearance) ?? .system
 
-        let savedLang = UserDefaults.standard.string(forKey: UDKey.appLanguage) ?? AppLanguage.english.rawValue
-        self.appLanguage = AppLanguage(rawValue: savedLang) ?? .english
+        // First launch: snapshot the macOS preferred language so the app
+        // starts in the user's own language. Persist it so the choice is
+        // stable across subsequent launches even if the OS setting changes.
+        if let savedLang = UserDefaults.standard.string(forKey: UDKey.appLanguage),
+           let lang = AppLanguage(rawValue: savedLang) {
+            self.appLanguage = lang
+        } else {
+            let detected = AppLanguage.systemDefault
+            UserDefaults.standard.set(detected.rawValue, forKey: UDKey.appLanguage)
+            self.appLanguage = detected
+        }
 
         self.accentColor = StoredColor.load(from: "accentColor", default: .system)
         self.playingZoneColor = StoredColor.load(from: "playingZoneColor", default: StoredColor(red: 0.2, green: 0.78, blue: 0.35))
@@ -1805,7 +1814,12 @@ extension SonosManager: TransportStrategyDelegate {
                 if !enriched.stationName.isEmpty {
                     merged.stationName = enriched.stationName
                 }
-                if let newArt = enriched.albumArtURI, !newArt.isEmpty {
+                // Only accept new art if we didn't have any. Plex rotates
+                // `X-Plex-Token` on every poll; replacing the art URL here
+                // triggers an image reload and flickers the UI for a track
+                // we're already showing correctly.
+                if merged.albumArtURI == nil || merged.albumArtURI?.isEmpty == true,
+                   let newArt = enriched.albumArtURI, !newArt.isEmpty {
                     merged.albumArtURI = newArt
                 }
                 groupTrackMetadata[groupID] = merged
@@ -1827,25 +1841,27 @@ extension SonosManager: TransportStrategyDelegate {
             updated.stationName = existing.stationName
         }
 
-        // Art stability: for same track, don't let alternating poll results swap art.
-        // For new tracks, accept whatever art the speaker provides.
-        if !trackChanged {
-            if let existingArt = existing.albumArtURI, !existingArt.isEmpty {
-                // Keep existing art for same track — prevents CDN URL flipping
-                if updated.albumArtURI == nil || updated.albumArtURI?.contains("/getaa?") == true {
-                    updated.albumArtURI = existingArt
-                }
-            }
-        }
+        // Art stability: for same track, pin the first art we saw.
+        //
+        // Earlier logic only replaced the incoming art when it was nil or a
+        // `/getaa?` fallback, which helped for most services. Plex rotates
+        // the `X-Plex-Token` query on every poll, so back-to-back poll
+        // results produce visibly-identical-but-byte-different URLs. The
+        // underlying `AsyncImage`/cache treats each as a new request and
+        // the UI reloads, which reads as a flicker.
+        //
+        // Pinning is safe because the caller has already determined that
+        // the TRACK hasn't changed — so whatever art we resolved on the
+        // first event for that track is still the right art until the
+        // track itself changes.
+        // Art resolution is owned by `ArtResolver` (on the app side) — this
+        // layer no longer substitutes cached art into the metadata stream.
+        // Writing here competed with the view-side resolver and produced a
+        // visible flicker when the two caches disagreed (e.g. Plex tracks
+        // with multiple iTunes matches). We just pass through whatever the
+        // speaker reported; the view asks ArtResolver for the canonical
+        // URL to display.
         groupTrackMetadata[groupID] = updated
-
-        // Cache lookup for art — runs when art is missing or ephemeral
-        if updated.albumArtURI == nil || updated.albumArtURI?.contains("/getaa?") == true {
-            if let cachedArt = lookupCachedArt(uri: updated.trackURI, title: updated.title) {
-                updated.albumArtURI = cachedArt
-                groupTrackMetadata[groupID] = updated
-            }
-        }
 
         // Log to play history for all groups
         if let group = groups.first(where: { $0.coordinatorID == groupID || $0.id == groupID }) {

@@ -12,9 +12,20 @@ struct MusicServicesSettingsSection: View {
     @State private var searchText = ""
     @State private var showHelp = false
 
-    // Services confirmed working with AppLink auth
+    // Services confirmed working with AppLink auth. Plex (sid=212) was
+    // verified by live `getAppLink` probe (2026-04-24) — returns a
+    // usable Plex OAuth regUrl, unlike Apple Music / YouTube Music /
+    // SoundCloud which all 403 at the Sonos-identity gate.
     private static let testedAppLinkServices: Set<Int> = [
         ServiceID.spotify,
+        ServiceID.plex,
+    ]
+
+    /// Services where the connected status doesn't depend on the `sn=`
+    /// favorites-discovery mechanism. Plex streams from the user's own
+    /// server so no subscription serial number exists or is needed.
+    private static let servicesNotNeedingSN: Set<Int> = [
+        ServiceID.plex,
     ]
 
     // Services that cannot use AppLink (require native OAuth or are broken)
@@ -49,7 +60,7 @@ struct MusicServicesSettingsSection: View {
     var body: some View {
         // ─── NO CONNECTION REQUIRED ───
         VStack(alignment: .leading, spacing: 8) {
-            Text("Search Services (No Connection Required)")
+            Text(L10n.searchServicesHeader)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -65,7 +76,7 @@ struct MusicServicesSettingsSection: View {
             Toggle("Sonos Radio", isOn: $sonosRadioEnabled)
                 .font(.system(size: 12))
 
-            Text("These services use public APIs and do not require sign-in here.\n\nTuneIn and Calm Radio support direct browsing and playback with no setup.\n\nApple Music uses the public iTunes API — no connection needed to search. For playback, Apple Music must be connected in the official Sonos app and you need one favorited song from Apple Music in your Sonos Favorites. This allows the app to discover your account credentials. Once that one favorited song exists, all search results become directly playable.\n\nSonos Radio supports search only — browsing categories requires DeviceLink authentication which is not currently supported.")
+            Text(L10n.searchServicesIntroBody)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -75,7 +86,7 @@ struct MusicServicesSettingsSection: View {
         // ─── CONNECTION REQUIRED (TESTED) ───
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Connected Services (Tested)")
+                Text(L10n.connectedServicesHeader)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -94,22 +105,28 @@ struct MusicServicesSettingsSection: View {
             if !smapiManager.authenticatedServiceList.isEmpty {
                 ForEach(smapiManager.authenticatedServiceList, id: \.id) { service in
                     HStack {
+                        // Plex streams from the user's own server and
+                        // doesn't use Sonos's sn= / favorites-discovery
+                        // pattern. Treat it as Active whenever the token
+                        // is present.
+                        let isActive = Self.servicesNotNeedingSN.contains(service.id)
+                            || smapiManager.serviceSerialNumbers[service.id] != nil
                         Circle()
-                            .fill(smapiManager.serviceSerialNumbers[service.id] != nil ? .green : .orange)
+                            .fill(isActive ? .green : .orange)
                             .frame(width: 6, height: 6)
                         Text(service.name)
                             .font(.system(size: 12))
-                        if smapiManager.serviceSerialNumbers[service.id] != nil {
-                            Text("Active")
+                        if isActive {
+                            Text(L10n.active)
                                 .font(.system(size: 9))
                                 .foregroundStyle(.green)
                         } else {
-                            Text("Needs Favorite")
+                            Text(L10n.needsFavorite)
                                 .font(.system(size: 9))
                                 .foregroundStyle(.orange)
                         }
                         Spacer()
-                        Button("Sign Out") {
+                        Button(L10n.signOut) {
                             smapiManager.signOut(serviceID: service.id)
                         }
                         .controlSize(.mini)
@@ -133,7 +150,7 @@ struct MusicServicesSettingsSection: View {
                         Text(service.name)
                             .font(.system(size: 12))
                         Spacer()
-                        Button("Connect") {
+                        Button(L10n.connect) {
                             connectService(service)
                         }
                         .controlSize(.mini)
@@ -142,7 +159,7 @@ struct MusicServicesSettingsSection: View {
                 }
             }
 
-            Text("Spotify has been tested and confirmed working. Connect your account, then add one favorited song through the Sonos app to enable full browsing and playback.")
+            Text(L10n.testedConnectedBody)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -151,11 +168,11 @@ struct MusicServicesSettingsSection: View {
         if smapiManager.isAuthenticating {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Waiting for \(smapiManager.authServiceName)...")
+                Text(L10n.waitingForService(smapiManager.authServiceName))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Cancel") {
+                Button(L10n.cancel) {
                     smapiManager.cancelAuth()
                 }
                 .controlSize(.mini)
@@ -177,7 +194,7 @@ struct MusicServicesSettingsSection: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                         .font(.system(size: 10))
-                    TextField("Search services...", text: $searchText)
+                    TextField(L10n.searchServicesPlaceholder, text: $searchText)
                         .textFieldStyle(.plain)
                         .font(.caption)
                     if !searchText.isEmpty {
@@ -201,7 +218,7 @@ struct MusicServicesSettingsSection: View {
                                 Text(service.name)
                                     .font(.caption)
                                 Spacer()
-                                Button("Connect") {
+                                Button(L10n.connect) {
                                     connectService(service)
                                 }
                                 .controlSize(.mini)
@@ -212,12 +229,12 @@ struct MusicServicesSettingsSection: View {
                 }
                 .frame(maxHeight: 150)
 
-                Text("These services have not been tested. They may work with AppLink authentication but results are not guaranteed. Amazon Music and YouTube Music require their own OAuth and cannot be connected here.")
+                Text(L10n.otherServicesBody)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
         } label: {
-            Text("Other Services (\(filteredServices.filter { !Self.testedAppLinkServices.contains($0.id) }.count) available)")
+            Text(L10n.otherServicesAvailable(filteredServices.filter { !Self.testedAppLinkServices.contains($0.id) }.count))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -226,7 +243,7 @@ struct MusicServicesSettingsSection: View {
 
         // ─── STATUS INFO ───
         VStack(alignment: .leading, spacing: 4) {
-            Text("Service Availability")
+            Text(L10n.serviceAvailability)
                 .font(.system(size: 11, weight: .semibold))
 
             Group {
@@ -270,7 +287,7 @@ struct MusicServicesHelpView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Music Services Setup Guide")
+                Text(L10n.musicServicesSetupGuide)
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button { dismiss() } label: {
@@ -288,35 +305,35 @@ struct MusicServicesHelpView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    setupStep(number: 1, title: "Enable or Connect", icon: "checkmark.circle",
-                              text: "Services that don't need a connection (TuneIn, Calm Radio, Apple Music Search) can be enabled with a checkbox. For Spotify, click Connect to sign in via your browser.")
+                    setupStep(number: 1, title: L10n.setupStep1Title, icon: "checkmark.circle",
+                              text: L10n.setupStep1Body)
 
-                    setupStep(number: 2, title: "Complete Authorization", icon: "checkmark.shield",
-                              text: "For connected services, sign in with your account in the browser. Once authorized, the service will appear in the Connected list.")
+                    setupStep(number: 2, title: L10n.setupStep2Title, icon: "checkmark.shield",
+                              text: L10n.setupStep2Body)
 
-                    setupStep(number: 3, title: "Add One Favorited Song", icon: "star",
-                              text: "For connected services only: using the official Sonos app on your phone, play a song from this service and add it to your Sonos Favorites. This links your account for playback.")
+                    setupStep(number: 3, title: L10n.setupStep3Title, icon: "star",
+                              text: L10n.setupStep3Body)
 
-                    setupStep(number: 4, title: "Browse and Play", icon: "play.circle",
-                              text: "Enabled services appear in the Browse panel under Service Search. You can browse, search, and play content directly.")
+                    setupStep(number: 4, title: L10n.setupStep4Title, icon: "play.circle",
+                              text: L10n.setupStep4Body)
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("Service Status", systemImage: "circle.grid.2x2")
+                        Label(L10n.serviceStatusLabel, systemImage: "circle.grid.2x2")
                             .font(.system(size: 12, weight: .semibold))
 
                         HStack(spacing: 6) {
                             Circle().fill(.green).frame(width: 8, height: 8)
-                            Text("Active — Connected and ready to play")
+                            Text(L10n.statusActiveLine)
                                 .font(.caption)
                         }
                         HStack(spacing: 6) {
                             Circle().fill(.orange).frame(width: 8, height: 8)
-                            Text("Needs Favorite — Connected but needs step 3")
+                            Text(L10n.statusNeedsFavoriteLine)
                                 .font(.caption)
                         }
                         HStack(spacing: 6) {
                             Circle().fill(.gray).frame(width: 8, height: 8)
-                            Text("Not connected — use Connect button")
+                            Text(L10n.statusNotConnectedLine)
                                 .font(.caption)
                         }
                     }
@@ -324,17 +341,17 @@ struct MusicServicesHelpView: View {
                     .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Why is step 3 needed?")
+                        Text(L10n.whyStep3Header)
                             .font(.system(size: 11, weight: .semibold))
-                        Text("Sonos uses an internal account identifier to authenticate streaming playback. This identifier is only created when content from a service is first used through the Sonos system. Adding one favorite through the official Sonos app creates this link.")
+                        Text(L10n.whyStep3Body)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Blocked Services")
+                        Text(L10n.blockedServicesHeader)
                             .font(.system(size: 11, weight: .semibold))
-                        Text("Amazon Music and YouTube Music require their own native OAuth systems which are not available to third-party apps.")
+                        Text(L10n.blockedServicesBody)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -342,7 +359,7 @@ struct MusicServicesHelpView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Apple Music")
                             .font(.system(size: 11, weight: .semibold))
-                        Text("Apple Music search works without connection using the public iTunes API. For playback, Apple Music must be connected in the official Sonos app, and you need one favorited song from Apple Music in your Sonos Favorites. This allows the app to discover your account credentials. Once that exists, all search results are directly playable.")
+                        Text(L10n.appleMusicNoteBody)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

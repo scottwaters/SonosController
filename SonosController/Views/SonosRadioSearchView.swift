@@ -24,7 +24,7 @@ struct SonosRadioSearchView: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                         .font(.caption)
-                    TextField("Search Sonos Radio...", text: $searchText)
+                    TextField(L10n.searchSonosRadioPlaceholder, text: $searchText)
                         .textFieldStyle(.plain)
                         .font(.callout)
                         .onSubmit { performSearch() }
@@ -33,7 +33,7 @@ struct SonosRadioSearchView: View {
                 .padding(.vertical, 5)
                 .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
 
-                Button("Search") { performSearch() }
+                Button(L10n.searchLabel) { performSearch() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(searchText.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -44,14 +44,14 @@ struct SonosRadioSearchView: View {
             Divider()
 
             if isLoading {
-                ProgressView("Searching...")
+                ProgressView(L10n.searching)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if items.isEmpty && hasSearched {
                 VStack(spacing: 8) {
                     Image(systemName: "antenna.radiowaves.left.and.right")
                         .font(.title)
                         .foregroundStyle(.secondary)
-                    Text("No results found")
+                    Text(L10n.noResultsFound)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -60,7 +60,7 @@ struct SonosRadioSearchView: View {
                     Image(systemName: "antenna.radiowaves.left.and.right")
                         .font(.title)
                         .foregroundStyle(.secondary)
-                    Text("Search for Sonos Radio stations")
+                    Text(L10n.searchSonosRadioEmpty)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -87,13 +87,13 @@ struct SonosRadioSearchView: View {
     @ViewBuilder
     private func contextMenu(for item: BrowseItem) -> some View {
         if let group, let uri = item.resourceURI, !uri.isEmpty, !item.isContainer {
-            Button("Play Now") {
+            Button(L10n.playNow) {
                 Task { try? await sonosManager.playBrowseItem(item, in: group) }
             }
-            Button("Play Next") {
+            Button(L10n.playNext) {
                 Task { try? await sonosManager.addBrowseItemToQueue(item, in: group, playNext: true) }
             }
-            Button("Add to Queue") {
+            Button(L10n.addToQueue) {
                 Task { try? await sonosManager.addBrowseItemToQueue(item, in: group) }
             }
         }

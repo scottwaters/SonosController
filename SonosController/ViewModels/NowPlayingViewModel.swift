@@ -457,12 +457,36 @@ final class NowPlayingViewModel {
         // Don't override manually chosen art
         if art.forceWebArt { return }
 
+        // Once we've resolved art for a track in this session (via any path
+        // — metadata, cached, iTunes search), don't keep re-searching on
+        // every poll. iTunes returns different top hits across calls for
+        // queries like "Air + The Virgin Suicides" (Redux vs Original
+        // Soundtrack), so repeated searches visibly flip the cover. Only
+        // explicit user actions (Search Artwork, Refresh Artwork, Ignore,
+        // Clear) invalidate this and allow another search.
+        if art.isArtResolved(for: metadata) { return }
+
         let hasArt = metadata.albumArtURI != nil && !(metadata.albumArtURI?.isEmpty ?? true)
         let isLocalFile = metadata.trackURI.map(URIPrefix.isLocal) ?? false
         let hasLocalOnlyArt = hasArt && (metadata.albumArtURI?.contains("/getaa?") ?? false)
-        // For service tracks with persistent art URLs, no search needed
+        // For service tracks with persistent art URLs, no search needed —
+        // pin the metadata URL as the canonical answer for this track.
         if hasArt && !hasLocalOnlyArt {
             art.clearWebArt()
+            if let artStr = metadata.albumArtURI, let url = URL(string: artStr) {
+                art.markArtResolved(for: metadata, url: url)
+            }
+            return
+        }
+        // For /getaa? fallbacks, check the persistent art cache for a
+        // previously-resolved URL before triggering iTunes. If we find one,
+        // pin and use it — no search needed.
+        if hasLocalOnlyArt,
+           let cached = sonosManager.lookupCachedArt(uri: metadata.trackURI, title: metadata.title),
+           let cachedURL = URL(string: cached) {
+            art.setWebArtResult(cachedURL)
+            art.markArtResolved(for: metadata, url: cachedURL)
+            art.updateDisplayedArt(trackMetadata: metadata, group: group)
             return
         }
         art.clearWebArt()
@@ -505,17 +529,18 @@ final class NowPlayingViewModel {
                 )
             }
 
-            if let artURL = foundArt {
+            if let artURL = foundArt, let url = URL(string: artURL) {
                 // Always update history and cache with the found art
                 art.playHistoryManager?.updateArtwork(
                     forTitle: metadata.title, artist: metadata.artist, artURL: artURL
                 )
                 sonosManager.cacheArtURL(artURL, forURI: metadata.trackURI ?? "", title: metadata.title, itemID: "")
-                // Only update display if current art is missing or /getaa (ephemeral)
-                if !hasLocalOnlyArt || art.forceWebArt {
-                    art.setWebArtResult(URL(string: artURL))
-                    art.updateDisplayedArt(trackMetadata: metadata, group: group)
-                }
+                art.setWebArtResult(url)
+                // Pin the resolved URL so every subsequent display call
+                // returns this exact URL for this track — no more iTunes
+                // reruns, no more alternation between candidate covers.
+                art.markArtResolved(for: metadata, url: url)
+                art.updateDisplayedArt(trackMetadata: metadata, group: group)
             } else {
                 if !hasLocalOnlyArt {
                     art.setWebArtResult(nil)

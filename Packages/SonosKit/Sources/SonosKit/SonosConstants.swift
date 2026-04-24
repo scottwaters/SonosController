@@ -238,6 +238,23 @@ public enum BrowseID {
     public static let smapiRoot = "root"
 }
 
+// MARK: - SMAPI BrowseItem objectID prefixes
+
+/// Prefix stamped onto `BrowseItem.objectID` values for SMAPI-sourced
+/// items and on navigation destinations (`BrowseDestination.objectID`).
+/// The lowercase form is written by `ServiceSearchProvider.smapiItemToBrowseItem`;
+/// the uppercase form is produced by UI navigation paths. Both need to be
+/// stripped before passing an id back to SMAPI via `getMetadata`.
+public enum SMAPIPrefix {
+    public static let lower = "smapi:"
+    public static let upper = "SMAPI:"
+    public static func strip(_ objectID: String, serviceID: Int) -> String {
+        objectID
+            .replacingOccurrences(of: "\(lower)\(serviceID):", with: "")
+            .replacingOccurrences(of: "\(upper)\(serviceID):", with: "")
+    }
+}
+
 // MARK: - Pagination Defaults
 
 public enum PageSize {

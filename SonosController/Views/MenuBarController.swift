@@ -166,7 +166,7 @@ struct MenuBarPlayerView: View {
                             .lineLimit(1)
                         }
 
-                        Text(trackMetadata.title.isEmpty ? "Not Playing" : trackMetadata.title)
+                        Text(trackMetadata.title.isEmpty ? L10n.notPlaying : trackMetadata.title)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.white)
                             .lineLimit(2)
@@ -321,7 +321,7 @@ struct MenuBarPlayerView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "macwindow")
                             .font(.system(size: 10))
-                        Text("Open SonosController")
+                        Text(L10n.openSonosController)
                             .font(.system(size: 11))
                     }
                     .frame(maxWidth: .infinity)

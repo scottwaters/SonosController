@@ -118,11 +118,11 @@ struct RoomListView: View {
     private func roomContextMenu(group: SonosGroup, isPlaying: Bool) -> some View {
         // Play / Pause
         if isPlaying {
-            Button("Pause") {
+            Button(L10n.pause) {
                 Task { await ErrorHandler.shared.handleAsync("PLAYBACK") { try await sonosManager.pause(group: group) } }
             }
         } else {
-            Button("Play") {
+            Button(L10n.play) {
                 Task { await ErrorHandler.shared.handleAsync("PLAYBACK") { try await sonosManager.play(group: group) } }
             }
         }
@@ -131,7 +131,7 @@ struct RoomListView: View {
 
         // Mute / Unmute
         let allMuted = group.members.allSatisfy { sonosManager.deviceMutes[$0.id] == true }
-        Button(allMuted ? "Unmute" : "Mute") {
+        Button(allMuted ? L10n.unmute : L10n.mute) {
             Task {
                 for member in group.members {
                     try? await sonosManager.setMute(device: member, muted: !allMuted) // fire-and-forget OK
@@ -142,12 +142,12 @@ struct RoomListView: View {
         Divider()
 
         // Grouping
-        Button("Edit Group...") {
+        Button(L10n.editGroupEllipsis) {
             showGroupEditorFor = group
         }
 
         if group.members.count > 1 {
-            Button("Ungroup All") {
+            Button(L10n.ungroupAll) {
                 Task {
                     for member in group.members where member.id != group.coordinatorID {
                         try? await sonosManager.ungroupDevice(member) // fire-and-forget OK
@@ -159,7 +159,7 @@ struct RoomListView: View {
         // Home Theater EQ (only for HT zones)
         if sonosManager.htSatChannelMaps[group.coordinatorID] != nil {
             Divider()
-            Button("Home Theater EQ...") {
+            Button(L10n.homeTheaterEQEllipsis) {
                 WindowManager.shared.openHomeTheaterEQ()
             }
         }

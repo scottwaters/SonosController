@@ -166,7 +166,7 @@ struct ColorSwatchGrid: View {
             }
             .buttonStyle(.plain)
             .frame(width: 16, height: 16)
-            .help("Change custom color")
+            .help(L10n.changeCustomColor)
         }
         .onAppear {
             if isCustomSelected {

@@ -182,16 +182,9 @@ Under `~/Library/Containers/com.sonoscontroller.app/Data/Library/Application Sup
 
 ---
 
-## Contributing
+## Issues
 
-Issues and PRs welcome at [github.com/scottwaters/SonosController](https://github.com/scottwaters/SonosController).
-
-Before opening a PR:
-
-1. `swift test` must pass in `Packages/SonosKit`.
-2. New public API in `SonosKit` should include a doc comment.
-3. Add or update unit tests when changing model logic, XML parsers, or classifiers.
-4. Respect the engineering principles in [docs/Core software engineering principles:.md](../docs/Core%20software%20engineering%20principles%3A.md) (if present in the repo root).
+Bug reports and feature requests welcome at [github.com/scottwaters/SonosController/issues](https://github.com/scottwaters/SonosController/issues). Pull requests are not accepted on this project — please open an issue and describe the change you'd like to see.
 
 ## License
 

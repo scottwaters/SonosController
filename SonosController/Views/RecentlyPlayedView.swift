@@ -17,7 +17,7 @@ struct RecentlyPlayedView: View {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.title)
                     .foregroundStyle(.secondary)
-                Text("No recently played tracks")
+                Text(L10n.noRecentlyPlayed)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

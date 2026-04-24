@@ -52,10 +52,10 @@ struct HomeTheaterEQView: View {
                     Image(systemName: "hifispeaker.and.homepodmini")
                         .font(.system(size: 40))
                         .foregroundStyle(.secondary)
-                    Text("No home theater zones found")
+                    Text(L10n.noHomeTheaterZones)
                         .font(.title3)
                         .foregroundStyle(.secondary)
-                    Text("Connect a Sub or Surround speakers to a Sonos soundbar using the Sonos app.")
+                    Text(L10n.homeTheaterConnectHelp)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
@@ -65,7 +65,7 @@ struct HomeTheaterEQView: View {
             } else {
                 // Zone picker
                 HStack {
-                    Text("Home Theater EQ")
+                    Text(L10n.homeTheaterEQTitle)
                         .font(.title3)
                         .fontWeight(.semibold)
 
@@ -92,9 +92,9 @@ struct HomeTheaterEQView: View {
 
                 // Tabs
                 Picker("", selection: $selectedTab) {
-                    Text("EQ").tag(0)
-                    if selectedZone?.hasSub == true { Text("Sub").tag(1) }
-                    if selectedZone?.hasSurrounds == true { Text("Surrounds").tag(2) }
+                    Text(L10n.eqTab).tag(0)
+                    if selectedZone?.hasSub == true { Text(L10n.subTab).tag(1) }
+                    if selectedZone?.hasSurrounds == true { Text(L10n.surroundsTab).tag(2) }
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 240)
@@ -127,19 +127,19 @@ struct HomeTheaterEQView: View {
 
     private var eqTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Adjust treble and bass to your taste.")
+            Text(L10n.homeTheaterTrebleBassHelp)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            sliderRow("Bass", value: $bass, range: -10...10) {
+            sliderRow(L10n.bass, value: $bass, range: -10...10) {
                 Task { guard let d = self.coordinator else { return }; try? await sonosManager.setEQ(device: d, eqType: "Bass", value: Int(bass)) }
             }
 
-            sliderRow("Treble", value: $treble, range: -10...10) {
+            sliderRow(L10n.treble, value: $treble, range: -10...10) {
                 Task { guard let d = self.coordinator else { return }; try? await sonosManager.setEQ(device: d, eqType: "Treble", value: Int(treble)) }
             }
 
-            Toggle("Loudness", isOn: $loudness)
+            Toggle(L10n.loudness, isOn: $loudness)
                 .onChange(of: loudness) {
                     guard let d = coordinator else { return }
                     Task { try? await sonosManager.setLoudness(device: d, enabled: loudness) }
@@ -147,13 +147,13 @@ struct HomeTheaterEQView: View {
 
             Divider()
 
-            Toggle("Night Mode", isOn: $nightMode)
+            Toggle(L10n.nightMode, isOn: $nightMode)
                 .onChange(of: nightMode) {
                     guard let d = coordinator else { return }
                     Task { guard let d = self.coordinator else { return }; try? await sonosManager.setEQ(device: d, eqType: "NightMode", value: nightMode ? 1 : 0) }
                 }
 
-            Toggle("Dialog Enhancement", isOn: $dialogLevel)
+            Toggle(L10n.dialogEnhancement, isOn: $dialogLevel)
                 .onChange(of: dialogLevel) {
                     guard let d = coordinator else { return }
                     Task { guard let d = self.coordinator else { return }; try? await sonosManager.setEQ(device: d, eqType: "DialogLevel", value: dialogLevel ? 1 : 0) }
@@ -163,7 +163,7 @@ struct HomeTheaterEQView: View {
 
             HStack {
                 Spacer()
-                Button("Reset") { Task { await resetEQ() } }
+                Button(L10n.reset) { Task { await resetEQ() } }
                     .controlSize(.small)
             }
         }
@@ -173,18 +173,18 @@ struct HomeTheaterEQView: View {
 
     private var subTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Toggle("Sub On", isOn: $subEnabled)
+            Toggle(L10n.subOn, isOn: $subEnabled)
                 .onChange(of: subEnabled) {
                     guard let d = coordinator else { return }
                     Task { guard let d = self.coordinator else { return }; try? await sonosManager.setEQ(device: d, eqType: "SubEnable", value: subEnabled ? 1 : 0) }
                 }
 
-            sliderRow("Sub Level", value: $subGain, range: -15...15) {
+            sliderRow(L10n.subLevel, value: $subGain, range: -15...15) {
                 Task { guard let d = self.coordinator else { return }; try? await sonosManager.setEQ(device: d, eqType: "SubGain", value: Int(subGain)) }
             }
             .disabled(!subEnabled)
 
-            Toggle("Placement Adjustment", isOn: $subPolarity)
+            Toggle(L10n.placementAdjustment, isOn: $subPolarity)
                 .onChange(of: subPolarity) {
                     guard let d = coordinator else { return }
                     Task { guard let d = self.coordinator else { return }; try? await sonosManager.setEQ(device: d, eqType: "SubPolarity", value: subPolarity ? 1 : 0) }
@@ -195,7 +195,7 @@ struct HomeTheaterEQView: View {
 
             HStack {
                 Spacer()
-                Button("Reset") { Task { await resetSub() } }
+                Button(L10n.reset) { Task { await resetSub() } }
                     .controlSize(.small)
             }
         }
@@ -205,30 +205,30 @@ struct HomeTheaterEQView: View {
 
     private var surroundsTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Toggle("Surrounds On", isOn: $surroundEnabled)
+            Toggle(L10n.surroundsOn, isOn: $surroundEnabled)
                 .onChange(of: surroundEnabled) {
                     guard let d = coordinator else { return }
                     Task { guard let d = self.coordinator else { return }; try? await sonosManager.setEQ(device: d, eqType: "SurroundEnable", value: surroundEnabled ? 1 : 0) }
                 }
 
             Group {
-                sliderRow("TV Level", value: $surroundLevel, range: -15...15) {
+                sliderRow(L10n.tvLevel, value: $surroundLevel, range: -15...15) {
                     Task { guard let d = self.coordinator else { return }; try? await sonosManager.setEQ(device: d, eqType: "SurroundLevel", value: Int(surroundLevel)) }
                 }
 
-                sliderRow("Music Level", value: $musicSurroundLevel, range: -15...15) {
+                sliderRow(L10n.musicLevel, value: $musicSurroundLevel, range: -15...15) {
                     Task { guard let d = self.coordinator else { return }; try? await sonosManager.setEQ(device: d, eqType: "MusicSurroundLevel", value: Int(musicSurroundLevel)) }
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Music Playback")
+                    Text(L10n.musicPlayback)
                         .font(.subheadline)
-                    Text("During music playback, the surround speakers can supplement with subtle, ambient sound or louder, full range sound.")
+                    Text(L10n.homeTheaterSurroundHelp)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Picker("", selection: $surroundMode) {
-                        Text("Full").tag(1)
-                        Text("Ambient").tag(0)
+                        Text(L10n.surroundModeFull).tag(1)
+                        Text(L10n.surroundModeAmbient).tag(0)
                     }
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 200)
@@ -244,7 +244,7 @@ struct HomeTheaterEQView: View {
 
             HStack {
                 Spacer()
-                Button("Reset") { Task { await resetSurrounds() } }
+                Button(L10n.reset) { Task { await resetSurrounds() } }
                     .controlSize(.small)
             }
         }

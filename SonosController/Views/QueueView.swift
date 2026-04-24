@@ -53,10 +53,10 @@ struct QueueView: View {
                 Task { await vm.loadQueue() }
             }
         }
-        .alert("Save as Playlist", isPresented: $showSavePlaylist) {
-            TextField("Playlist name", text: $newPlaylistName)
-            Button("Cancel", role: .cancel) { newPlaylistName = "" }
-            Button("Save") {
+        .alert(L10n.saveAsPlaylist, isPresented: $showSavePlaylist) {
+            TextField(L10n.playlistNamePlaceholder, text: $newPlaylistName)
+            Button(L10n.cancel, role: .cancel) { newPlaylistName = "" }
+            Button(L10n.save) {
                 let name = newPlaylistName.trimmingCharacters(in: .whitespaces)
                 guard !name.isEmpty else { return }
                 newPlaylistName = ""
@@ -99,14 +99,14 @@ struct QueueView: View {
                 Image(systemName: "shuffle").font(.caption)
             }
             .buttonStyle(.plain)
-            .tooltip("Shuffle Queue")
+            .tooltip(L10n.shuffleQueueTooltip)
             .disabled(vm.queueItems.count < 2)
 
             Button { showSavePlaylist = true } label: {
                 Image(systemName: "square.and.arrow.down").font(.caption)
             }
             .buttonStyle(.plain)
-            .tooltip("Save as Playlist")
+            .tooltip(L10n.saveAsPlaylist)
             .disabled(vm.queueItems.isEmpty)
 
             Button { Task { await vm.clearQueue() } } label: {
@@ -130,7 +130,7 @@ struct QueueView: View {
             // Full-screen spinner during a shuffle (user-initiated, brief).
             VStack(spacing: 8) {
                 ProgressView()
-                Text("Shuffling...")
+                Text(L10n.shufflingEllipsis)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -143,7 +143,7 @@ struct QueueView: View {
             // stays visible.
             VStack(spacing: 8) {
                 ProgressView()
-                Text(sonosManager.isAddingToQueue ? "Adding to queue…" : "Loading queue…")
+                Text(sonosManager.isAddingToQueue ? L10n.addingToQueueEllipsis : L10n.loadingQueueEllipsis)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -159,7 +159,7 @@ struct QueueView: View {
         VStack(spacing: 8) {
             Text(L10n.queueIsEmpty)
                 .foregroundStyle(.secondary)
-            Text("Drag tracks here to add")
+            Text(L10n.dragTracksHere)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

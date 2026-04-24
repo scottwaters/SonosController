@@ -34,17 +34,17 @@ struct ArtworkSearchView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Search Artwork")
+            Text(L10n.searchArtworkTitle)
                 .font(.system(size: 13, weight: .semibold))
 
             VStack(spacing: 8) {
-                searchField("Artist", text: $artist)
-                searchField("Title", text: $title)
-                searchField("Album", text: $album)
+                searchField(L10n.artistFieldLabel, text: $artist)
+                searchField(L10n.titleFieldLabel, text: $title)
+                searchField(L10n.albumFieldLabel, text: $album)
             }
 
             HStack {
-                Button("Search") {
+                Button(L10n.search) {
                     performSearch()
                 }
                 .controlSize(.small)
@@ -56,12 +56,12 @@ struct ArtworkSearchView: View {
                         .controlSize(.small)
                 }
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button(L10n.cancel) { dismiss() }
                     .controlSize(.small)
             }
 
             if hasSearched && results.isEmpty && !isSearching {
-                Text("No results found. Try different search terms.")
+                Text(L10n.artworkNoResults)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -70,7 +70,7 @@ struct ArtworkSearchView: View {
 
             if !results.isEmpty {
                 Divider()
-                Text("Select artwork (\(results.count) results):")
+                Text(L10n.selectArtworkHeader(results.count))
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -139,7 +139,7 @@ struct ArtworkSearchView: View {
                     .lineLimit(2)
 
                 HStack(spacing: 16) {
-                    Button("Use This Artwork") {
+                    Button(L10n.useThisArtwork) {
                         let url = result.artURL
                         selectedResult = nil
                         onSelect(url)
@@ -147,7 +147,7 @@ struct ArtworkSearchView: View {
                     .controlSize(.regular)
                     .keyboardShortcut(.return)
 
-                    Button("Cancel") {
+                    Button(L10n.cancel) {
                         selectedResult = nil
                     }
                     .controlSize(.regular)
