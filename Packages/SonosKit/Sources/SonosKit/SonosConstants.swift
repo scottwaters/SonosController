@@ -191,6 +191,21 @@ public enum UDKey {
     public static let appleMusicSearchEnabled = "appleMusicSearchEnabled"
     public static let sonosRadioEnabled = "sonosRadioEnabled"
     public static let ignoreTV = "ignoreTV"
+
+    // MARK: - Scrobbling (added v3.6)
+    /// Per-service enable toggle. Pattern: `scrobbling.<serviceID>.enabled`.
+    /// Example: `scrobbling.lastfm.enabled`.
+    public static func scrobblingEnabled(for serviceID: String) -> String {
+        "scrobbling.\(serviceID).enabled"
+    }
+    /// Comma-separated list of rooms (group-name substrings) the user wants
+    /// to scrobble. Empty = scrobble all rooms.
+    public static let scrobblingEnabledRooms = "scrobbling.enabledRooms"
+    /// Comma-separated list of music-service sources to scrobble (e.g.
+    /// "Sonos Radio,TuneIn,Local Library"). Empty = scrobble all.
+    public static let scrobblingEnabledMusicServices = "scrobbling.enabledMusicServices"
+    /// Auto-scrobble timer (5-min cadence) on/off. Default off.
+    public static let scrobblingAutoScrobble = "scrobbling.autoScrobble"
     public static let realtimeStats = "realtimeStats"
     public static let rollupInterval = "rollupInterval"
 }

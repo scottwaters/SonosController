@@ -14,7 +14,11 @@ public final class PlayHistoryManager: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: UDKey.playHistoryEnabled); objectWillChange.send() }
     }
 
-    private let repo: PlayHistoryRepository
+    /// Exposed so the scrobble subsystem can share the same SQLite connection
+    /// (reads the same `history` table, writes to the sibling `scrobble_log`
+    /// table added in v3.6). No other external reads should go through this —
+    /// use `entries` or the public manager methods.
+    public let repo: PlayHistoryRepository
     private var lastLoggedTrack: [String: String] = [:]
     private var reloadTask: Task<Void, Never>?
     private var rollupTimer: Timer?
