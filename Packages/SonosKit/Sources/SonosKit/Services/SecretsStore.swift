@@ -47,7 +47,8 @@ public final class SecretsStore {
 
     public func get(_ key: String) -> String? {
         ensureLoaded()
-        return cache[key]
+        if let value = cache[key] { return value }
+        return legacyFallbackValue(for: key)
     }
 
     public func set(_ key: String, _ value: String?) {
@@ -86,15 +87,50 @@ public final class SecretsStore {
         if let data = readKeychain(service: service, account: account),
            let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
             cache = decoded
-            return
         }
-        // Nothing at the new location — migrate anything we find in the
-        // legacy per-store services, then persist under the unified key.
-        cache = harvestLegacy()
-        if !cache.isEmpty {
-            persist()
-            purgeLegacy()
+        // No up-front legacy harvest. Running `SecItemCopyMatching` with
+        // `kSecReturnData` against the legacy service triggered a Keychain
+        // prompt for *every* item on every launch — user was being asked
+        // to approve 5+ times. Instead, `get(_:)` falls back to the
+        // legacy locations when a key isn't in the unified cache, and
+        // promotes the value on first successful read. That way:
+        //   - Unified store is still authoritative.
+        //   - Items we never read never get harvested, so no prompts.
+        //   - Items we do read migrate lazily with a single prompt each.
+    }
+
+    private static let legacyFallbackMap: [String: (service: String, account: String)] = [
+        "lastfm.apiKey":        ("com.sonoscontroller.app.lastfm", "lastfm.apiKey"),
+        "lastfm.sharedSecret":  ("com.sonoscontroller.app.lastfm", "lastfm.sharedSecret"),
+        "lastfm.sessionKey":    ("com.sonoscontroller.app.lastfm", "lastfm.sessionKey"),
+        "lastfm.username":      ("com.sonoscontroller.app.lastfm", "lastfm.username"),
+    ]
+
+    /// Lazy legacy fallback for keys not yet in the unified cache. Tries
+    /// the fixed legacy LastFM accounts first, then the pattern-based
+    /// SMAPI accounts (`smapi.token.<id>` → `smapi_token_<id>`). Returns
+    /// the legacy value if found and promotes it into the unified store
+    /// so future reads skip the legacy lookup.
+    private func legacyFallbackValue(for key: String) -> String? {
+        let fallback: (service: String, account: String)?
+        if let mapped = Self.legacyFallbackMap[key] {
+            fallback = mapped
+        } else if key.hasPrefix("smapi.") {
+            // "smapi.token.12" → account "smapi_token_12"
+            let underscored = key.replacingOccurrences(of: ".", with: "_")
+            fallback = (legacySMAPIService, underscored)
+        } else {
+            fallback = nil
         }
+        guard let fallback,
+              let data = readKeychain(service: fallback.service, account: fallback.account),
+              let value = String(data: data, encoding: .utf8), !value.isEmpty else {
+            return nil
+        }
+        // Promote to unified store so next read is free.
+        cache[key] = value
+        persist()
+        return value
     }
 
     private func persist() {
@@ -103,56 +139,6 @@ public final class SecretsStore {
             return
         }
         writeKeychain(service: service, account: account, data: data)
-    }
-
-    // MARK: - Legacy migration
-
-    /// Best-effort pull of pre-v3.6 keychain items. Each legacy account
-    /// name becomes a namespaced key in the unified dictionary.
-    private func harvestLegacy() -> [String: String] {
-        var result: [String: String] = [:]
-
-        // LastFM: four fixed accounts.
-        for legacy in ["lastfm.apiKey", "lastfm.sharedSecret",
-                       "lastfm.sessionKey", "lastfm.username"] {
-            if let data = readKeychain(service: legacyLastFMService, account: legacy),
-               let value = String(data: data, encoding: .utf8) {
-                result[legacy] = value
-            }
-        }
-
-        // SMAPI: unknown number of per-service accounts, "smapi_token_<id>"
-        // and "smapi_key_<id>". Enumerate every item under that service.
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: legacySMAPIService,
-            kSecReturnAttributes as String: true,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-        var items: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &items)
-        if status == errSecSuccess, let array = items as? [[String: Any]] {
-            for entry in array {
-                guard let account = entry[kSecAttrAccount as String] as? String,
-                      let data = entry[kSecValueData as String] as? Data,
-                      let value = String(data: data, encoding: .utf8) else { continue }
-                // "smapi_token_12" → "smapi.token.12"; keeps names readable
-                // while living alongside the LastFM keys.
-                let key = account.replacingOccurrences(of: "_", with: ".")
-                result[key] = value
-            }
-        }
-
-        if !result.isEmpty {
-            sonosDebugLog("[SECRETS] Migrated \(result.count) legacy keychain items")
-        }
-        return result
-    }
-
-    private func purgeLegacy() {
-        deleteAllKeychainItems(service: legacyLastFMService)
-        deleteAllKeychainItems(service: legacySMAPIService)
     }
 
     // MARK: - Keychain primitives
@@ -196,11 +182,4 @@ public final class SecretsStore {
         SecItemDelete(query as CFDictionary)
     }
 
-    private func deleteAllKeychainItems(service: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-        ]
-        SecItemDelete(query as CFDictionary)
-    }
 }

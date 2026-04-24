@@ -2,8 +2,8 @@
 ///
 /// Rendered in a dedicated auxiliary window (see WindowManager.openHelp).
 /// Uses a two-column layout: topic list on the left, content on the right.
-/// Topic titles are localized via L10n; body paragraphs remain in English
-/// in this release to keep scope reasonable.
+/// Both topic titles and body content are localized via L10n; see
+/// SonosKit/Localization/L10n.swift for the translation dictionary.
 import SwiftUI
 import SonosKit
 
@@ -47,133 +47,133 @@ struct HelpView: View {
 
     private var gettingStarted: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("Welcome")
-            paragraph("SonosController is a native macOS controller for Sonos speakers. All control happens locally over your network — no cloud account is required.")
-            heading("First launch")
+            heading(L10n.helpWelcome)
+            paragraph(L10n.helpWelcomeBody)
+            heading(L10n.helpFirstLaunch)
             bulletedList([
-                "Speakers on your local network are discovered automatically via SSDP.",
-                "The sidebar lists every room, grouped by system (S2 modern, S1 legacy).",
-                "Select a room to show its Now Playing view.",
-                "Use the toolbar to show the music browser and play queue."
+                L10n.helpBulletDiscovery,
+                L10n.helpBulletSidebarRooms,
+                L10n.helpBulletSelectRoom,
+                L10n.helpBulletToolbar
             ])
-            heading("No speakers found?")
-            paragraph("Make sure the Mac is on the same Wi-Fi network as the speakers. When the app asks for permission to access devices on the local network, grant it — discovery will not work otherwise.")
+            heading(L10n.helpNoSpeakersFound)
+            paragraph(L10n.helpNoSpeakersFoundBody)
         }
     }
 
     private var playback: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("Controlling playback")
-            paragraph("Select a room in the sidebar. The Now Playing view shows the current track, transport controls, and volume for the selected group.")
+            heading(L10n.helpControllingPlayback)
+            paragraph(L10n.helpControllingPlaybackBody)
             bulletedList([
-                "Space bar toggles play and pause while the Now Playing view has focus.",
-                "The Controls menu provides Play/Pause, Next, Previous, and Mute with standard keyboard shortcuts.",
-                "Right-click a room for quick Play/Pause, Mute, and grouping actions.",
-                "Right-click the track title to star the track so it appears in Starred history."
+                L10n.helpBulletSpaceBar,
+                L10n.helpBulletControlsMenu,
+                L10n.helpBulletRightClickRoom,
+                L10n.helpBulletStarTrack
             ])
-            heading("Volume")
-            paragraph("The volume slider below the track adjusts the coordinator. When the group contains multiple speakers, enabling Proportional Group Volume in Settings keeps the relative volumes of each speaker intact when you drag the slider.")
-            heading("Transport state")
-            paragraph("SonosController uses UPnP event subscriptions for near-instant state updates. If your network drops events, the app falls back to periodic polling automatically.")
+            heading(L10n.helpVolumeHeading)
+            paragraph(L10n.helpVolumeBody)
+            heading(L10n.helpTransportState)
+            paragraph(L10n.helpTransportStateBody)
         }
     }
 
     private var grouping: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("Grouping speakers")
-            paragraph("A group has one coordinator and zero or more members. All members play whatever the coordinator plays, in sync.")
+            heading(L10n.helpGroupingSpeakers)
+            paragraph(L10n.helpGroupingSpeakersBody)
             bulletedList([
-                "Right-click a room → Edit Group… to assemble or disband a group with checkboxes.",
-                "Right-click a grouped room → Ungroup All to split all members back into single-room groups.",
-                "Save a frequently used arrangement as a Preset from the speaker menu in the toolbar."
+                L10n.helpBulletEditGroup,
+                L10n.helpBulletUngroupAll,
+                L10n.helpBulletPreset
             ])
-            heading("Home Theater sets")
-            paragraph("Speakers paired as home-theater satellites or subwoofers are hidden from the sidebar as individual rows. Right-click the home-theater room and choose Home Theater EQ… to tune channel levels.")
+            heading(L10n.helpHomeTheaterSets)
+            paragraph(L10n.helpHomeTheaterSetsBody)
         }
     }
 
     private var browsing: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("Browsing music")
-            paragraph("Click the music-library button in the toolbar, or press ⌘B, to open the browser panel.")
+            heading(L10n.helpBrowsingMusicSection)
+            paragraph(L10n.helpBrowsingMusicBody)
             bulletedList([
-                "Sonos Favorites and Sonos Playlists appear at the top.",
-                "The music library browses any indexed shares on the speaker.",
-                "Enabled music services (set in Settings → Services) show as additional sections.",
-                "Search across enabled services with the search field; results are cached so the back button returns to prior search results."
+                L10n.helpBulletFavorites,
+                L10n.helpBulletLibrary,
+                L10n.helpBulletServicesSection,
+                L10n.helpBulletSearch
             ])
-            heading("Adding to the queue")
-            paragraph("Drag an item from the browser into the Play Queue panel (⌥⌘U) to enqueue, or click it to play immediately.")
+            heading(L10n.helpAddingToQueue)
+            paragraph(L10n.helpAddingToQueueBody)
         }
     }
 
     private var systems: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("Sonos S1 and S2 systems")
-            paragraph("Sonos speakers are split across two platforms. Legacy S1 speakers and modern S2 speakers cannot join the same household, but both can coexist on the same network.")
+            heading(L10n.helpSystemsSection)
+            paragraph(L10n.helpSystemsBody)
             bulletedList([
-                "If both systems are present, the sidebar shows an S2 section and an S1 section separated by a horizontal divider.",
-                "When only one system is present, no section headers are shown.",
-                "Each speaker self-identifies its platform via its UPnP device description; classification does not require any cloud service."
+                L10n.helpBulletBothSystems,
+                L10n.helpBulletOneSystem,
+                L10n.helpBulletUPnPIdent
             ])
-            heading("Independence")
-            paragraph("S1 and S2 groups cannot be merged across platforms. This is a Sonos constraint, not an app limitation. Each system has its own queue, its own presets, and its own favorites.")
+            heading(L10n.helpIndependence)
+            paragraph(L10n.helpIndependenceBody)
         }
     }
 
     private var preferences: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("Preferences")
-            paragraph("Open SonosController → Settings… (⌘,) to configure the app.")
+            heading(L10n.helpPreferencesSection)
+            paragraph(L10n.helpPreferencesBody)
             bulletedList([
-                "Appearance: system, light, or dark.",
-                "Menu bar: enable a compact now-playing menu bar extra for quick control without the main window.",
-                "Communication mode: event-driven (default, efficient) or legacy polling (compatibility fallback).",
-                "Quick Start: shows cached speakers instantly on launch while live discovery runs in the background.",
-                "Music services: toggle Apple Music, TuneIn, Calm Radio, Sonos Radio and other service search sources."
+                L10n.helpBulletAppearance,
+                L10n.helpBulletMenuBar,
+                L10n.helpBulletCommunication,
+                L10n.helpBulletQuickStart,
+                L10n.helpBulletMusicServices
             ])
-            heading("Listening stats")
-            paragraph("Enable play history in Settings to record tracks played over time. The Listening Stats window (⇧⌘S) shows top tracks, stations, albums, listening streaks, and starred tracks.")
+            heading(L10n.helpListeningStatsSection)
+            paragraph(L10n.helpListeningStatsBody)
         }
     }
 
     private var shortcuts: some View {
         VStack(alignment: .leading, spacing: 14) {
-            heading("Keyboard shortcuts")
-            shortcutGroup(title: "Playback", items: [
-                ("Play / Pause", "⌘P"),
-                ("Play / Pause (Now Playing focus)", "Space"),
-                ("Next track", "⌘→"),
-                ("Previous track", "⌘←"),
-                ("Mute / Unmute", "⌥⌘↓")
+            heading(L10n.helpShortcutsHeading)
+            shortcutGroup(title: L10n.helpShortcutGroupPlayback, items: [
+                (L10n.playPause, "\u{2318}P"),
+                (L10n.helpPlayPauseFocus, "Space"),
+                (L10n.nextTrack, "\u{2318}\u{2192}"),
+                (L10n.previousTrack, "\u{2318}\u{2190}"),
+                (L10n.muteUnmute, "\u{2325}\u{2318}\u{2193}")
             ])
-            shortcutGroup(title: "View", items: [
-                ("Toggle Browse Library", "⌘B"),
-                ("Toggle Play Queue", "⌥⌘U"),
-                ("Listening Stats", "⇧⌘S"),
-                ("Enter Full Screen", "⌃⌘F")
+            shortcutGroup(title: L10n.helpShortcutGroupView, items: [
+                (L10n.toggleBrowseLibrary, "\u{2318}B"),
+                (L10n.togglePlayQueue, "\u{2325}\u{2318}U"),
+                (L10n.listeningStats, "\u{21E7}\u{2318}S"),
+                (L10n.helpEnterFullScreen, "\u{2303}\u{2318}F")
             ])
-            shortcutGroup(title: "App", items: [
-                ("Settings", "⌘,"),
-                ("Help", "⌘?"),
-                ("Hide SonosController", "⌘H"),
-                ("Quit SonosController", "⌘Q")
+            shortcutGroup(title: L10n.helpShortcutGroupApp, items: [
+                (L10n.settings, "\u{2318},"),
+                (L10n.helpShortcutsHelp, "\u{2318}?"),
+                (L10n.helpHideApp, "\u{2318}H"),
+                (L10n.helpQuitApp, "\u{2318}Q")
             ])
         }
     }
 
     private var about: some View {
         VStack(alignment: .leading, spacing: 12) {
-            heading("About SonosController")
-            paragraph("SonosController is a third-party controller for Sonos speakers. It is not affiliated with or endorsed by Sonos, Inc.")
-            paragraph("All control uses local UPnP over your home network. No data leaves your network and no cloud account is required. Music service authentication (when enabled) uses the standard Sonos SMAPI flow.")
-            heading("Source code and issues")
+            heading(L10n.helpAboutSection)
+            paragraph(L10n.helpAboutBody1)
+            paragraph(L10n.helpAboutBody2)
+            heading(L10n.helpSourceCodeAndIssues)
             if let url = AppLinks.repositoryURL {
                 Link("github.com/scottwaters/SonosController", destination: url)
                     .font(.body)
             }
-            heading("License")
-            paragraph("Trademarks belong to their respective owners. Sonos is a registered trademark of Sonos, Inc.")
+            heading(L10n.helpLicense)
+            paragraph(L10n.helpLicenseBody)
         }
     }
 
@@ -196,7 +196,7 @@ struct HelpView: View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(items, id: \.self) { item in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("•").font(.body).foregroundStyle(.secondary)
+                    Text("\u{2022}").font(.body).foregroundStyle(.secondary)
                     Text(item).font(.body).fixedSize(horizontal: false, vertical: true)
                 }
             }

@@ -24,6 +24,12 @@ public struct SMAPIMediaItem {
 }
 
 public final class SMAPIClient {
+    /// Shared instance. There's no per-call state — a single `SMAPIClient`
+    /// safely serves every caller (ServiceSearchProvider, SMAPIAuthManager,
+    /// BrowseViewModel, ad-hoc callers). Using one keeps the `URLSession`
+    /// connection pool warm instead of creating a fresh session per call.
+    public static let shared = SMAPIClient()
+
     private let session: URLSession
 
     public init() {
@@ -72,7 +78,18 @@ public final class SMAPIClient {
 
     // MARK: - AppLink Authentication
 
-    public func getAppLink(serviceURI: String, householdID: String, deviceID: String) async throws -> (regUrl: String, linkCode: String) {
+    /// Result of a getAppLink call. Some services (e.g. Plex) mint a
+    /// session-scoped `linkDeviceId` during getAppLink and then reject
+    /// getDeviceAuthToken unless that exact value is echoed back — the
+    /// speaker's RINCON device id will not do. Spotify ignores this
+    /// field so using the speaker id happened to work.
+    public struct AppLinkResult {
+        public let regUrl: String
+        public let linkCode: String
+        public let linkDeviceId: String?
+    }
+
+    public func getAppLink(serviceURI: String, householdID: String, deviceID: String) async throws -> AppLinkResult {
         let body = """
         <?xml version="1.0" encoding="utf-8"?>
         <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
@@ -94,12 +111,24 @@ public final class SMAPIClient {
             action: "http://www.sonos.com/Services/1.1#getAppLink",
             body: body
         )
-        let regUrl = extractValue(from: result, tag: "regUrl") ?? ""
-        let linkCode = extractValue(from: result, tag: "linkCode") ?? ""
-        return (regUrl, linkCode)
+        return AppLinkResult(
+            regUrl: extractValue(from: result, tag: "regUrl") ?? "",
+            linkCode: extractValue(from: result, tag: "linkCode") ?? "",
+            linkDeviceId: extractValue(from: result, tag: "linkDeviceId")
+        )
     }
 
-    public func getDeviceAuthToken(serviceURI: String, householdID: String, deviceID: String, linkCode: String) async throws -> (authToken: String, privateKey: String)? {
+    /// Polls for auth completion. `linkDeviceId` must be the value the
+    /// service returned from `getAppLink`; fall back to the speaker's
+    /// `deviceID` for services (like Spotify) that don't mint their own.
+    public func getDeviceAuthToken(
+        serviceURI: String,
+        householdID: String,
+        deviceID: String,
+        linkCode: String,
+        linkDeviceId: String? = nil
+    ) async throws -> (authToken: String, privateKey: String)? {
+        let effectiveLinkDeviceId = linkDeviceId ?? deviceID
         let body = """
         <?xml version="1.0" encoding="utf-8"?>
         <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
@@ -114,21 +143,31 @@ public final class SMAPIClient {
         <s:getDeviceAuthToken>
         <s:householdId>\(householdID)</s:householdId>
         <s:linkCode>\(linkCode)</s:linkCode>
-        <s:linkDeviceId>\(deviceID)</s:linkDeviceId>
+        <s:linkDeviceId>\(effectiveLinkDeviceId)</s:linkDeviceId>
         </s:getDeviceAuthToken>
         </soap:Body></soap:Envelope>
         """
-        let result = try await soapCall(
-            url: serviceURI,
-            action: "http://www.sonos.com/Services/1.1#getDeviceAuthToken",
-            body: body
-        )
-        // Check for "not linked yet" fault
-        if result.contains("NOT_LINKED_RETRY") { return nil }
-        let token = extractValue(from: result, tag: "authToken") ?? ""
-        let key = extractValue(from: result, tag: "privateKey") ?? ""
-        if token.isEmpty { return nil }
-        return (token, key)
+        do {
+            let result = try await soapCall(
+                url: serviceURI,
+                action: "http://www.sonos.com/Services/1.1#getDeviceAuthToken",
+                body: body
+            )
+            // Spotify's "still waiting" signal.
+            if result.contains("NOT_LINKED_RETRY") { return nil }
+            let token = extractValue(from: result, tag: "authToken") ?? ""
+            let key = extractValue(from: result, tag: "privateKey") ?? ""
+            if token.isEmpty { return nil }
+            return (token, key)
+        } catch {
+            // Plex's "still waiting" signal is a SOAP fault
+            // (`Server.ServiceUnknownError` / `Unexpected error.`) rather
+            // than the Spotify-style token code. Treat any SOAP-layer
+            // error here as "not linked yet" and let the caller keep
+            // polling; real network failures will recur and eventually
+            // time out at the outer 5-minute loop.
+            return nil
+        }
     }
 
     // MARK: - Authenticated SMAPI Calls

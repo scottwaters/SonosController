@@ -50,4 +50,31 @@ public enum AppLanguage: String, CaseIterable {
         case .chineseSimplified: return "Chinese (Simplified)"
         }
     }
+
+    /// Resolves the user's macOS preferred language to a supported
+    /// `AppLanguage`. Walks `Locale.preferredLanguages` in order and returns
+    /// the first match; falls back to English. Called once on first launch
+    /// so the initial picker selection matches the machine's own setting.
+    public static var systemDefault: AppLanguage {
+        for preferred in Locale.preferredLanguages {
+            let tag = preferred.lowercased()
+            // Simplified Chinese: "zh-Hans", "zh-CN", "zh-SG", "zh-Hans-*".
+            if tag.hasPrefix("zh") {
+                if tag.contains("hans") || tag.contains("cn") || tag.contains("sg") {
+                    return .chineseSimplified
+                }
+                // zh-Hant / zh-TW / zh-HK have no supported match — try next.
+                continue
+            }
+            // Norwegian variants: "nb", "nn", "no".
+            if tag.hasPrefix("nb") || tag.hasPrefix("nn") || tag.hasPrefix("no") {
+                return .norwegian
+            }
+            let primary = String(tag.prefix(2))
+            if let match = AppLanguage(rawValue: primary) {
+                return match
+            }
+        }
+        return .english
+    }
 }

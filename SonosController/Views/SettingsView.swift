@@ -31,10 +31,10 @@ struct SettingsView: View {
 
             // Tab picker
             Picker("", selection: $selectedTab) {
-                Label("Display", systemImage: "paintbrush").tag(0)
-                Label("Music", systemImage: "music.note").tag(1)
+                Label(L10n.displayTab, systemImage: "paintbrush").tag(0)
+                Label(L10n.musicTab, systemImage: "music.note").tag(1)
                 Label(L10n.scrobbling, systemImage: "waveform").tag(3)
-                Label("System", systemImage: "gearshape").tag(2)
+                Label(L10n.systemTab, systemImage: "gearshape").tag(2)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 24)
@@ -125,13 +125,13 @@ private struct TabContentView: View {
 
                 Divider()
 
-                Toggle("Menu Bar Controls", isOn: Binding(
+                Toggle(L10n.menuBarControls, isOn: Binding(
                     get: { MenuBarController.shared.isEnabled },
                     set: { MenuBarController.shared.isEnabled = $0 }
                 ))
 
                 infoToggle(isExpanded: $showAppearanceInfo, label: L10n.aboutAppearance,
-                           text: LocalizedStringKey(L10n.appearanceInfo))
+                           text: L10n.appearanceInfo)
             }
         }
     }
@@ -144,22 +144,22 @@ private struct TabContentView: View {
     private var musicTab: some View {
         Group {
             // ─── PLAYBACK ───
-            settingsSection("Playback") {
-                Toggle("Classic Shuffle Mode", isOn: Binding(
+            settingsSection(L10n.playbackSection) {
+                Toggle(L10n.classicShuffleMode, isOn: Binding(
                     get: { UserDefaults.standard.bool(forKey: UDKey.classicShuffleEnabled) },
                     set: { UserDefaults.standard.set($0, forKey: UDKey.classicShuffleEnabled) }
                 ))
-                Text("When enabled, the shuffle button on the player uses Sonos play mode shuffle. When disabled (default), use the queue shuffle button to physically reorder tracks.")
+                Text(L10n.classicShuffleHelp)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
 
                 Divider().padding(.vertical, 4)
 
-                Toggle("Proportional Group Volume", isOn: Binding(
+                Toggle(L10n.proportionalGroupVolume, isOn: Binding(
                     get: { UserDefaults.standard.bool(forKey: UDKey.proportionalGroupVolume) },
                     set: { UserDefaults.standard.set($0, forKey: UDKey.proportionalGroupVolume) }
                 ))
-                Text("Controls how the master volume slider adjusts individual speakers in a group.\n\nProportional (on): Speakers scale relative to each other, preserving the balance between them. If one speaker is 10% louder, it stays 10% louder at any master level.\n\nLinear (off): All speakers move by the same amount. The volume gap between speakers shrinks as you approach maximum.")
+                Text(L10n.proportionalVolumeHelp)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -171,7 +171,7 @@ private struct TabContentView: View {
                     set: { playHistoryManager.isEnabled = $0 }
                 ))
 
-                Toggle("Ignore TV / HDMI / Line-In", isOn: Binding(
+                Toggle(L10n.ignoreTVHDMILineIn, isOn: Binding(
                     get: { UserDefaults.standard.bool(forKey: UDKey.ignoreTV) },
                     set: { UserDefaults.standard.set($0, forKey: UDKey.ignoreTV) }
                 ))
@@ -179,7 +179,7 @@ private struct TabContentView: View {
 
                 Divider().padding(.vertical, 4)
 
-                Toggle("Realtime Dashboard Summaries", isOn: Binding(
+                Toggle(L10n.realtimeDashboardSummaries, isOn: Binding(
                     get: { UserDefaults.standard.bool(forKey: UDKey.realtimeStats) },
                     set: { newValue in
                         UserDefaults.standard.set(newValue, forKey: UDKey.realtimeStats)
@@ -199,7 +199,7 @@ private struct TabContentView: View {
                     if isRebuildingSummaries {
                         HStack(spacing: 4) {
                             ProgressView().controlSize(.mini)
-                            Text("Building summaries...")
+                            Text(L10n.buildingSummaries)
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                         }
@@ -212,12 +212,12 @@ private struct TabContentView: View {
                         )) {
                             Text("30 min").tag(30)
                             Text("1 hour").tag(60)
-                            Text("Manual only").tag(0)
+                            Text(L10n.manualOnly).tag(0)
                         }
                         .frame(maxWidth: 140)
                     }
 
-                    Button("Rebuild All Summaries") {
+                    Button(L10n.rebuildAllSummaries) {
                         isRebuildingSummaries = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             playHistoryManager.rebuildAllSummaries()
@@ -228,12 +228,12 @@ private struct TabContentView: View {
                     .disabled(isRebuildingSummaries)
 
                     if let lastRollup = playHistoryManager.lastRollupDate {
-                        Text("Last updated: \(lastRollup.formatted(date: .omitted, time: .shortened))")
+                        Text(L10n.lastUpdatedFormat(lastRollup.formatted(date: .omitted, time: .shortened)))
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
 
-                    Text("Pre-computes daily statistics in the background for faster dashboard loading. Recommended when history exceeds 10,000 entries.")
+                    Text(L10n.dailySummariesHelp)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -262,7 +262,7 @@ private struct TabContentView: View {
                     .disabled(playHistoryManager.entries.isEmpty)
                 }
             }
-            .alert("Clear Play History?", isPresented: $showClearHistoryConfirm) {
+            .alert(L10n.clearPlayHistoryPrompt, isPresented: $showClearHistoryConfirm) {
                 Button(L10n.cancel, role: .cancel) {}
                 Button(L10n.clearHistory, role: .destructive) {
                     playHistoryManager.clearHistory()
@@ -270,7 +270,7 @@ private struct TabContentView: View {
             }
 
             // ─── MUSIC SERVICES ───
-            settingsSection("Music Services (Beta)") {
+            settingsSection(L10n.musicServicesBeta) {
                 MusicServicesSettingsSection()
                     .environmentObject(smapiManager)
             }
@@ -323,7 +323,7 @@ private struct TabContentView: View {
                 }
 
                 infoToggle(isExpanded: $showNetworkInfo, label: L10n.aboutNetwork,
-                           text: "**Event-Driven** — Real-time UPnP subscriptions. Lower traffic, faster response.\n\n**Legacy Polling** — Queries every 2 seconds. More predictable on problematic networks.\n\n**Quick Start** — Instant UI from cache, verified in background.\n\n**Classic** — Waits for live discovery. Always accurate.")
+                           text: L10n.aboutNetworkBody)
             }
 
             // ─── CACHE ───
@@ -337,7 +337,7 @@ private struct TabContentView: View {
                             .font(.caption)
                     }
                     Spacer()
-                    Text("\(ImageCache.shared.diskUsageString) artwork · \(ImageCache.shared.fileCount) images")
+                    Text(L10n.artworkImagesSummary(ImageCache.shared.diskUsageString, ImageCache.shared.fileCount))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -365,7 +365,7 @@ private struct TabContentView: View {
                             Text("30 days").tag(30)
                             Text("90 days").tag(90)
                             Text("1 year").tag(365)
-                            Text("Never").tag(99999)
+                            Text(L10n.never_).tag(99999)
                         }
                         .frame(width: 100)
                     }
@@ -377,24 +377,24 @@ private struct TabContentView: View {
                     Button(L10n.clearArtworkCache) { showClearArtworkCacheConfirm = true }
                         .controlSize(.small)
                 }
-                .alert("Clear Speaker Cache?", isPresented: $showClearSpeakerCacheConfirm) {
+                .alert(L10n.clearSpeakerCachePrompt, isPresented: $showClearSpeakerCacheConfirm) {
                     Button(L10n.cancel, role: .cancel) {}
                     Button(L10n.clearSpeakerCache, role: .destructive) { sonosManager.clearCache() }
                 } message: {
-                    Text("This will remove the cached speaker layout. The app will rediscover speakers on next launch.")
+                    Text(L10n.rescanCacheHelp)
                 }
-                .alert("Clear Artwork Cache?", isPresented: $showClearArtworkCacheConfirm) {
+                .alert(L10n.clearArtworkCachePrompt, isPresented: $showClearArtworkCacheConfirm) {
                     Button(L10n.cancel, role: .cancel) {}
                     Button(L10n.clearArtworkCache, role: .destructive) {
                         ImageCache.shared.clearDisk()
                         ImageCache.shared.clearMemory()
                     }
                 } message: {
-                    Text("This will remove all cached album art (\(ImageCache.shared.diskUsageString)). Images will be re-downloaded as needed.")
+                    Text(L10n.clearArtCacheHelp)
                 }
 
                 infoToggle(isExpanded: $showCacheInfo, label: L10n.aboutCache,
-                           text: "Speaker cache stores your room layout for instant startup. Artwork cache stores album art for faster browsing. Both rebuild automatically when cleared.")
+                           text: L10n.aboutCacheBody)
             }
         }
     }
@@ -416,7 +416,7 @@ private struct TabContentView: View {
         }
     }
 
-    private func infoToggle(isExpanded: Binding<Bool>, label: String, text: LocalizedStringKey) -> some View {
+    private func infoToggle(isExpanded: Binding<Bool>, label: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { isExpanded.wrappedValue.toggle() }

@@ -2,7 +2,7 @@
 
 A native macOS controller for Sonos speakers. Built entirely in Swift and SwiftUI. Ships as a universal binary with native support for both Apple Silicon and Intel Macs.
 
-> **Looking for internals?** See [technical_readme.md](technical_readme.md) for architecture, protocols, build instructions, and contributor notes.
+> **Looking for internals?** See [technical_readme.md](technical_readme.md) for architecture, protocols, and build instructions.
 
 ![SonosController — Now Playing with Browse and Queue](screenshots/v3/mainview_browse_search_queue.png)
 
@@ -17,6 +17,27 @@ This project was built from scratch by a Sonos fan who wanted to keep controllin
 Tested against a live Sonos system with 16 speakers across 10 zones, a large local music library (45,000+ tracks), and multiple streaming services (Apple Music, Spotify, TuneIn, Calm Radio, Sonos Radio).
 
 ---
+
+## Installing on macOS
+
+1. From the [latest release](https://github.com/scottwaters/SonosController/releases/latest), download `SonosController.zip` and double-click to unzip.
+2. Drag `SonosController.app` into `/Applications`.
+3. Double-click to launch.
+
+The build is signed with a Developer ID and notarized by Apple, so it launches cleanly with no Gatekeeper warning. On first launch macOS will ask for permission to access devices on your local network — grant it, or speaker discovery will not work.
+
+---
+
+## What's New in v3.7
+
+- **Opens on first double-click** — signed and notarized by Apple. No Gatekeeper warnings, no right-click workaround.
+- **Plex works** — sign in once, your library shows up alongside the other services. Music streams straight from your own Plex server.
+- **Spotify fixed** — if v3.6 lost your Spotify connection, v3.7 detects it and prompts you to reconnect once. Keychain prompts per new build are way down.
+- **No more album-art flicker** — covers no longer flash between variants when tracks or stations change.
+- **Pick your language on first launch** — the welcome dialog has a language picker, pre-selected to match your Mac. Full app, Help, and stats dashboard now translate into all 13 supported languages.
+- **Stability** — fixed a startup crash that could hit users running in non-English locales.
+
+For the full change list see [CHANGELOG.md](CHANGELOG.md).
 
 ## What's New in v3.6
 
@@ -200,10 +221,7 @@ Settings are organised into four tabs:
 
 ## Installation
 
-1. Go to [Releases](../../releases) and download the latest `SonosController.zip`.
-2. Unzip and drag `SonosController.app` to your Applications folder.
-3. **First launch:** right-click the app and click *Open*, then click *Open* in the dialog (required once because the app is not notarized).
-4. macOS will ask to allow local-network access — click Allow.
+See [Installing on macOS](#installing-on-macos) above — one short list, signed and notarized, opens cleanly on first launch.
 
 Building from source? See [technical_readme.md](technical_readme.md#building-from-source).
 

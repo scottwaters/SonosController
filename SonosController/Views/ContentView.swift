@@ -313,10 +313,10 @@ struct ContentView: View {
                     .disabled(selectedGroupID == nil)
 
                     Menu {
-                        Button("Pause All") {
+                        Button(L10n.pauseAll) {
                             Task { await sonosManager.pauseAll() }
                         }
-                        Button("Resume All") {
+                        Button(L10n.resumeAll) {
                             Task { await sonosManager.resumeAll() }
                         }
                         Divider()
@@ -353,7 +353,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "chart.bar.xaxis")
                     }
-                    .help("Listening Stats")
+                    .help(L10n.listeningStats)
 
                     Button {
                         sonosManager.rescan()

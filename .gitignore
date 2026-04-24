@@ -26,3 +26,9 @@ Packages/SonosKit/.build/
 
 # Cache
 topology_cache.json
+
+# Local-only TODO (cross-release notes, not for GitHub)
+docs/TODO.md
+
+# Local-only experimental view (not part of shipped v3.7)
+SonosController/Views/ForFunView.swift

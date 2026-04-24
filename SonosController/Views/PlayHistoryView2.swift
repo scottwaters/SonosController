@@ -21,6 +21,7 @@ struct PlayHistoryView2: View {
     private var groupedByDay: [(String, [PlayHistoryEntry])] {
         let calendar = Calendar.current
         let formatter = DateFormatter()
+        formatter.locale = L10n.currentLocale
         formatter.doesRelativeDateFormatting = true
         formatter.dateStyle = .full
         formatter.timeStyle = .none
@@ -207,31 +208,31 @@ struct PlayHistoryView2: View {
             Button {
                 onStar?(entry)
             } label: {
-                Label(entry.starred ? "Unstar" : "Star", systemImage: entry.starred ? "star.fill" : "star")
+                Label(entry.starred ? L10n.unstarVerb : L10n.starVerb, systemImage: entry.starred ? "star.fill" : "star")
             }
             Divider()
-            Button("Copy Track Details") {
+            Button(L10n.copyTrackDetails) {
                 var lines: [String] = []
-                if !entry.stationName.isEmpty { lines.append("Station: \(entry.stationName)") }
-                if !entry.artist.isEmpty { lines.append("Artist: \(entry.artist)") }
-                if !entry.album.isEmpty { lines.append("Album: \(entry.album)") }
-                if !entry.title.isEmpty { lines.append("Track: \(entry.title)") }
+                if !entry.stationName.isEmpty { lines.append("\(L10n.station): \(entry.stationName)") }
+                if !entry.artist.isEmpty { lines.append("\(L10n.artistFieldLabel): \(entry.artist)") }
+                if !entry.album.isEmpty { lines.append("\(L10n.albumFieldLabel): \(entry.album)") }
+                if !entry.title.isEmpty { lines.append("\(L10n.track): \(entry.title)") }
                 copyToClipboard(lines.joined(separator: "\n"))
             }
             if !entry.title.isEmpty {
-                Button("Copy Title") { copyToClipboard(entry.title) }
+                Button(L10n.copyTitle) { copyToClipboard(entry.title) }
             }
             if !entry.artist.isEmpty {
-                Button("Copy Artist") { copyToClipboard(entry.artist) }
+                Button(L10n.copyArtist) { copyToClipboard(entry.artist) }
             }
             Divider()
             if !entry.artist.isEmpty {
-                Button("Filter by \"\(entry.artist)\"") { onFilter?(.search(entry.artist)) }
+                Button(L10n.filterByArtist(entry.artist)) { onFilter?(.search(entry.artist)) }
             }
             if !entry.groupName.isEmpty {
-                Button("Filter by Room: \(entry.groupName)") { onFilter?(.room(entry.groupName)) }
+                Button(L10n.filterByRoom(entry.groupName)) { onFilter?(.room(entry.groupName)) }
             }
-            Button("Filter by Source: \(source)") { onFilter?(.source(source)) }
+            Button(L10n.filterBySource(source)) { onFilter?(.source(source)) }
         }
     }
 
@@ -242,10 +243,10 @@ struct PlayHistoryView2: View {
             Image(systemName: "waveform.path")
                 .font(.system(size: 44, weight: .thin))
                 .foregroundStyle(.tertiary)
-            Text("No listening history")
+            Text(L10n.noListeningHistory)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.secondary)
-            Text("Tracks will appear here as you listen")
+            Text(L10n.historyTracksAppear)
                 .font(.system(size: 12))
                 .foregroundStyle(.tertiary)
         }

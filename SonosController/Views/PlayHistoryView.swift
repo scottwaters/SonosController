@@ -31,6 +31,17 @@ struct PlayHistoryView: View {
         case month = "This Month"
         case quarter = "3 Months"
         case custom = "Custom Range"
+
+        var displayName: String {
+            switch self {
+            case .all:    return L10n.allTime
+            case .today:  return L10n.today
+            case .week:   return L10n.thisWeek
+            case .month:  return L10n.thisMonth
+            case .quarter: return L10n.threeMonths
+            case .custom: return L10n.customRange
+            }
+        }
     }
 
     private var hasActiveFilter: Bool {
@@ -101,7 +112,7 @@ struct PlayHistoryView: View {
             HStack(spacing: 6) {
                 Image(systemName: "info.circle")
                     .font(.system(size: 10))
-                Text("Listening activity is tracked across all speakers and zones while SonosController is running.")
+                Text(L10n.historyIntroBody)
                     .font(.system(size: 11))
                 Spacer()
             }
@@ -118,8 +129,8 @@ struct PlayHistoryView: View {
 
             // Tab picker
             Picker("", selection: $selectedTab) {
-                Text("Dashboard").tag(1)
-                Text("History").tag(0)
+                Text(L10n.dashboard).tag(1)
+                Text(L10n.historyTab).tag(0)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
@@ -179,7 +190,7 @@ struct PlayHistoryView: View {
                 refreshFilteredEntries()
             }
         } message: {
-            Text("This will permanently remove the \(cachedFilteredEntries.count) entries matching your current filters.")
+            Text(L10n.deleteFilteredWarning(cachedFilteredEntries.count))
         }
         .alert("Clear Play History?", isPresented: $showClearConfirm) {
             Button(L10n.cancel, role: .cancel) {}
@@ -187,7 +198,7 @@ struct PlayHistoryView: View {
                 historyManager.clearHistory()
             }
         } message: {
-            Text("This will permanently remove all \(historyManager.totalEntries) entries.")
+            Text(L10n.deleteAllWarning(historyManager.totalEntries))
         }
         .onDisappear {
             NSColorPanel.shared.close()
@@ -230,7 +241,7 @@ struct PlayHistoryView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                     .font(.system(size: 11))
-                TextField("Search tracks, artists, albums...", text: $searchText)
+                TextField(L10n.searchTracksPlaceholder, text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                 if !searchText.isEmpty {
@@ -252,7 +263,7 @@ struct PlayHistoryView: View {
             // Date range
             Picker("", selection: $filterDateRange) {
                 ForEach(DateRange.allCases, id: \.self) { range in
-                    Text(range.rawValue).tag(range)
+                    Text(range.displayName).tag(range)
                 }
             }
             .fixedSize()
@@ -272,7 +283,7 @@ struct PlayHistoryView: View {
 
             // Room
             Picker("", selection: $filterRoom) {
-                Label("All Rooms", systemImage: "hifispeaker.2").tag(String?.none)
+                Label(L10n.allRooms, systemImage: "hifispeaker.2").tag(String?.none)
                 Divider()
                 ForEach(historyManager.uniqueRooms, id: \.self) { room in
                     Text(room).tag(Optional(room))
@@ -282,7 +293,7 @@ struct PlayHistoryView: View {
 
             // Source
             Picker("", selection: $filterSource) {
-                Label("All Sources", systemImage: "dot.radiowaves.left.and.right").tag(String?.none)
+                Label(L10n.allSources, systemImage: "dot.radiowaves.left.and.right").tag(String?.none)
                 Divider()
                 ForEach(uniqueSources, id: \.self) { source in
                     HStack {
@@ -328,7 +339,7 @@ struct PlayHistoryView: View {
         if hasActiveFilters {
             HStack(spacing: 6) {
                 if filterDateRange != .all {
-                    filterChip(label: filterDateRange.rawValue, icon: "calendar") {
+                    filterChip(label: filterDateRange.displayName, icon: "calendar") {
                         withAnimation { filterDateRange = .all }
                     }
                 }
@@ -343,7 +354,7 @@ struct PlayHistoryView: View {
                     }
                 }
                 if filterStarred {
-                    filterChip(label: "Starred", icon: "star.fill", color: .yellow) {
+                    filterChip(label: L10n.statStarred, icon: "star.fill", color: .yellow) {
                         withAnimation { filterStarred = false; refreshFilteredEntries() }
                     }
                 }

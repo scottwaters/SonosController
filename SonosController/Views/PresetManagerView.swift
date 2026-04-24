@@ -45,15 +45,15 @@ struct PresetManagerView: View {
             get: { deleteConfirmPreset != nil },
             set: { if !$0 { deleteConfirmPreset = nil } }
         )) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
+            Button(L10n.cancel, role: .cancel) {}
+            Button(L10n.delete, role: .destructive) {
                 if let preset = deleteConfirmPreset {
                     presetManager.deletePreset(id: preset.id)
                     showStatus("Deleted \"\(preset.name)\"")
                 }
             }
         } message: {
-            Text("Are you sure you want to delete \"\(deleteConfirmPreset?.name ?? "")\"?")
+            Text(L10n.confirmDeleteItem(deleteConfirmPreset?.name ?? ""))
         }
         .onAppear {
             if selectedSaveGroupID == nil {
@@ -86,7 +86,7 @@ struct PresetManagerView: View {
 
     private var saveSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Save current group configuration")
+            Text(L10n.presetSaveHelp)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -98,11 +98,11 @@ struct PresetManagerView: View {
                 }
                 .frame(maxWidth: 180)
 
-                TextField("Preset name", text: $newPresetName)
+                TextField(L10n.presetName, text: $newPresetName)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 180)
 
-                Toggle("Include EQ", isOn: $includeEQ)
+                Toggle(L10n.includeEQ, isOn: $includeEQ)
                     .toggleStyle(.checkbox)
                     .font(.caption)
 
@@ -110,7 +110,7 @@ struct PresetManagerView: View {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    Button("Save") { saveCurrentAsPreset() }
+                    Button(L10n.save) { saveCurrentAsPreset() }
                         .disabled(newPresetName.trimmingCharacters(in: .whitespaces).isEmpty || saveGroup == nil)
                 }
             }
@@ -129,7 +129,7 @@ struct PresetManagerView: View {
             Text(L10n.noPresets)
                 .font(.title3)
                 .foregroundStyle(.secondary)
-            Text("Set up your speakers, adjust volumes and EQ, then save as a preset.")
+            Text(L10n.presetSetupHint)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -215,7 +215,7 @@ struct PresetManagerView: View {
                         showStatus("Applied \"\(preset.name)\"")
                     }
                 } label: {
-                    Text("Apply")
+                    Text(L10n.apply)
                         .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.borderedProminent)
@@ -363,12 +363,12 @@ private struct PresetEditView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Edit Preset")
+                Text(L10n.editPreset)
                     .font(.title3)
                     .fontWeight(.semibold)
                 Spacer()
                 Button(L10n.cancel) { dismiss() }
-                Button("Save") {
+                Button(L10n.save) {
                     presetManager.updatePreset(preset)
                     dismiss()
                 }
@@ -387,15 +387,15 @@ private struct PresetEditView: View {
                     // Section 1: Name & Coordinator
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("Name")
+                            Text(L10n.name)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .frame(width: 80, alignment: .leading)
-                            TextField("Preset name", text: $preset.name)
+                            TextField(L10n.presetName, text: $preset.name)
                                 .textFieldStyle(.roundedBorder)
                         }
                         HStack {
-                            Text("Coordinator")
+                            Text(L10n.coordinatorLabel)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .frame(width: 80, alignment: .leading)
@@ -413,7 +413,7 @@ private struct PresetEditView: View {
 
                     // Section 2: Speakers & Volumes
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Speakers & Volumes")
+                        Text(L10n.speakersAndVolumes)
                             .font(.subheadline)
                             .fontWeight(.medium)
 
@@ -440,7 +440,7 @@ private struct PresetEditView: View {
             // Footer with EQ toggle
             Divider()
             HStack {
-                Toggle("Include EQ Settings", isOn: $preset.includesEQ)
+                Toggle(L10n.includeEQSettings, isOn: $preset.includesEQ)
                     .toggleStyle(.checkbox)
                     .font(.subheadline)
                     .onChange(of: preset.includesEQ) {
@@ -470,7 +470,7 @@ private struct PresetEditView: View {
                                 Image(systemName: "arrow.down.circle")
                                     .font(.caption)
                             }
-                            Text("Load Current EQ")
+                            Text(L10n.loadCurrentEQ)
                                 .font(.caption)
                         }
                     }
@@ -512,7 +512,7 @@ private struct PresetEditView: View {
                 Text(device.roomName)
                     .font(.system(size: 13))
                 if device.id == preset.coordinatorDeviceID {
-                    Text("Lead")
+                    Text(L10n.lead)
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
@@ -543,7 +543,7 @@ private struct PresetEditView: View {
 
     private var eqSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Speaker EQ")
+            Text(L10n.speakerEQ)
                 .font(.subheadline)
                 .fontWeight(.medium)
 
@@ -584,7 +584,7 @@ private struct PresetEditView: View {
                         set: { preset.members[idx].eq?.treble = Int(round($0)) }
                     ), range: -10...10)
 
-                    Toggle("Loudness", isOn: Binding(
+                    Toggle(L10n.loudness, isOn: Binding(
                         get: { preset.members[safe: idx]?.eq?.loudness ?? true },
                         set: { preset.members[idx].eq?.loudness = $0 }
                     ))
@@ -619,7 +619,7 @@ private struct PresetEditView: View {
 
     private var homeTheaterSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Home Theater EQ")
+            Text(L10n.homeTheaterEQSection)
                 .font(.subheadline)
                 .fontWeight(.medium)
 
@@ -627,10 +627,10 @@ private struct PresetEditView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     // Toggles row
                     HStack(spacing: 24) {
-                        Toggle("Night Mode", isOn: binding(for: \.nightMode))
+                        Toggle(L10n.nightMode, isOn: binding(for: \.nightMode))
                             .toggleStyle(.checkbox)
                             .font(.system(size: 13))
-                        Toggle("Dialog Enhancement", isOn: binding(for: \.dialogLevel))
+                        Toggle(L10n.dialogEnhancement, isOn: binding(for: \.dialogLevel))
                             .toggleStyle(.checkbox)
                             .font(.system(size: 13))
                     }
@@ -638,7 +638,7 @@ private struct PresetEditView: View {
                     // Sub
                     if htZone?.hasSub == true {
                         Divider()
-                        Toggle("Sub", isOn: binding(for: \.subEnabled))
+                        Toggle(L10n.subTab, isOn: binding(for: \.subEnabled))
                             .toggleStyle(.checkbox)
                             .font(.system(size: 13))
 
@@ -652,7 +652,7 @@ private struct PresetEditView: View {
                     // Surrounds
                     if htZone?.hasSurrounds == true {
                         Divider()
-                        Toggle("Surrounds", isOn: binding(for: \.surroundEnabled))
+                        Toggle(L10n.surroundsTab, isOn: binding(for: \.surroundEnabled))
                             .toggleStyle(.checkbox)
                             .font(.system(size: 13))
 
@@ -671,12 +671,12 @@ private struct PresetEditView: View {
                         .disabled(!surroundsOn)
 
                         HStack(spacing: 10) {
-                            Text("Playback")
+                            Text(L10n.playbackLabel)
                                 .font(.system(size: 13))
                                 .frame(width: 70, alignment: .leading)
                             Picker("", selection: binding(for: \.surroundMode)) {
-                                Text("Full").tag(1)
-                                Text("Ambient").tag(0)
+                                Text(L10n.surroundModeFull).tag(1)
+                                Text(L10n.surroundModeAmbient).tag(0)
                             }
                             .pickerStyle(.segmented)
                             .frame(maxWidth: 180)

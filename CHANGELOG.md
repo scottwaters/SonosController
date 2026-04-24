@@ -1,5 +1,116 @@
 # Changelog
 
+## v3.7 — 2026-04-25
+
+Signed + notarized distribution, Plex promoted to a tested service,
+Spotify Keychain recovery, album-art single-source-of-truth, a first-run
+language picker with system-locale detection, and a localization sweep
+over every remaining English-only surface.
+
+### Distribution
+- **Developer ID + Notarization** — release `.zip` is signed with an Apple
+  Developer ID and notarized by Apple. First launch is clean on any Mac.
+- **Installing on macOS** — README section simplified from a multi-step
+  Gatekeeper workaround to 3 lines: download, drag, launch.
+
+### Plex integration
+- **Promoted to tested SMAPI service** — `MusicServicesView` now lists
+  Plex in `testedAppLinkServices`. `getAppLink` returns HTTP 200 with a
+  usable `regUrl` at `app.plex.tv/auth`, and playback DIDL built from the
+  `SA_RINCON<sid>_X_#Svc<sid>-0-Token` pattern is accepted.
+- **Session-minted `linkDeviceId`** — Plex's AppLink flow returns a
+  per-install device ID that must be echoed back in
+  `getDeviceAuthToken`; `AppLinkResult` now carries it and SOAP faults
+  from the poll endpoint are treated as "not linked yet" so polling
+  continues rather than aborting.
+- **Plex-specific URI overrides** — `serviceURIExtensions` adds `.mp3`
+  for Plex and `serviceFlagsOverrides` adds flags `8232`
+  (SMAPI-resolution) so `AddURIToQueue` / `SetAVTransportURI` don't hit
+  UPnP 714.
+- **Streams are direct from user's own Plex server** — no third-party
+  CDN, no short-lived signatures.
+- **Active/Needs Favorite** — `servicesNotNeedingSN` includes Plex
+  (self-hosted, no `sn=` required).
+
+### Spotify / Keychain
+- **Zombie token cleanup** — `SMAPITokenStore.load()` drops entries whose
+  Keychain data is missing (a side-effect of the v3.6 up-front migration
+  that promoted keys but dropped values on some setups). Token JSON is
+  rewritten so Spotify re-appears after one re-authorize.
+- **Lazy legacy fallback** — `SecretsStore` no longer runs an up-front
+  migration (which was `SecItemCopyMatching` with `kSecReturnData` on
+  every launch, triggering a prompt per credential). Instead on cache
+  miss it reads the legacy location and promotes the value to the
+  unified store. Prompt cascade per rebuild dropped from ~5 to 1.
+
+### Art resolver
+- **Single source of truth** — `ArtResolver.pinnedArtByTrackURI` is the
+  canonical pin map; `artURLForDisplay` checks the pin first.
+  `SonosManager` no longer substitutes cached art and
+  `PlayHistoryManager` no longer runs iTunes searches — both were
+  competing with the resolver and causing flicker between e.g. Redux vs
+  original album covers on the same track.
+- **User-action invalidation** via `invalidateArtResolution(for:)` so
+  manual overrides (Search Artwork dialog, Ignore Art) take immediate
+  effect.
+
+### Localization
+- **First-run language picker** — `FirstRunWelcomeView` now includes a
+  `Picker` bound to `sonosManager.appLanguage`. `AppLanguage.systemDefault`
+  walks `Locale.preferredLanguages` with per-variant handling for
+  Simplified Chinese (`zh-Hans` / `zh-CN` / `zh-SG`) and Norwegian (`nb`
+  / `nn` / `no`); falls back to English. `SonosManager.init` snapshots
+  the detected value to UserDefaults on first launch so subsequent macOS
+  locale changes don't silently override the user's choice.
+- **UI localization sweep** — ~165 new L10n keys covering every
+  right-click context menu, the Home Theater EQ tab, the alarm editor,
+  the preset editor, browse context menus + search placeholders, the
+  artwork search dialog, queue tooltips, the play-history row context
+  menu, the full Listening Stats dashboard (hero cards, quick-stat
+  pills, filter dropdowns, tabs, date ranges, search placeholder), the
+  menu-bar mini-player, and About / License / Source Code sections.
+- **Help body fully localized** — every heading / paragraph / bullet
+  across 8 topics × 13 languages. Independent audit pass applied
+  Apple-macOS-standard terminology:
+  - Preferences vs Settings title/body consistency for da, ja, zh-Hans.
+  - Sonos product conventions: French keeps "Home Theater" untranslated
+    (matches sonos.com/fr-fr); zh-Hans uses 音箱 (Sonos PRC) rather than
+    扬声器 (generic PA/loudspeaker); Swedish uses `sidofältet`
+    (sidebar) rather than `sidofliken` (side tab).
+  - Polish `Preset` for the Sonos preset concept, replacing the literal
+    `Ustawienie` (setting).
+  - Italian spelling (`proprietari` not `propietari`) and subject-verb
+    agreement (`apparirà` not `appariranno`).
+  - Dutch product-view name kept English (`Now Playing`) rather than
+    capitalized `Nu Speelt`.
+- **Date grouping respects app language** — new `L10n.currentLocale`
+  returns a `Locale` matching the app-language preference. Use this on
+  any `DateFormatter` / `NumberFormatter` instead of relying on the
+  system locale. `PlayHistoryView2` switched; the rest of the app
+  should migrate on next touch.
+- **Swift 6 dict-literal dup-key crash fix** — v3.6 shipped with two
+  `"never"` entries in the L10n translation dictionary; Swift 6 asserts
+  on dict-literal duplicates at first access, producing an EXC_BREAKPOINT
+  before the app draws a window. All latent duplicates removed:
+  `"never"`, `bass`, `treble`, `loudness`, `hour1`, `hours2`,
+  `ungroupAll`. The grep-based check
+  `grep -nE '^[[:space:]]+"[a-zA-Z][a-zA-Z0-9_]*":[[:space:]]*\[' L10n.swift | awk -F'"' '{print $2}' | sort | uniq -c | awk '$1 > 1 {print}'`
+  is now the recommended pre-commit gate.
+
+### Minor
+- **Plex browse timeout fix** — reverted an experimental
+  `BrowseListView(.id(...))` change that was forcing full re-fetch on
+  every back/forward navigation in the Plex drill-down. Drill-downs now
+  use the existing `navStack` + `itemsCache` path.
+- **SMAPI string constants** — new `SMAPIPrefix` enum + `strip(_:serviceID:)`
+  helper replaces scattered magic-string handling for the
+  `x-rincon-cpcontainer:` / `x-sonos-http:` / etc. URI prefixes.
+- **Spotify playlist play fix** — `playContainer` / `enqueueContainer`
+  now route through `playBrowseItem` / `addBrowseItemToQueue` for
+  `x-rincon-cpcontainer:` URIs, preferring the container resourceURI
+  instead of rebuilding DIDL from individual tracks (which was failing
+  on some Spotify playlists with speaker error).
+
 ## v3.6 — 2026-04-24
 
 Scrobbling, keychain consolidation, scroll-wheel volume, and a round of
@@ -72,7 +183,7 @@ correctness fixes around music-service filtering.
   Sonos SMAPI service) are gated on Sonos-identity authentication —
   confirmed by live probe of `getAppLink` against each. Third-party
   apps cannot drive these services. Scrobbling of listens via the
-  official Sonos app still works. See `docs/TODO.md` for details.
+  official Sonos app still works.
 
 ## v3.51 — 2026-04-23
 
@@ -157,9 +268,8 @@ while diagnosing it.
 
 ### Known limitations
 - Switching speakers while a multi-track batch add is in flight can leave
-  the queue panel targeting the wrong coordinator for its post-add reload —
-  tracked under the top High Priority item in `docs/TODO.md` for a proper
-  fix. Workaround: wait for the green "Add to Queue: N tracks" banner before
+  the queue panel targeting the wrong coordinator for its post-add reload.
+  Workaround: wait for the green "Add to Queue: N tracks" banner before
   switching rooms.
 
 ---

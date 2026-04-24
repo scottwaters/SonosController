@@ -207,7 +207,7 @@ struct NowPlayingView: View {
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
-                                .tooltip(isCurrentTrackStarred ? "Starred" : "Star this track")
+                                .tooltip(isCurrentTrackStarred ? L10n.statStarred : L10n.starThisTrack)
                             }
                         }
                     }
@@ -288,7 +288,7 @@ struct NowPlayingView: View {
                         transportButton("previous", icon: "backward.fill", size: .title2) {
                             performAction("previous") { try await sonosManager.previous(group: group) }
                         }
-                        .tooltip("Previous")
+                        .tooltip(L10n.previous)
                         // Queue playback supports next/prev regardless of any
                         // station metadata that might be piggybacked on the
                         // track (some service tracks carry a stationName value
@@ -306,7 +306,7 @@ struct NowPlayingView: View {
                                     size: .system(size: 44)) {
                         togglePlayPause()
                     }
-                    .tooltip(transportState.isPlaying ? "Pause" : "Play")
+                    .tooltip(transportState.isPlaying ? L10n.pause : L10n.play)
                     .keyboardShortcut(.space, modifiers: [])
 
                     // Right side: next + repeat + crossfade
@@ -314,7 +314,7 @@ struct NowPlayingView: View {
                         transportButton("next", icon: "forward.fill", size: .title2) {
                             performAction("next") { try await sonosManager.next(group: group) }
                         }
-                        .tooltip("Next")
+                        .tooltip(L10n.next)
                         // Queue playback supports next/prev regardless of any
                         // station metadata that might be piggybacked on the
                         // track (some service tracks carry a stationName value
@@ -334,7 +334,7 @@ struct NowPlayingView: View {
                                         tint: crossfadeOn ? (sonosManager.resolvedAccentColor ?? .accentColor) : .secondary) {
                             toggleCrossfade()
                         }
-                        .tooltip("Crossfade")
+                        .tooltip(L10n.crossfade)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -531,6 +531,9 @@ struct NowPlayingView: View {
                         vm.art.webArtURL = nil
                         vm.art.lastArtSearchKey = ""
                         vm.art.forceWebArt = false
+                        // Clearing is an explicit reset — let the next
+                        // metadata tick re-run the search for this track.
+                        vm.art.invalidateArtResolution(for: trackMetadata)
                         vm.art.updateDisplayedArt(trackMetadata: trackMetadata, group: group)
                     }
                 }

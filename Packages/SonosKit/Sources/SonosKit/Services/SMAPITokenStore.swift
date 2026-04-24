@@ -96,7 +96,26 @@ public final class SMAPITokenStore: ObservableObject {
     private func load() {
         guard let data = try? Data(contentsOf: fileURL),
               let decoded = try? JSONDecoder().decode([Int: SMAPIToken].self, from: data) else { return }
-        authenticatedServices = decoded
+
+        // Drop zombie entries: services whose metadata is on disk but whose
+        // token is no longer in Keychain (this happens when an earlier
+        // partial migration left the JSON side intact but purged the
+        // Keychain side — e.g., Spotify after the v3.6 prompt-cascade
+        // bug). Without this cleanup the service becomes invisible: it's
+        // filtered out of `authenticatedServiceList` because the token
+        // is empty, *and* it's filtered out of the "Connect" list
+        // because metadata still exists. Re-auth has no path.
+        let alive = decoded.filter { _, token in
+            guard let stored = secrets.get(tokenKey(token.serviceID)),
+                  !stored.isEmpty else { return false }
+            return true
+        }
+        authenticatedServices = alive
+        if alive.count != decoded.count {
+            // Persist the cleaned-up metadata so the user can see the
+            // service in the Connect list and re-authenticate.
+            save()
+        }
     }
 
 }

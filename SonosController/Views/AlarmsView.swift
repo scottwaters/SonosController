@@ -20,13 +20,13 @@ struct AlarmsView: View {
                     Image(systemName: "plus").font(.caption)
                 }
                 .buttonStyle(.plain)
-                .tooltip("New Alarm")
+                .tooltip(L10n.newAlarm)
 
                 Button { refresh() } label: {
                     Image(systemName: "arrow.clockwise").font(.caption)
                 }
                 .buttonStyle(.plain)
-                .tooltip("Refresh")
+                .tooltip(L10n.refresh)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -43,7 +43,7 @@ struct AlarmsView: View {
                         .foregroundStyle(.secondary)
                     Text(L10n.noAlarmsSet)
                         .foregroundStyle(.secondary)
-                    Button("Create Alarm") { startCreate() }
+                    Button(L10n.createAlarmButton) { startCreate() }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
@@ -57,7 +57,7 @@ struct AlarmsView: View {
                         .contentShape(Rectangle())
                         .onTapGesture { startEdit(alarm) }
                         .contextMenu {
-                            Button("Edit") { startEdit(alarm) }
+                            Button(L10n.edit) { startEdit(alarm) }
                             Divider()
                             Button(L10n.delete, role: .destructive) {
                                 deleteAlarm(alarm)
@@ -246,7 +246,7 @@ struct AlarmEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(isNew ? "New Alarm" : "Edit Alarm")
+                Text(isNew ? L10n.newAlarm : L10n.editAlarm)
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button { onCancel() } label: {
@@ -264,22 +264,22 @@ struct AlarmEditorView: View {
 
             ScrollView {
                 VStack(spacing: 20) {
-                    editorRow("Time") {
+                    editorRow(L10n.alarmTime) {
                         DatePicker("", selection: $selectedDate, displayedComponents: .hourAndMinute)
                             .labelsHidden()
                             .datePickerStyle(.field)
                             .frame(width: 100)
                     }
-                    editorRow("Repeat") {
+                    editorRow(L10n.alarmRepeat) {
                         Picker("", selection: $recurrence) {
-                            Text("Every Day").tag("DAILY")
-                            Text("Weekdays").tag("WEEKDAYS")
-                            Text("Weekends").tag("WEEKENDS")
-                            Text("Once").tag("ONCE")
+                            Text(L10n.everyDay).tag("DAILY")
+                            Text(L10n.weekdays).tag("WEEKDAYS")
+                            Text(L10n.weekends).tag("WEEKENDS")
+                            Text(L10n.onceLabel).tag("ONCE")
                         }
                         .labelsHidden().fixedSize()
                     }
-                    editorRow("Room") {
+                    editorRow(L10n.roomLabel) {
                         Picker("", selection: $selectedRoomID) {
                             ForEach(rooms, id: \.id) { room in
                                 Text(room.name).tag(room.id)
@@ -288,10 +288,10 @@ struct AlarmEditorView: View {
                         .labelsHidden().fixedSize()
                     }
                     editorRow("") {
-                        Toggle("Include grouped speakers", isOn: $includeLinked)
+                        Toggle(L10n.includeGroupedSpeakers, isOn: $includeLinked)
                             .toggleStyle(.checkbox)
                     }
-                    editorRow("Volume") {
+                    editorRow(L10n.volumeLabel) {
                         HStack(spacing: 8) {
                             Image(systemName: "speaker.fill").font(.caption).foregroundStyle(.secondary)
                             Slider(value: $volume, in: 0...100, step: 1).frame(maxWidth: 180)
@@ -301,13 +301,13 @@ struct AlarmEditorView: View {
                                 .frame(width: 28, alignment: .trailing)
                         }
                     }
-                    editorRow("Duration") {
+                    editorRow(L10n.durationLabel) {
                         Picker("", selection: $durationMinutes) {
-                            Text("15 min").tag(15)
-                            Text("30 min").tag(30)
-                            Text("1 hour").tag(60)
-                            Text("2 hours").tag(120)
-                            Text("3 hours").tag(180)
+                            Text(L10n.minutes15).tag(15)
+                            Text(L10n.minutes30).tag(30)
+                            Text(L10n.hour1).tag(60)
+                            Text(L10n.hours2).tag(120)
+                            Text(L10n.hours3).tag(180)
                         }
                         .labelsHidden().fixedSize()
                     }
@@ -318,9 +318,9 @@ struct AlarmEditorView: View {
             Divider()
 
             HStack {
-                Button("Cancel") { onCancel() }.keyboardShortcut(.cancelAction)
+                Button(L10n.cancel) { onCancel() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(isNew ? "Create Alarm" : "Save Changes") { save() }
+                Button(isNew ? L10n.createAlarmButton : L10n.saveChanges) { save() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
             }

@@ -143,28 +143,13 @@ public final class PlayHistoryManager: ObservableObject {
         repo.insert(entry)
         entries.append(entry)
 
-        // Search for track-specific art if missing or only has a generic station logo
-        let needsArt = artURI == nil || (metadata.isRadioStream && !metadata.stationName.isEmpty)
-        if needsArt && !entry.title.isEmpty && entry.title != metadata.stationName {
-            let title = entry.title
-            let artist = entry.artist
-            let isRadio = metadata.isRadioStream
-            Task {
-                let artURL: String?
-                if isRadio {
-                    artURL = await AlbumArtSearchService.shared.searchRadioTrackArt(
-                        artist: artist, title: AlbumArtSearchService.cleanTrackTitle(title)
-                    )
-                } else {
-                    artURL = await AlbumArtSearchService.shared.searchArtwork(
-                        artist: artist, album: entry.album.isEmpty ? title : entry.album
-                    )
-                }
-                if let artURL {
-                    updateArtwork(forTitle: title, artist: artist, artURL: artURL)
-                }
-            }
-        }
+        // Art backfill is handled by the app-side `ArtResolver` — the
+        // Now Playing view is the single place that runs iTunes lookups.
+        // When it finds art for a track, it calls `updateArtwork(forTitle:
+        // artist:artURL:)` to patch this entry. Running a second search
+        // from here produced a race against the NowPlaying-side search
+        // and let iTunes's non-deterministic top hit win intermittently,
+        // which flickered the UI.
     }
 
     /// Updates the album art URI for entries matching title+artist.

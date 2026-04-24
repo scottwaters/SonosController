@@ -21,6 +21,31 @@ final class ArtResolver {
     // MARK: - Dedup Keys
 
     var lastArtSearchKey = ""
+
+    /// Per-track-URI canonical art decisions.
+    ///
+    /// ArtResolver is the single source of truth for which URL the view
+    /// displays. Once we resolve a URL for a track URI, we pin it here
+    /// and return the same URL for every subsequent `artURLForDisplay`
+    /// call until the track URI changes or the user explicitly acts
+    /// (Search Artwork / Refresh / Ignore / Clear).
+    ///
+    /// Historically the pipeline had five places that could touch art
+    /// (SonosManager cache substitution, PlayHistoryManager iTunes search,
+    /// NowPlayingViewModel.searchWebArtIfNeeded, AVTransport /getaa?
+    /// fallback, ArtResolver.resolveArtURL). They raced, and the view
+    /// saw different URLs across adjacent polls — visible flicker
+    /// (Virgin Suicides Redux vs Original). This cache pins one answer.
+    ///
+    /// Keyed by `trackMetadata.trackURI` (or title|artist if URI is
+    /// missing). A nil value means "resolved to no art" so we don't
+    /// keep attempting to resolve.
+    private var pinnedArtByTrackURI: [String: URL?] = [:]
+
+    /// Back-compat shim for existing call sites. Backed by `pinnedArtByTrackURI`.
+    private var artResolvedTrackURIs: Set<String> {
+        Set(pinnedArtByTrackURI.keys)
+    }
     var lastTrackURI = ""
     var lastTrackTitle = ""
     var lastTrackArtist = ""
@@ -97,10 +122,21 @@ final class ArtResolver {
     }
 
     /// The art URL the view should show — accounts for ad breaks and ignore state.
+    ///
+    /// Canonical return value: once a track URI is pinned in
+    /// `pinnedArtByTrackURI`, this always returns that URL for that
+    /// track regardless of other state changes. User actions
+    /// (invalidateArtResolution) are the only way the answer changes.
     func artURLForDisplay(trackMetadata: TrackMetadata) -> URL? {
         if isArtIgnored { return nil }
         if trackMetadata.isAdBreak {
             return radioStationArtURL
+        }
+        if isArtResolved(for: trackMetadata) {
+            if let trackArt = radioTrackArtURL, !trackMetadata.stationName.isEmpty {
+                return trackArt
+            }
+            return pinnedURL(for: trackMetadata) ?? radioStationArtURL
         }
         if let trackArt = radioTrackArtURL, !trackMetadata.stationName.isEmpty {
             return trackArt
@@ -184,6 +220,8 @@ final class ArtResolver {
         webArtURL = nil
         forceWebArt = false
         displayedArtURL = nil
+        // Explicit user decision — the resolution is fixed now.
+        markArtResolved(for: trackMetadata)
     }
 
     /// Persists a manually chosen art URL and pre-caches the image
@@ -195,6 +233,7 @@ final class ArtResolver {
         isArtIgnored = false
         webArtURL = URL(string: artURL)
         forceWebArt = true
+        markArtResolved(for: trackMetadata)
         // Clear radio track art so it doesn't override the manual choice
         radioTrackArtURL = nil
         displayedArtURL = webArtURL
@@ -223,11 +262,56 @@ final class ArtResolver {
         !trackMetadata.stationName.isEmpty ? trackMetadata.stationName : ""
     }
 
+    /// Key used to track a single "resolved" art decision per track.
+    /// Falls back to title|artist when trackURI isn't populated (e.g.,
+    /// very-early metadata with only DIDL-parsed title/artist).
+    func artResolutionKey(trackMetadata: TrackMetadata) -> String {
+        if let uri = trackMetadata.trackURI, !uri.isEmpty { return uri }
+        return "\(trackMetadata.title)|\(trackMetadata.artist)"
+    }
+
+    /// True if the track's art has already been resolved this session and
+    /// automatic searches should be skipped.
+    func isArtResolved(for trackMetadata: TrackMetadata) -> Bool {
+        pinnedArtByTrackURI[artResolutionKey(trackMetadata: trackMetadata)] != nil
+    }
+
+    /// Pin the current art decision for this track. Called after any
+    /// art-source hop lands a real URL (iTunes search, manual override,
+    /// metadata URL, persistent cache hit).
+    func markArtResolved(for trackMetadata: TrackMetadata, url: URL? = nil) {
+        let key = artResolutionKey(trackMetadata: trackMetadata)
+        guard !key.isEmpty else { return }
+        // Use the explicitly-passed URL if provided, else whatever the
+        // current resolver state yields. Storing the URL (not just the
+        // fact of resolution) makes `artURLForDisplay` return a stable
+        // value regardless of transient state changes.
+        let resolved = url ?? displayedArtURL ?? webArtURL
+        pinnedArtByTrackURI[key] = resolved
+    }
+
+    /// Clear the "already resolved" flag for this track so the next
+    /// metadata change will re-run the search. Only called from explicit
+    /// user actions (Search Artwork, Refresh, Ignore, Clear).
+    func invalidateArtResolution(for trackMetadata: TrackMetadata) {
+        let key = artResolutionKey(trackMetadata: trackMetadata)
+        pinnedArtByTrackURI.removeValue(forKey: key)
+    }
+
+    /// Pinned URL for this track if one was resolved, else nil. Used by
+    /// `artURLForDisplay` to short-circuit the resolver chain once the
+    /// canonical answer is known.
+    func pinnedURL(for trackMetadata: TrackMetadata) -> URL? {
+        let key = artResolutionKey(trackMetadata: trackMetadata)
+        return pinnedArtByTrackURI[key] ?? nil
+    }
+
     func forceITunesArtSearch(trackMetadata: TrackMetadata, displayArtist: String, group: SonosGroup) {
         let artist = displayArtist
         let searchTerm = artOverrideKey(trackMetadata: trackMetadata)
         guard !searchTerm.isEmpty else { return }
         lastArtSearchKey = ""
+        invalidateArtResolution(for: trackMetadata)
         forceWebArt = false
         isArtIgnored = false
         Task {
