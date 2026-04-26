@@ -750,7 +750,17 @@ public class SonosManager: ObservableObject {
     }
     
     private func switchDiscoveryStrategy() async {
+        // Only on a change in discovery mode should we switch.
+        guard discovery.mode != discoveryMode else { return }
+        discovery.stopDiscovery()
+        // Create the new one, set the callback, and start search
         discovery = SonosManager.createDiscovery(for: discoveryMode)
+        discovery.onDeviceFound = { [weak self] location, ip, port in
+            Task { @MainActor [weak self] in
+                await self?.handleDiscoveredDevice(location: location, ip: ip, port: port)
+            }
+        }
+        discovery.startDiscovery()
     }
 
     private static func createDiscovery(for mode: DiscoveryMode) -> any SpeakerDiscovery {

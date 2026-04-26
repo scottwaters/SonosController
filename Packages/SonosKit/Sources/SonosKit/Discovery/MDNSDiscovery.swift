@@ -11,6 +11,7 @@ import Foundation
 import Network
 
 public final class MDNSDiscovery: SpeakerDiscovery, @unchecked Sendable {
+    public let mode: DiscoveryMode = .mdns
     private let serviceType = "_sonos._tcp"
 
     private var browser: NWBrowser?

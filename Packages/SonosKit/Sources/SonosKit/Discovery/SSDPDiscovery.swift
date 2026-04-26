@@ -7,6 +7,7 @@
 import Foundation
 
 public final class SSDPDiscovery: SpeakerDiscovery, @unchecked Sendable {
+    public let mode: DiscoveryMode = .ssdp
     // Standard SSDP multicast address and port (UPnP spec)
     private let multicastGroup = "239.255.255.250"
     private let multicastPort: UInt16 = 1900

@@ -9,6 +9,9 @@ public protocol SpeakerDiscovery: AnyObject, Sendable {
     /// Callback type: (locationURL, ipAddress, port)
     typealias DeviceFoundHandler = (String, String, Int) -> Void
 
+    /// The discovery mode this implementation represents.
+    var mode: DiscoveryMode { get }
+
     var onDeviceFound: DeviceFoundHandler? { get set }
 
     /// Begin listening for speakers.
