@@ -33,7 +33,6 @@
 		A10029 /* RecentlyPlayedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10029; };
 		A10030 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030; };
 		A10031 /* MusicServicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10031; };
-		A10050 /* ForFunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10050; };
 		A10060 /* PlexDirectBrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10060; };
 		A10061 /* LineInBrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10061; };
 		A10062 /* NowPlayingContextPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10062; };
@@ -85,7 +84,6 @@
 		B10029 /* RecentlyPlayedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentlyPlayedView.swift; sourceTree = "<group>"; };
 		B10030 /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		B10031 /* MusicServicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicServicesView.swift; sourceTree = "<group>"; };
-		B10050 /* ForFunView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForFunView.swift; sourceTree = "<group>"; };
 		B10060 /* PlexDirectBrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlexDirectBrowseView.swift; sourceTree = "<group>"; };
 		B10061 /* LineInBrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LineInBrowseView.swift; sourceTree = "<group>"; };
 		B10062 /* NowPlayingContextPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingContextPanel.swift; sourceTree = "<group>"; };
@@ -184,7 +182,6 @@
 				B10029 /* RecentlyPlayedView.swift */,
 				B10030 /* MenuBarController.swift */,
 				B10031 /* MusicServicesView.swift */,
-				B10050 /* ForFunView.swift */,
 				B10060 /* PlexDirectBrowseView.swift */,
 				B10061 /* LineInBrowseView.swift */,
 				B10062 /* NowPlayingContextPanel.swift */,
@@ -309,7 +306,6 @@
 				A10029 /* RecentlyPlayedView.swift in Sources */,
 				A10030 /* MenuBarController.swift in Sources */,
 				A10031 /* MusicServicesView.swift in Sources */,
-				A10050 /* ForFunView.swift in Sources */,
 				A10060 /* PlexDirectBrowseView.swift in Sources */,
 				A10061 /* LineInBrowseView.swift in Sources */,
 				A10062 /* NowPlayingContextPanel.swift in Sources */,

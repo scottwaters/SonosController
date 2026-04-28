@@ -169,10 +169,14 @@ struct ChoragusApp: App {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
 
-                Button(L10n.visualisations) {
-                    NotificationCenter.default.post(name: .menuShowForFun, object: nil)
-                }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
+                // Visualisations menu hidden until the feature is back —
+                // ForFunView is gitignored locally for now while the
+                // visualisations get reworked. Re-enable by restoring
+                // the file in project.pbxproj and re-adding this button.
+                // Button(L10n.visualisations) {
+                //     NotificationCenter.default.post(name: .menuShowForFun, object: nil)
+                // }
+                // .keyboardShortcut("f", modifiers: [.command, .shift])
             }
 
             // Controls — playback. Shortcuts match Apple Music conventions:
@@ -300,6 +304,13 @@ private enum ChoragusAboutWindow {
 /// Greek glyph isn't fighting the etymology, the credits sections aren't
 /// crammed into a 280 pt column, and links wrap naturally.
 private struct ChoragusAboutView: View {
+    /// Forces the body to re-evaluate when the user changes the app
+    /// language. Without this, the AppKit-hosted About window keeps
+    /// showing the language that was active the first time it opened —
+    /// SwiftUI doesn't know `L10n.*`'s underlying UserDefaults read
+    /// changed, because nothing in the view tree was observing it.
+    @AppStorage(UDKey.appLanguage) private var appLanguage: String = "en"
+
     private static let appVersion: String = {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""

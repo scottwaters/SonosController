@@ -796,7 +796,7 @@ struct PlexPinAuthSheet: View {
                 .buttonStyle(.plain)
             }
 
-            Text("Choragus connects to your Plex server directly — no Sonos relay. You'll only need to do this once.")
+            Text(L10n.connectsToPlexDirectlyDescription)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -805,7 +805,7 @@ struct PlexPinAuthSheet: View {
 
             if plexAuth.activePin != nil {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Click below to open Plex in your browser. Sign in if needed, then tap Allow. The code is embedded in the link — there's nothing to type.")
+                    Text(L10n.clickBelowToOpenPlex)
                         .font(.body)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -824,7 +824,7 @@ struct PlexPinAuthSheet: View {
                     HStack(spacing: 8) {
                         if plexAuth.isPolling {
                             ProgressView().controlSize(.small)
-                            Text("Waiting for you to authorize on plex.tv…")
+                            Text(L10n.waitingForPlexTvAuthorization)
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
@@ -834,7 +834,7 @@ struct PlexPinAuthSheet: View {
             } else if plexAuth.isPolling {
                 HStack(spacing: 10) {
                     ProgressView()
-                    Text("Asking plex.tv for a sign-in code…")
+                    Text(L10n.askingPlexTvForCode)
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }

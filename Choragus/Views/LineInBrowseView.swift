@@ -19,7 +19,7 @@ struct LineInBrowseView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Line-In sources").font(.subheadline.weight(.semibold))
+                Text(L10n.lineInSources).font(.subheadline.weight(.semibold))
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -39,7 +39,7 @@ struct LineInBrowseView: View {
             if entries.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "cable.connector").font(.title2).foregroundStyle(.tertiary)
-                    Text("No speakers with line-in or TV inputs found.")
+                    Text(L10n.noSpeakersWithLineInOrTV)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

@@ -166,7 +166,7 @@ struct PlexDirectBrowseView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                     .font(.caption)
-                TextField("Search your Plex library…", text: $searchText)
+                TextField(L10n.searchYourPlexLibraryPlaceholder, text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.callout)
                     .onSubmit { Task { await runSearch() } }
@@ -189,7 +189,7 @@ struct PlexDirectBrowseView: View {
             Button {
                 Task { await runSearch() }
             } label: {
-                Text("Search").font(.caption)
+                Text(L10n.search).font(.caption)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -319,7 +319,7 @@ struct PlexDirectBrowseView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "tray").font(.title2).foregroundStyle(.tertiary)
-            Text("Nothing here.").font(.subheadline).foregroundStyle(.secondary)
+            Text(L10n.nothingHere).font(.subheadline).foregroundStyle(.secondary)
             if fellBackToSMAPI {
                 Text(L10n.plexRelayReturnedNoItems)
                     .font(.caption)
@@ -334,7 +334,7 @@ struct PlexDirectBrowseView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                Text("Couldn't reach your Plex server")
+                Text(L10n.couldNotReachPlexServer)
                     .font(.subheadline.weight(.semibold))
             }
             Text(message)

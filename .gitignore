@@ -43,5 +43,8 @@ docs/TODO.md
 *.keystore
 .release.env
 
-# (ForFunView.swift was previously local-only; it is now part of the
-# shipped project and committed normally.)
+# ForFunView.swift is local-only again while the visualisations get
+# reworked. The file isn't in project.pbxproj's source list, so the
+# build succeeds whether or not it exists on disk. Restore by adding
+# the file ref + build entry back into project.pbxproj when ready.
+Choragus/Views/ForFunView.swift
