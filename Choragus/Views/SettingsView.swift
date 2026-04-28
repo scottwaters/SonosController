@@ -338,10 +338,11 @@ private struct TabContentView: View {
             settingsSection(L10n.network) {
                 settingsRow(L10n.updates) {
                     Picker("", selection: $sonosManager.communicationMode) {
-                        ForEach(CommunicationMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        ForEach(CommunicationMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 260)
+                    .languageReactive()
                 }
 
                 if sonosManager.communicationMode == .hybridEventFirst,
@@ -358,10 +359,11 @@ private struct TabContentView: View {
 
                 settingsRow(L10n.startup) {
                     Picker("", selection: $sonosManager.startupMode) {
-                        ForEach(StartupMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        ForEach(StartupMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 240)
+                    .languageReactive()
                 }
 
                 Divider()
@@ -374,6 +376,7 @@ private struct TabContentView: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 320)
+                    .languageReactive()
                 }
 
                 if sonosManager.discoveryMode == .auto {

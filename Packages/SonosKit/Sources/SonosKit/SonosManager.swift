@@ -32,11 +32,27 @@ public func sonosDebugLog(_ msg: String) {
 public enum StartupMode: String, CaseIterable {
     case quickStart = "Quick Start"
     case classic = "Classic"
+
+    /// Localised label for the segmented picker; rawValue stays
+    /// stable as the persistence key.
+    public var displayName: String {
+        switch self {
+        case .quickStart: return L10n.quickStart
+        case .classic:    return L10n.classic
+        }
+    }
 }
 
 public enum CommunicationMode: String, CaseIterable {
     case hybridEventFirst = "Event-Driven"
     case legacyPolling = "Legacy Polling"
+
+    public var displayName: String {
+        switch self {
+        case .hybridEventFirst: return L10n.eventDriven
+        case .legacyPolling:    return L10n.legacyPolling
+        }
+    }
 }
 
 /// How the app finds Sonos speakers on the network.
