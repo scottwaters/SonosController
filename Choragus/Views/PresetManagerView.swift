@@ -331,6 +331,16 @@ private struct PresetEditView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isLoadingEQ = false
     @State private var selectedEQDevice: String?
+    /// Snapshotted at sheet-open time. `sonosManager.homeTheaterZones`
+    /// is `@Published`, so a topology event during the edit session
+    /// briefly mutates the array and the live `htZone?.hasSub`
+    /// / `hasSurrounds` reads return false for a frame. That made the
+    /// sub-level + surround-level controls flash on then off as the
+    /// view recomputed against the transient empty state. Freezing
+    /// the flags at first appear matches what the user originally
+    /// saw and removes the flicker.
+    @State private var snapshotHasSub: Bool = false
+    @State private var snapshotHasSurrounds: Bool = false
 
     private var visibleDevices: [SonosDevice] {
         var seen = Set<String>()
@@ -494,10 +504,22 @@ private struct PresetEditView: View {
     }
 
     /// If the current state needs a `HomeTheaterEQ` but doesn't have
-    /// one, allocate it. Idempotent.
+    /// one, allocate it. Idempotent. Also snapshots the HT zone's
+    /// sub / surrounds flags into `@State` so the inner controls
+    /// don't flicker when `sonosManager.homeTheaterZones` mutates
+    /// during the edit session.
     private func ensureHomeTheaterEQInitialised() {
         if preset.includesEQ && isHTZone && preset.homeTheaterEQ == nil {
             preset.homeTheaterEQ = HomeTheaterEQ()
+        }
+        // Capture the live HT zone capabilities once. If we read
+        // `htZone?.hasSub == true` directly inside the section body,
+        // the @Published `homeTheaterZones` array can briefly mutate
+        // mid-edit (topology event) and the sub/surround controls
+        // disappear for a frame.
+        if let z = htZone {
+            snapshotHasSub = z.hasSub
+            snapshotHasSurrounds = z.hasSurrounds
         }
     }
 
@@ -651,8 +673,8 @@ private struct PresetEditView: View {
                             .font(.system(size: 13))
                     }
 
-                    // Sub
-                    if htZone?.hasSub == true {
+                    // Sub — snapshot flag (see `snapshotHasSub` doc).
+                    if snapshotHasSub {
                         Divider()
                         Toggle(L10n.subTab, isOn: binding(for: \.subEnabled))
                             .toggleStyle(.checkbox)
@@ -665,8 +687,8 @@ private struct PresetEditView: View {
                         .disabled(!(preset.homeTheaterEQ?.subEnabled ?? true))
                     }
 
-                    // Surrounds
-                    if htZone?.hasSurrounds == true {
+                    // Surrounds — snapshot flag.
+                    if snapshotHasSurrounds {
                         Divider()
                         Toggle(L10n.surroundsTab, isOn: binding(for: \.surroundEnabled))
                             .toggleStyle(.checkbox)
