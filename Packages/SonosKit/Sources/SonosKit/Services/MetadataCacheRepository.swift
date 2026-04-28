@@ -63,6 +63,46 @@ public final class MetadataCacheRepository {
         if sqlite3_exec(db, create, nil, nil, nil) != SQLITE_OK {
             sonosDebugLog("[META-CACHE] Schema create failed: \(String(cString: sqlite3_errmsg(db)))")
         }
+        migrateLegacyArtistAlbumKeys()
+    }
+
+    // MARK: - Migrations
+
+    /// One-shot migration after Wikipedia + Last.fm became locale-aware.
+    /// Pre-migration cache keys looked like `artist:daft punk` and
+    /// `album:daft punk|discovery`. Post-migration keys carry a
+    /// language prefix: `artist:en|daft punk` / `album:en|daft punk|discovery`.
+    /// Without this the entire pre-existing cache strands itself the
+    /// moment the new lookup key shape lands.
+    ///
+    /// Existing data is English (because the lookup was English-only
+    /// before), so we rename in place to the `en|` form. Run-once via
+    /// a UserDefault flag so subsequent launches skip.
+    private func migrateLegacyArtistAlbumKeys() {
+        let flagKey = "metadataCache.langPrefixMigrated.v1"
+        if UserDefaults.standard.bool(forKey: flagKey) { return }
+        // Match `artist:<rest>` and `album:<rest>` where `<rest>` does NOT
+        // already begin with a 2-letter language code followed by `|`.
+        // SQLite LIKE pattern `__|%` matches any 2-char-then-pipe prefix —
+        // we exclude those rows from the rename.
+        let renames = [
+            ("artist", "en"),
+            ("album",  "en"),
+        ]
+        for (kind, lang) in renames {
+            let sql = """
+            UPDATE metadata_cache
+               SET key = '\(kind):\(lang)|' || substr(key, length('\(kind):') + 1)
+             WHERE key LIKE '\(kind):%'
+               AND key NOT LIKE '\(kind):__|%'
+            """
+            if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
+                sonosDebugLog("[META-CACHE] legacy-key migration failed for \(kind): \(String(cString: sqlite3_errmsg(db)))")
+            } else {
+                sonosDebugLog("[META-CACHE] migrated legacy \(kind) keys → \(lang)| prefix")
+            }
+        }
+        UserDefaults.standard.set(true, forKey: flagKey)
     }
 
     deinit {

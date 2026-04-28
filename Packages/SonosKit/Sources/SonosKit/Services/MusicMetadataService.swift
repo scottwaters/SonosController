@@ -73,6 +73,30 @@ public final class MusicMetadataService {
     /// client and reach the maintainer.
     private let userAgent = "Choragus/1.0 (https://github.com/scottwaters/Choragus)"
 
+    // MARK: - Locale helpers
+
+    /// Maps the user's app language to the Wikipedia subdomain prefix.
+    /// Wikipedia hosts a separate site per language at `<lang>.wikipedia.org`;
+    /// we hit the localised one first, then fall back to English on 404
+    /// since not every article has a translation. Simplified Chinese
+    /// uses the shared `zh.wikipedia.org` (variants are negotiated via
+    /// the `Accept-Language` header rather than separate subdomains).
+    nonisolated private func wikipediaLanguageCode() -> String {
+        let lang = UserDefaults.standard.string(forKey: UDKey.appLanguage) ?? "en"
+        if lang.hasPrefix("zh") { return "zh" }
+        return lang
+    }
+
+    /// ISO 639-1 code that Last.fm's `artist.getInfo` / `album.getInfo`
+    /// `lang` parameter accepts. Same mapping as Wikipedia for the
+    /// languages Choragus ships, except Last.fm doesn't take regional
+    /// qualifiers, so `zh-Hans` collapses to `zh`.
+    nonisolated private func lastFMLanguageCode() -> String {
+        let lang = UserDefaults.standard.string(forKey: UDKey.appLanguage) ?? "en"
+        if lang.hasPrefix("zh") { return "zh" }
+        return lang
+    }
+
     public init(tokenStore: LastFMTokenStore, cache: MetadataCacheRepository) {
         self.tokenStore = tokenStore
         self.cache = cache
@@ -92,13 +116,13 @@ public final class MusicMetadataService {
     public func invalidateArtist(name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        cache.clear(MetadataCacheRepository.Kind.artist.key(trimmed))
+        cache.clear(MetadataCacheRepository.Kind.artist.key(lastFMLanguageCode(), trimmed))
     }
 
     /// Drops the cached `albumInfo` entry. Mirrors `invalidateArtist`.
     public func invalidateAlbum(artist: String, album: String) {
         guard !album.isEmpty else { return }
-        cache.clear(MetadataCacheRepository.Kind.album.key(artist, album))
+        cache.clear(MetadataCacheRepository.Kind.album.key(lastFMLanguageCode(), artist, album))
     }
 
     public func artistInfo(name: String) async -> ArtistInfo? {
@@ -112,7 +136,11 @@ public final class MusicMetadataService {
             return nil
         }
 
-        let key = MetadataCacheRepository.Kind.artist.key(trimmed)
+        // Cache key includes the user's app language so a German bio and
+        // a French bio for the same artist don't fight for the same
+        // entry. Switching language re-resolves rather than serving the
+        // previously-cached translation.
+        let key = MetadataCacheRepository.Kind.artist.key(lastFMLanguageCode(), trimmed)
         if let cached = cache.get(key),
            let data = cached.data(using: .utf8),
            let info = try? JSONDecoder().decode(ArtistInfo.self, from: data) {
@@ -202,7 +230,10 @@ public final class MusicMetadataService {
     }
 
     public func albumInfo(artist: String, album: String) async -> AlbumInfo? {
-        let key = MetadataCacheRepository.Kind.album.key(artist, album)
+        // Language-prefixed key — same rationale as `artistInfo`: the
+        // cache stores per-locale results so flipping the app language
+        // serves a fresh translation instead of the cached one.
+        let key = MetadataCacheRepository.Kind.album.key(lastFMLanguageCode(), artist, album)
         if let cached = cache.get(key),
            let data = cached.data(using: .utf8),
            let info = try? JSONDecoder().decode(AlbumInfo.self, from: data) {
@@ -310,8 +341,7 @@ public final class MusicMetadataService {
             name,
         ]
         for candidate in candidates {
-            guard let title = await wikipediaResolveTitle(query: candidate),
-                  let summary = await wikipediaSummary(title: title),
+            guard let summary = await fetchLocalisedWikipediaSummary(query: candidate),
                   summary.type != "disambiguation",
                   let extract = summary.extract, !extract.isEmpty
             else { continue }
@@ -337,7 +367,7 @@ public final class MusicMetadataService {
             album,
         ]
         for title in candidates {
-            if let summary = await wikipediaSummary(title: title),
+            if let summary = await fetchLocalisedWikipediaSummary(directTitle: title),
                summary.type != "disambiguation",
                let extract = summary.extract, !extract.isEmpty {
                 return AlbumInfo(
@@ -353,16 +383,57 @@ public final class MusicMetadataService {
         return nil
     }
 
+    /// Resolves a Wikipedia article in the user's app language, falling
+    /// back to English on miss. The returned `pageURL` points at
+    /// whichever Wikipedia served the article — when you tap "Read on
+    /// Wikipedia" it lands in the same language.
+    ///
+    /// Two entry points: `query` runs OpenSearch first to find a title
+    /// (used for artist names where Wikipedia uses disambiguators we
+    /// can't predict), `directTitle` skips OpenSearch and goes straight
+    /// to the summary endpoint (used for album titles where the
+    /// candidate strings are already canonical).
+    private nonisolated func fetchLocalisedWikipediaSummary(query: String) async -> WikipediaSummary? {
+        let primary = wikipediaLanguageCode()
+        if let title = await wikipediaResolveTitle(query: query, lang: primary),
+           let summary = await wikipediaSummary(title: title, lang: primary) {
+            return summary
+        }
+        // Fallback chain: not every article has a translation, so on a
+        // miss we retry on en.wikipedia.org. Skipped when the user is
+        // already on English.
+        guard primary != "en" else { return nil }
+        if let title = await wikipediaResolveTitle(query: query, lang: "en") {
+            return await wikipediaSummary(title: title, lang: "en")
+        }
+        return nil
+    }
+
+    private nonisolated func fetchLocalisedWikipediaSummary(directTitle: String) async -> WikipediaSummary? {
+        let primary = wikipediaLanguageCode()
+        if let summary = await wikipediaSummary(title: directTitle, lang: primary) {
+            return summary
+        }
+        guard primary != "en" else { return nil }
+        return await wikipediaSummary(title: directTitle, lang: "en")
+    }
+
     /// Resolves the best matching Wikipedia article title using the
     /// OpenSearch endpoint, which returns "the most likely article"
     /// for an arbitrary query. Returns nil if Wikipedia has no match.
-    /// Note: nonisolated since we don't touch any actor state.
-    private nonisolated func wikipediaResolveTitle(query: String) async -> String? {
+    /// `lang` selects the wiki subdomain (`en`, `de`, etc.).
+    private nonisolated func wikipediaResolveTitle(query: String, lang: String) async -> String? {
         guard let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://en.wikipedia.org/w/api.php?action=opensearch&search=\(q)&limit=1&format=json")
+              let url = URL(string: "https://\(lang).wikipedia.org/w/api.php?action=opensearch&search=\(q)&limit=1&format=json")
         else { return nil }
         var request = URLRequest(url: url)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        // Simplified Chinese variant negotiation lives in the
+        // Accept-Language header — `zh.wikipedia.org` serves either
+        // Hans or Hant based on what the client asks for.
+        if lang == "zh" {
+            request.setValue("zh-Hans", forHTTPHeaderField: "Accept-Language")
+        }
         do {
             let (data, _) = try await session.data(for: request)
             // OpenSearch returns an array: [query, [titles], [descriptions], [urls]].
@@ -384,12 +455,15 @@ public final class MusicMetadataService {
         let pageURL: String?
     }
 
-    private nonisolated func wikipediaSummary(title: String) async -> WikipediaSummary? {
+    private nonisolated func wikipediaSummary(title: String, lang: String) async -> WikipediaSummary? {
         let path = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title
-        guard let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(path)")
+        guard let url = URL(string: "https://\(lang).wikipedia.org/api/rest_v1/page/summary/\(path)")
         else { return nil }
         var request = URLRequest(url: url)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        if lang == "zh" {
+            request.setValue("zh-Hans", forHTTPHeaderField: "Accept-Language")
+        }
         do {
             let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -523,6 +597,13 @@ public final class MusicMetadataService {
             URLQueryItem(name: "format", value: "json"),
             URLQueryItem(name: "autocorrect", value: "1"),
         ]
+        // Last.fm returns a localised bio when `lang` is set on the
+        // info methods. The English version is always available as a
+        // baseline, so we silently fall through to it when the user's
+        // locale has no translation.
+        if method == "artist.getinfo" || method == "album.getinfo" {
+            items.append(URLQueryItem(name: "lang", value: lastFMLanguageCode()))
+        }
         for (k, v) in params {
             items.append(URLQueryItem(name: k, value: v))
         }
