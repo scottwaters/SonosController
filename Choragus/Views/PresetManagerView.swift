@@ -438,8 +438,15 @@ private struct PresetEditView: View {
                         eqSection
                     }
 
-                    // Section 4: Home Theater
-                    if preset.includesEQ && isHTZone {
+                    // Section 4: Home Theater. Driven by the preset's
+                    // own `homeTheaterEQ` value rather than the live
+                    // `isHTZone` lookup — `sonosManager.homeTheaterZones`
+                    // is computed off `@Published` topology and
+                    // briefly returns nil mid-edit on every topology
+                    // event, which used to make the whole section
+                    // disappear and reappear. The data is in
+                    // `preset.homeTheaterEQ` regardless.
+                    if preset.includesEQ && preset.homeTheaterEQ != nil {
                         Divider()
                         homeTheaterSection
                     }
@@ -499,6 +506,15 @@ private struct PresetEditView: View {
         // is still nil from the previous coordinator and renders empty
         // until the user toggles. Re-run the same lazy init.
         .onChange(of: preset.coordinatorDeviceID) {
+            ensureHomeTheaterEQInitialised()
+        }
+        // `isHTZone` walks `sonosManager.homeTheaterZones`, which is
+        // populated asynchronously after launch. If the sheet opens
+        // before the channel-map info has come back, `isHTZone` is
+        // false at first and `ensureHomeTheaterEQInitialised()`
+        // skips the init. Re-fire the check the moment the data
+        // populates.
+        .onChange(of: isHTZone) {
             ensureHomeTheaterEQInitialised()
         }
     }
