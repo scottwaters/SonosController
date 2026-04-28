@@ -1140,8 +1140,8 @@ public class SonosManager: ObservableObject {
             // Preload cached track info so any speaker poll that arrives
             // before our background fill writes art/title can recover it.
             let cached = CachedTrack(title: first.title,
-                                     artist: first.artist ?? "",
-                                     album: first.album ?? "",
+                                     artist: first.artist,
+                                     album: first.album,
                                      artURL: first.albumArtURI)
             if !first.title.isEmpty {
                 cachedTrackInfo[uri] = cached
@@ -1165,8 +1165,8 @@ public class SonosManager: ObservableObject {
             // updates before the speaker's first transport tick.
             var pendingMeta = TrackMetadata()
             pendingMeta.title = first.title
-            pendingMeta.artist = first.artist ?? ""
-            pendingMeta.album = first.album ?? ""
+            pendingMeta.artist = first.artist
+            pendingMeta.album = first.album
             pendingMeta.albumArtURI = first.albumArtURI
             pendingMeta.trackURI = uri
             groupTrackMetadata[coordinator.id] = pendingMeta
@@ -1212,8 +1212,8 @@ public class SonosManager: ObservableObject {
             metas.append(meta)
             if !item.title.isEmpty {
                 let cached = CachedTrack(title: item.title,
-                                         artist: item.artist ?? "",
-                                         album: item.album ?? "",
+                                         artist: item.artist,
+                                         album: item.album,
                                          artURL: item.albumArtURI)
                 cachedTrackInfo[uri] = cached
                 if let decoded = uri.removingPercentEncoding, decoded != uri {
@@ -1617,7 +1617,6 @@ public class SonosManager: ObservableObject {
         }
     }
 
-    @discardableResult
     /// Posts a `.queueChanged` notification. When `optimisticItems` is
     /// non-empty, subscribers (QueueView) append the items directly and skip
     /// the full `Browse(Q:0)` round-trip. When empty, subscribers do a full

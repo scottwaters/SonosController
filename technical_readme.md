@@ -182,17 +182,7 @@ xcodebuild -scheme Choragus \
 
 The resulting app is at `build/Choragus.app`. Use `-configuration Debug` for a debug build with symbols and `DEBUG` defined.
 
-### Development build (signed, recommended)
-
-Bare `xcodebuild` produces an ad-hoc signature, which means macOS regenerates the Keychain ACL on every rebuild — Last.fm and SMAPI services prompt for "allow access to Keychain item" each time. For day-to-day development, use the helper script:
-
-```bash
-../scripts/dev-build.sh
-```
-
-This produces a Debug build signed with a Developer ID Application identity, so the code signature is stable across rebuilds and Keychain prompts only appear once on first install. The script lives in the parent `SonosApp/scripts/` directory (deliberately outside the repo so signing details never touch GitHub) and reads its identity from a sibling `.release.env` file. Forks can drop in their own Developer ID identity by creating their own `dev-build.sh`; the project file is signing-neutral. Bare `xcodebuild` invocations remain a fine option for quick syntax-only checks.
-
-For distribution-grade builds (signed, notarised, stapled) use `../scripts/release.sh`, which produces `Choragus/build/Choragus.zip` after a ~3–5 minute Apple notary round-trip.
+The project file is signing-neutral — no team ID, no provisioning profile, automatic style — so it builds cleanly under any identity (or none) without modification.
 
 ### Running Tests
 

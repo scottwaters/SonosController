@@ -43,7 +43,16 @@ Why the favourited-song step? Sonos generates an internal account identifier the
 
 ## What's New in v4.0
 
-- **Renamed to Choragus** — same app, new name (in respect of the Sonos trademark). Your speakers, presets, history, and settings all come across automatically. The first time you launch, you'll be asked to sign back into Spotify (and any other connected services) one time — that's expected.
+> **Upgrading from SonosController?** v4.0 is a major rework — the project was renamed, the bundle identifier changed, and the place macOS keeps your saved logins moved with it. **Existing SonosController installs do not auto-upgrade.** You'll download Choragus as a fresh app, and on first launch you'll need to:
+>
+> - **Re-authenticate any connected music services** (Spotify, Plex, Audible, Last.fm scrobbling, etc.) — one-time, then they're saved again.
+> - Re-grant **Local Network permission** the first time macOS asks.
+>
+> Your **play history, presets, listening stats, accent colour, and other preferences carry over automatically** on first launch. Speakers are re-discovered on the network as normal — nothing to set up there.
+>
+> If you'd rather not re-authenticate, the old SonosController build keeps working alongside Choragus until you're ready to switch. They use different sandbox containers and won't fight each other.
+
+- **Renamed to Choragus** — same app, new name (in respect of the Sonos trademark). See the upgrade note above for what to expect on first launch.
 - **Works on tricky home networks** — if your speakers are on a guest network or smart-home VLAN, they now show up automatically. No router tweaks required.
 - **Now Playing has tabs** — the bottom of the Now Playing screen is now organised into three tabs: **Lyrics** (synced word-by-word when available, plain otherwise), **About** (artist bios, photos, related artists, album tracklists), and **History** (recent plays of this track). Don't want it visible? Click the chevron to collapse the whole panel.
 

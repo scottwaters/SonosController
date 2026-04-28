@@ -3,6 +3,8 @@
 
 ## v4.0 — 2026-04-27 — Choragus
 
+> **Heads-up — major rework, breaking for existing installs.** v4.0 renames the project from SonosController to Choragus. The bundle ID changes (`com.sonoscontroller.app` → `com.choragus.app`), the executable name changes, and the Keychain service name changes with them. **Existing SonosController installs do not auto-upgrade** — Choragus arrives as a fresh app. **Re-authenticate Spotify, Plex, Audible, Last.fm, and any other connected services on first launch** (one-time). Play history, presets, accent colours, listening-stats data, and other preferences carry forward automatically. The old SonosController build keeps working alongside Choragus until you're ready to switch — they use different sandbox containers.
+
 The project has been renamed from **SonosController** to **Choragus** in respect of the Sonos trademark.
 
 The bundle identifier moves to `com.choragus.app` to match the rename, and the Keychain service name now follows suit. Sandbox container, Keychain service, and the signed Developer ID identity all line up with the new bundle. **One-time cost**: Last.fm and SMAPI services need to be re-authenticated on first launch — those credentials lived in Keychain entries scoped to the old service name and aren't migrated forward. Reading them with the new signed binary would have prompted the user to "allow access to keychain item created by SonosController.app" on every launch until they clicked through; cleaner to wipe the bridge entirely and ask for one re-auth pass. Play history, art cache, and the SQLite metadata store live in the sandbox container, which already moved to `com.choragus.app` when the bundle ID flipped in the v4.0 work — they aren't touched by this change. Older entries in this changelog reference "SonosController" by name; that history is preserved as-is.
@@ -65,10 +67,6 @@ When editing a preset for a Home Theater zone, the Sub level/polarity, Surround 
 ### Settings — section labels within each tab
 
 Settings keeps its four tabs (Display, Music, Scrobbling, System) but each tab now has explicit labelled sub-sections rather than a flat list of toggles. Display gets `Language`, `Appearance`, `Mouse Controls`. System gets `Network` (with its own Updates / Startup / Discovery rows) and `Cache`. Communication-mode, Startup-mode, and Discovery-mode picker labels are localised via new `displayName` computed properties on `CommunicationMode` / `StartupMode` / `AppearanceMode` / `DiscoveryMode`, and the segmented pickers are decorated with `.languageReactive()` so SwiftUI's cached label rendering rebuilds on language flip.
-
-### Signed Debug builds
-
-`dev-build.sh` (lives in the parent `SonosApp/scripts/` directory, deliberately outside the repo so signing details never touch GitHub) now signs Debug builds with the same Developer ID Application identity that `release.sh` uses for distribution. Stable code signature across rebuilds means macOS Keychain ACL prompts (Last.fm, SMAPI tokens) appear once on first install instead of on every rebuild. Bare `xcodebuild` invocations still work for syntax-only checks but produce ad-hoc signatures that re-prompt the keychain.
 
 ### Project rename — file system
 
@@ -353,7 +351,7 @@ while diagnosing it.
   updates `vm.group`, and triggers `loadQueue` against the new coordinator.
 
 ### Bug fixes
-- **"+ Float Play 5 + Office" display glitch** — `SonosGroup.name` no longer
+- **Leading "+ " display glitch in group names** — `SonosGroup.name` no longer
   emits a leading "+ " when the coordinator isn't present in the members
   list (transient topology inconsistency edge case).
 
