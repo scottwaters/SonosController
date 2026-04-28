@@ -32,14 +32,16 @@ struct HelpView: View {
     @ViewBuilder
     private func content(for topic: HelpTopic) -> some View {
         switch topic {
-        case .gettingStarted:    gettingStarted
-        case .playback:          playback
-        case .grouping:          grouping
-        case .browsing:          browsing
-        case .systems:           systems
-        case .preferences:       preferences
-        case .shortcuts:         shortcuts
-        case .about:             about
+        case .gettingStarted:     gettingStarted
+        case .playback:           playback
+        case .nowPlayingDetails:  nowPlayingDetails
+        case .grouping:           grouping
+        case .browsing:           browsing
+        case .musicServices:      musicServices
+        case .systems:            systems
+        case .preferences:        preferences
+        case .shortcuts:          shortcuts
+        case .about:              about
         }
     }
 
@@ -58,6 +60,8 @@ struct HelpView: View {
             ])
             heading(L10n.helpNoSpeakersFound)
             paragraph(L10n.helpNoSpeakersFoundBody)
+            heading(L10n.helpRebrandHeading)
+            paragraph(L10n.helpRebrandBody)
         }
     }
 
@@ -75,6 +79,26 @@ struct HelpView: View {
             paragraph(L10n.helpVolumeBody)
             heading(L10n.helpTransportState)
             paragraph(L10n.helpTransportStateBody)
+        }
+    }
+
+    private var nowPlayingDetails: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            heading(L10n.helpNowPlayingDetailsHeading)
+            paragraph(L10n.helpNowPlayingDetailsBody)
+            heading(L10n.helpLyricsTabHeading)
+            paragraph(L10n.helpLyricsTabBody)
+            bulletedList([
+                L10n.helpBulletLyricsSynced,
+                L10n.helpBulletLyricsPlain,
+                L10n.helpBulletLyricsOffset
+            ])
+            heading(L10n.helpAboutTabHeading)
+            paragraph(L10n.helpAboutTabBody)
+            heading(L10n.helpHistoryTabHeading)
+            paragraph(L10n.helpHistoryTabBody)
+            heading(L10n.helpCollapseHeading)
+            paragraph(L10n.helpCollapseBody)
         }
     }
 
@@ -100,10 +124,36 @@ struct HelpView: View {
                 L10n.helpBulletFavorites,
                 L10n.helpBulletLibrary,
                 L10n.helpBulletServicesSection,
-                L10n.helpBulletSearch
+                L10n.helpBulletSearch,
+                L10n.helpBulletRecentlyPlayed,
+                L10n.helpBulletLineIn
             ])
+            heading(L10n.helpAppleMusicHeading)
+            paragraph(L10n.helpAppleMusicBody)
+            heading(L10n.helpPlexHeading)
+            paragraph(L10n.helpPlexBody)
             heading(L10n.helpAddingToQueue)
             paragraph(L10n.helpAddingToQueueBody)
+        }
+    }
+
+    private var musicServices: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            heading(L10n.helpMusicServicesHeading)
+            paragraph(L10n.helpMusicServicesBody)
+            heading(L10n.helpStatusDotsHeading)
+            paragraph(L10n.helpStatusDotsBody)
+            bulletedList([
+                L10n.helpBulletDotBlue,
+                L10n.helpBulletDotGreen,
+                L10n.helpBulletDotYellow,
+                L10n.helpBulletDotRed,
+                L10n.helpBulletDotGray
+            ])
+            heading(L10n.helpServiceSetupHeading)
+            paragraph(L10n.helpServiceSetupBody)
+            heading(L10n.helpServiceNotesHeading)
+            paragraph(L10n.helpServiceNotesBody)
         }
     }
 
@@ -127,10 +177,16 @@ struct HelpView: View {
             paragraph(L10n.helpPreferencesBody)
             bulletedList([
                 L10n.helpBulletAppearance,
+                L10n.helpBulletColors,
+                L10n.helpBulletLanguage,
                 L10n.helpBulletMenuBar,
+                L10n.helpBulletMouseControls,
                 L10n.helpBulletCommunication,
+                L10n.helpBulletDiscoveryMode,
                 L10n.helpBulletQuickStart,
-                L10n.helpBulletMusicServices
+                L10n.helpBulletMusicServices,
+                L10n.helpBulletScrobbling,
+                L10n.helpBulletImageCache
             ])
             heading(L10n.helpListeningStatsSection)
             paragraph(L10n.helpListeningStatsBody)
@@ -246,8 +302,10 @@ struct HelpView: View {
 enum HelpTopic: String, CaseIterable, Identifiable {
     case gettingStarted
     case playback
+    case nowPlayingDetails
     case grouping
     case browsing
+    case musicServices
     case systems
     case preferences
     case shortcuts
@@ -257,27 +315,31 @@ enum HelpTopic: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .gettingStarted: return L10n.helpGettingStarted
-        case .playback:       return L10n.helpPlayback
-        case .grouping:       return L10n.helpGrouping
-        case .browsing:       return L10n.helpBrowsingMusic
-        case .systems:        return L10n.helpS1AndS2
-        case .preferences:    return L10n.helpPreferences
-        case .shortcuts:      return L10n.helpKeyboardShortcuts
-        case .about:          return L10n.helpAboutAndSupport
+        case .gettingStarted:     return L10n.helpGettingStarted
+        case .playback:           return L10n.helpPlayback
+        case .nowPlayingDetails:  return L10n.helpNowPlayingDetails
+        case .grouping:           return L10n.helpGrouping
+        case .browsing:           return L10n.helpBrowsingMusic
+        case .musicServices:      return L10n.helpMusicServicesTopic
+        case .systems:            return L10n.helpS1AndS2
+        case .preferences:        return L10n.helpPreferences
+        case .shortcuts:          return L10n.helpKeyboardShortcuts
+        case .about:              return L10n.helpAboutAndSupport
         }
     }
 
     var symbol: String {
         switch self {
-        case .gettingStarted: return "sparkles"
-        case .playback:       return "play.circle"
-        case .grouping:       return "hifispeaker.2"
-        case .browsing:       return "music.note.list"
-        case .systems:        return "rectangle.on.rectangle"
-        case .preferences:    return "gear"
-        case .shortcuts:      return "keyboard"
-        case .about:          return "info.circle"
+        case .gettingStarted:     return "sparkles"
+        case .playback:           return "play.circle"
+        case .nowPlayingDetails:  return "text.book.closed"
+        case .grouping:           return "hifispeaker.2"
+        case .browsing:           return "music.note.list"
+        case .musicServices:      return "circle.grid.2x2"
+        case .systems:            return "rectangle.on.rectangle"
+        case .preferences:        return "gear"
+        case .shortcuts:          return "keyboard"
+        case .about:              return "info.circle"
         }
     }
 }
