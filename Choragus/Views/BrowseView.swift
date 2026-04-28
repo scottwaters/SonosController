@@ -355,7 +355,7 @@ struct BrowseSectionsView: View {
                     Button {
                         onNavigate(BrowseDestination(title: "Recently Played", objectID: "RECENT:"))
                     } label: {
-                        Label("Recently Played", systemImage: "clock.arrow.circlepath")
+                        Label(L10n.recentlyPlayed, systemImage: "clock.arrow.circlepath")
                     }
                     .buttonStyle(.plain)
                 }
@@ -518,11 +518,11 @@ struct BrowseListView: View {
             }
             .controlSize(.small)
             Button { Task { await addAllToQueue(playNext: false) } } label: {
-                Label("Add All to Queue", systemImage: "text.append")
+                Label(L10n.addAllToQueue, systemImage: "text.append")
             }
             .controlSize(.small)
             Button { Task { await addAllToQueue(playNext: true) } } label: {
-                Label("Play Next", systemImage: "text.insert")
+                Label(L10n.playNext, systemImage: "text.insert")
             }
             .controlSize(.small)
             Spacer()
@@ -1706,7 +1706,7 @@ struct CalmRadioBrowseView: View {
     var body: some View {
         VStack(spacing: 0) {
             if isLoading {
-                ProgressView("Loading Calm Radio...")
+                ProgressView(L10n.loadingCalmRadio)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if categories.isEmpty {
                 VStack(spacing: 8) {
@@ -2117,11 +2117,11 @@ struct SMAPIServiceSearchView: View {
             }
             .controlSize(.small)
             Button { Task { await smapiAddAllToQueue(playNext: false) } } label: {
-                Label("Add All to Queue", systemImage: "text.append")
+                Label(L10n.addAllToQueue, systemImage: "text.append")
             }
             .controlSize(.small)
             Button { Task { await smapiAddAllToQueue(playNext: true) } } label: {
-                Label("Play Next", systemImage: "text.insert")
+                Label(L10n.playNext, systemImage: "text.insert")
             }
             .controlSize(.small)
             Spacer()

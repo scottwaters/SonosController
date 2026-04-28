@@ -824,6 +824,17 @@ public enum L10n {
     public static var mapperDescription: String { tr("mapperDescription") }
     public static var forceDirectedDescription: String { tr("forceDirectedDescription") }
 
+    // Browse + history + Plex auth strings (third sweep)
+    public static var recentlyPlayed: String { tr("recentlyPlayed") }
+    public static var loadingCalmRadio: String { tr("loadingCalmRadio") }
+    public static var loadingPlex: String { tr("loadingPlex") }
+    public static var export: String { tr("export") }
+    public static func deleteShownFormat(_ count: Int) -> String {
+        String(format: tr("deleteShownFormat"), count)
+    }
+    public static var dateRangeTo: String { tr("dateRangeTo") }
+    public static var signInWithPlex: String { tr("signInWithPlex") }
+
     // MARK: - Translation Lookup
 
     private static func tr(_ key: String) -> String {
@@ -9378,6 +9389,94 @@ public enum L10n {
             "pl": "Mapper: pokrycie godzinowych przedzia\u{0142}\u{00F3}w \u{2192} graf nak\u{0142}adania si\u{0119} artyst\u{00F3}w. Kraw\u{0119}dzie = wsp\u{00F3}lni arty\u{015B}ci.",
             "zh-Hans": "Mapper：\u{5C0F}\u{65F6}\u{4ED3}\u{8986}\u{76D6} \u{2192} \u{827A}\u{672F}\u{5BB6}\u{91CD}\u{53E0}\u{56FE}\u{3002}\u{8FB9} = \u{5171}\u{4EAB}\u{827A}\u{672F}\u{5BB6}\u{3002}",
         ],
+        "recentlyPlayed": [
+            "en": "Recently Played", "de": "K\u{00FC}rzlich gespielt",
+            "fr": "Lus r\u{00E9}cemment", "nl": "Recent afgespeeld",
+            "es": "Reproducidos recientemente", "it": "Riprodotti di recente",
+            "sv": "Nyligen spelade", "nb": "Nylig spilt", "da": "Nyligt afspillet",
+            "ja": "\u{6700}\u{8FD1}\u{306E}\u{518D}\u{751F}",
+            "pt": "Reproduzidos recentemente", "pl": "Ostatnio odtwarzane",
+            "zh-Hans": "\u{6700}\u{8FD1}\u{64AD}\u{653E}",
+        ],
+        "loadingCalmRadio": [
+            "en": "Loading Calm Radio\u{2026}",
+            "de": "Calm Radio wird geladen\u{2026}",
+            "fr": "Chargement de Calm Radio\u{2026}",
+            "nl": "Calm Radio wordt geladen\u{2026}",
+            "es": "Cargando Calm Radio\u{2026}",
+            "it": "Caricamento di Calm Radio\u{2026}",
+            "sv": "Laddar Calm Radio\u{2026}",
+            "nb": "Laster Calm Radio\u{2026}",
+            "da": "Indl\u{00E6}ser Calm Radio\u{2026}",
+            "ja": "Calm Radio \u{3092}\u{8AAD}\u{307F}\u{8FBC}\u{307F}\u{4E2D}\u{2026}",
+            "pt": "A carregar Calm Radio\u{2026}",
+            "pl": "\u{0141}adowanie Calm Radio\u{2026}",
+            "zh-Hans": "\u{6B63}\u{5728}\u{52A0}\u{8F7D} Calm Radio\u{2026}",
+        ],
+        "loadingPlex": [
+            "en": "Loading Plex\u{2026}",
+            "de": "Plex wird geladen\u{2026}",
+            "fr": "Chargement de Plex\u{2026}",
+            "nl": "Plex wordt geladen\u{2026}",
+            "es": "Cargando Plex\u{2026}",
+            "it": "Caricamento di Plex\u{2026}",
+            "sv": "Laddar Plex\u{2026}",
+            "nb": "Laster Plex\u{2026}",
+            "da": "Indl\u{00E6}ser Plex\u{2026}",
+            "ja": "Plex \u{3092}\u{8AAD}\u{307F}\u{8FBC}\u{307F}\u{4E2D}\u{2026}",
+            "pt": "A carregar Plex\u{2026}",
+            "pl": "\u{0141}adowanie Plex\u{2026}",
+            "zh-Hans": "\u{6B63}\u{5728}\u{52A0}\u{8F7D} Plex\u{2026}",
+        ],
+        "export": [
+            "en": "Export", "de": "Exportieren",
+            "fr": "Exporter", "nl": "Exporteer",
+            "es": "Exportar", "it": "Esporta",
+            "sv": "Exportera", "nb": "Eksporter", "da": "Eksport\u{00E9}r",
+            "ja": "\u{66F8}\u{304D}\u{51FA}\u{3057}",
+            "pt": "Exportar", "pl": "Eksportuj",
+            "zh-Hans": "\u{5BFC}\u{51FA}",
+        ],
+        "deleteShownFormat": [
+            "en": "Delete %d Shown",
+            "de": "%d Angezeigte l\u{00F6}schen",
+            "fr": "Supprimer les %d affich\u{00E9}s",
+            "nl": "%d Getoonde verwijderen",
+            "es": "Eliminar %d mostrados",
+            "it": "Elimina %d mostrati",
+            "sv": "Ta bort %d visade",
+            "nb": "Slett %d viste",
+            "da": "Slet %d viste",
+            "ja": "\u{8868}\u{793A}\u{4E2D}\u{306E} %d \u{4EF6}\u{3092}\u{524A}\u{9664}",
+            "pt": "Eliminar %d mostrados",
+            "pl": "Usu\u{0144} %d wy\u{015B}wietlonych",
+            "zh-Hans": "\u{5220}\u{9664}\u{663E}\u{793A}\u{7684} %d \u{6761}",
+        ],
+        "dateRangeTo": [
+            "en": "to", "de": "bis",
+            "fr": "\u{00E0}", "nl": "tot",
+            "es": "a", "it": "a",
+            "sv": "till", "nb": "til", "da": "til",
+            "ja": "\u{301C}",
+            "pt": "a", "pl": "do",
+            "zh-Hans": "\u{81F3}",
+        ],
+        "signInWithPlex": [
+            "en": "Sign in with Plex",
+            "de": "Mit Plex anmelden",
+            "fr": "Se connecter avec Plex",
+            "nl": "Aanmelden met Plex",
+            "es": "Iniciar sesi\u{00F3}n con Plex",
+            "it": "Accedi con Plex",
+            "sv": "Logga in med Plex",
+            "nb": "Logg inn med Plex",
+            "da": "Log ind med Plex",
+            "ja": "Plex \u{3067}\u{30B5}\u{30A4}\u{30F3}\u{30A4}\u{30F3}",
+            "pt": "Iniciar sess\u{00E3}o com Plex",
+            "pl": "Zaloguj si\u{0119} przez Plex",
+            "zh-Hans": "\u{4F7F}\u{7528} Plex \u{767B}\u{5F55}",
+        ],
+
         "forceDirectedDescription": [
             "en": "Force-directed co-play graph. Springs pull artists that follow each other.",
             "de": "Kraftgerichteter Co-Play-Graph. Federn ziehen K\u{00FC}nstler, die aufeinander folgen, zusammen.",

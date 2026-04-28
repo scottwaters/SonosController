@@ -600,7 +600,7 @@ struct PlayHistoryDashboard: View {
                             Text("\(totalEntries)")
                                 .font(.title3)
                                 .fontWeight(.bold)
-                            Text("tracks")
+                            Text(L10n.tracksLowercase)
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }

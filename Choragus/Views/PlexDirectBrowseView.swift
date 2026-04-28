@@ -204,7 +204,7 @@ struct PlexDirectBrowseView: View {
     private var content: some View {
         Group {
             if isLoading && items.isEmpty {
-                ProgressView("Loading Plex…")
+                ProgressView(L10n.loadingPlex)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let err = loadError {
                 errorBanner(err)

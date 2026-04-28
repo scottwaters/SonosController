@@ -815,7 +815,7 @@ struct PlexPinAuthSheet: View {
                             NSWorkspace.shared.open(url)
                         }
                     } label: {
-                        Label("Sign in with Plex", systemImage: "safari")
+                        Label(L10n.signInWithPlex, systemImage: "safari")
                             .frame(maxWidth: .infinity)
                     }
                     .controlSize(.large)

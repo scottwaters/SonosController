@@ -14,6 +14,14 @@ struct ContentView: View {
     @EnvironmentObject var smapiManager: SMAPIAuthManager
     @EnvironmentObject var plexAuth: PlexAuthManager
     @ObservedObject private var localNetworkMonitor = LocalNetworkPermissionMonitor.shared
+    /// Forces the entire window subtree to re-render when the user
+    /// changes the app language in Settings. `L10n.tr(...)` reads
+    /// `UserDefaults` every call, but SwiftUI has no way to know that
+    /// read happened unless something in the view tree is observing
+    /// the same UserDefault. Putting the observer at the root means
+    /// every L10n string in the main window picks up the new language
+    /// the moment the picker flips.
+    @AppStorage(UDKey.appLanguage) private var appLanguage: String = "en"
     @State private var selectedGroupID: String?
     @State private var showQueue = false
     @State private var showBrowse = false

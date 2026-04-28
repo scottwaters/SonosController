@@ -161,7 +161,7 @@ struct PlayHistoryView: View {
                 Button {
                     exportCSV()
                 } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
+                    Label(L10n.export, systemImage: "square.and.arrow.up")
                 }
                 .disabled(historyManager.entries.isEmpty)
 
@@ -169,7 +169,7 @@ struct PlayHistoryView: View {
                     Button {
                         showDeleteFilteredConfirm = true
                     } label: {
-                        Label("Delete \(cachedFilteredEntries.count) Shown", systemImage: "xmark.bin")
+                        Label(L10n.deleteShownFormat(cachedFilteredEntries.count), systemImage: "xmark.bin")
                     }
                     .disabled(cachedFilteredEntries.isEmpty)
                 }
@@ -280,7 +280,7 @@ struct PlayHistoryView: View {
                 DatePicker("", selection: $customDateFrom, displayedComponents: [.date])
                     .labelsHidden()
                     .frame(width: 100)
-                Text("to")
+                Text(L10n.dateRangeTo)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 DatePicker("", selection: $customDateTo, displayedComponents: [.date])
