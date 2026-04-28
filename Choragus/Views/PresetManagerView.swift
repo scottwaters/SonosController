@@ -483,6 +483,22 @@ private struct PresetEditView: View {
             .padding(.vertical, 10)
         }
         .frame(width: 520, height: 600)
+        .onAppear { ensureHomeTheaterEQInitialised() }
+        // Coordinator can be re-picked mid-edit — when switching from
+        // a stereo pair to an HT zone, the HT section's `homeTheaterEQ`
+        // is still nil from the previous coordinator and renders empty
+        // until the user toggles. Re-run the same lazy init.
+        .onChange(of: preset.coordinatorDeviceID) {
+            ensureHomeTheaterEQInitialised()
+        }
+    }
+
+    /// If the current state needs a `HomeTheaterEQ` but doesn't have
+    /// one, allocate it. Idempotent.
+    private func ensureHomeTheaterEQInitialised() {
+        if preset.includesEQ && isHTZone && preset.homeTheaterEQ == nil {
+            preset.homeTheaterEQ = HomeTheaterEQ()
+        }
     }
 
     // MARK: - Speaker Volume Row
