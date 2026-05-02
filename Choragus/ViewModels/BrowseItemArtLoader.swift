@@ -10,6 +10,15 @@ import SonosKit
 final class BrowseItemArtLoader {
     private let sonosManager: any (BrowsingServiceProtocol & ArtCacheProtocol & TransportStateProviding)
 
+    /// Process-lifetime negative cache. An `objectID` lands here once
+    /// every art-resolve strategy has failed for it; subsequent
+    /// `loadArt` calls short-circuit instead of re-running the full
+    /// SOAP cascade (BrowseMetadata, container-first-track, iTunes
+    /// search). Lifted to a `static` because each row in the browse
+    /// list constructs a fresh `BrowseItemArtLoader` per `.onAppear`,
+    /// so an instance-level cache would never see a hit.
+    private static var negativeArt: Set<String> = []
+
     init(sonosManager: any (BrowsingServiceProtocol & ArtCacheProtocol & TransportStateProviding)) {
         self.sonosManager = sonosManager
     }
@@ -32,9 +41,15 @@ final class BrowseItemArtLoader {
             return URL(string: cachedArt)
         }
 
+        // 0b. Negative cache — every strategy already failed for this
+        // item in this session. Skip the SOAP / iTunes cascade.
+        if Self.negativeArt.contains(item.objectID) { return nil }
+
         // Local library items get special handling
         if isLocalLibraryItem(item) {
-            return await loadLocalLibraryArt(item: item)
+            if let url = await loadLocalLibraryArt(item: item) { return url }
+            Self.negativeArt.insert(item.objectID)
+            return nil
         }
 
         // 1. Try DIDL metadata
@@ -66,6 +81,7 @@ final class BrowseItemArtLoader {
             }
         }
 
+        Self.negativeArt.insert(item.objectID)
         return nil
     }
 
@@ -86,7 +102,10 @@ final class BrowseItemArtLoader {
                 return URL(string: artURI)
             }
         } catch {
-            sonosDebugLog("[BROWSE] BrowseMetadata art lookup failed: \(error)")
+            // Failure is expected for many service-side containers
+            // (Sonos returns 701/UPnPError for objects that don't
+            // expose metadata). The negative cache in `loadArt`
+            // prevents repeats; no log needed.
         }
         return nil
     }
@@ -112,7 +131,7 @@ final class BrowseItemArtLoader {
                 return URL(string: artURI)
             }
         } catch {
-            sonosDebugLog("[BROWSE] Container art browse failed: \(error)")
+            // Same expected-failure path as `tryBrowseMetadata`.
         }
         return nil
     }
@@ -220,7 +239,10 @@ final class BrowseItemArtLoader {
                     }
                 }
             }
-        } catch { sonosDebugLog("[BROWSE] Container art scan failed: \(error)") }
+        } catch {
+            // Recursion bottoms out silently — negative cache handles
+            // repeat suppression at the entry point.
+        }
         return nil
     }
 }

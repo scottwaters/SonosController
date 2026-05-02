@@ -228,8 +228,14 @@ public final class HybridEventFirstTransport: TransportStrategy, @unchecked Send
         do {
             let sub = try await manager.subscribe(device: device, servicePath: path)
             setSID(sub.sid, device: device.id, service: serviceType)
+            if serviceType == "renderingControl" {
+                sonosDebugLog("[RC-SUB] OK room=\(device.roomName) id=\(device.id) sid=\(sub.sid)")
+            }
         } catch {
             sonosDebugLog("[TRANSPORT] Subscription to \(device.roomName) \(serviceType) failed: \(error)")
+            if serviceType == "renderingControl" {
+                sonosDebugLog("[RC-SUB] FAIL room=\(device.roomName) id=\(device.id) error=\(error)")
+            }
         }
     }
 
@@ -254,6 +260,19 @@ public final class HybridEventFirstTransport: TransportStrategy, @unchecked Send
         }
         let serviceType = info.service
         let deviceID = info.deviceID
+
+        // Broadcast every parsed event for observers (e.g. the in-app
+        // Live Events tab in Diagnostics). Posted unconditionally —
+        // there's no consumer cost when nothing is subscribed.
+        NotificationCenter.default.post(
+            name: SonosUPnPEventNotification.name,
+            object: nil,
+            userInfo: [
+                SonosUPnPEventNotification.serviceKey: serviceType,
+                SonosUPnPEventNotification.deviceIDKey: deviceID,
+                SonosUPnPEventNotification.bodyKey: body
+            ]
+        )
 
         switch serviceType {
         case "avTransport":
@@ -338,6 +357,8 @@ public final class HybridEventFirstTransport: TransportStrategy, @unchecked Send
     @MainActor
     private func handleRenderingControlEvent(body: String, deviceID: String) {
         let event = LastChangeParser.parseRenderingControlEvent(body)
+        let room = currentDevices[deviceID]?.roomName ?? deviceID
+        sonosDebugLog("[RC-RAW] room=\(room) id=\(deviceID) volume=\(event.volume.map(String.init) ?? "nil") mute=\(event.mute.map(String.init) ?? "nil")")
 
         if let volume = event.volume {
             delegate?.transportDidUpdateVolume(deviceID, volume: volume)
@@ -525,4 +546,17 @@ public final class LegacyPollingTransport: TransportStrategy, @unchecked Sendabl
             }
         }
     }
+}
+
+/// Notification keys for the live UPnP event broadcast emitted by
+/// `HybridEventFirstTransport.handleEvent`. Consumed by the in-app
+/// Live Events tab in Diagnostics. Lives here (rather than in
+/// `EventListener`) because the notification carries the resolved
+/// `serviceType` + `deviceID` from `lookupSID`, which only the
+/// transport knows.
+public enum SonosUPnPEventNotification {
+    public static let name = Notification.Name("SonosUPnPEventNotification")
+    public static let serviceKey = "service"   // "avTransport" / "renderingControl" / "topology"
+    public static let deviceIDKey = "deviceID" // RINCON UUID
+    public static let bodyKey = "body"         // Raw NOTIFY XML
 }

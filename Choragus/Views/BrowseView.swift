@@ -303,10 +303,13 @@ struct BrowseSectionsView: View {
         // via PlexAuthManager PIN flow) and Cloud (SMAPI relay). Show
         // each in the sidebar only when its own auth is in place.
         // User can connect 0, 1, or 2 of them.
+        // Cache `smapiSearchableServices` — reaching it traverses the
+        // SMAPI token store + sorts. Used twice below.
+        let smapiServices = smapiSearchableServices
         let hasDirectPlex = plexAuth.isAuthenticated
-        let hasSMAPIPlex = smapiSearchableServices.contains { $0.id == ServiceID.plex }
+        let hasSMAPIPlex = smapiServices.contains { $0.id == ServiceID.plex }
 
-        for service in smapiSearchableServices {
+        for service in smapiServices {
             // Plex SMAPI is added separately below as "Plex – Cloud" so
             // we don't double-list it as plain "Plex" + a flavored one.
             if service.id == ServiceID.plex { continue }
@@ -362,7 +365,13 @@ struct BrowseSectionsView: View {
     }
 
     var body: some View {
-        List {
+        // Compute once per body — `orderedServiceEntries` walks SMAPI
+        // tokens, devices, and runs a sort. The previous body called it
+        // twice (`!isEmpty` + `ForEach`) so every re-render did the work
+        // twice. Inside `orderedServiceEntries`, `smapiSearchableServices`
+        // was *itself* called twice — same fix applied below.
+        let serviceEntries = orderedServiceEntries
+        return List {
             // Recently Played
             if !playHistoryManager.entries.isEmpty {
                 Section {
@@ -376,11 +385,11 @@ struct BrowseSectionsView: View {
             }
 
             // Service Search — ordered, reorderable — only shown if services are enabled
-            if !orderedServiceEntries.isEmpty {
+            if !serviceEntries.isEmpty {
                 Section {
                     CollapsibleSectionHeader(title: "Service Search", isExpanded: $serviceSearchExpanded)
                     if serviceSearchExpanded {
-                        ForEach(Array(orderedServiceEntries.enumerated()), id: \.element.id) { index, entry in
+                        ForEach(Array(serviceEntries.enumerated()), id: \.element.id) { index, entry in
                             Button {
                                 onNavigate(BrowseDestination(title: entry.title, objectID: entry.objectID))
                             } label: {
@@ -391,7 +400,7 @@ struct BrowseSectionsView: View {
                                 if index > 0 {
                                     Button(L10n.moveUp) { moveServiceEntry(from: index, by: -1) }
                                 }
-                                if index < orderedServiceEntries.count - 1 {
+                                if index < serviceEntries.count - 1 {
                                     Button(L10n.moveDown) { moveServiceEntry(from: index, by: 1) }
                                 }
                             }
@@ -667,7 +676,7 @@ struct BrowseListView: View {
 
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            ForEach(vm.filteredItems) { item in
+                            ForEach(Array(vm.filteredItems.enumerated()), id: \.element.id) { index, item in
                                 Button {
                                     handleTap(item)
                                 } label: {
@@ -693,16 +702,39 @@ struct BrowseListView: View {
                                             .padding(.trailing, 12)
                                     }
                                 }
+                                .onAppear {
+                                    // Infinite-scroll trigger. Fires when one
+                                    // of the last 10 currently-rendered rows
+                                    // appears, so the next page begins
+                                    // loading before the user reaches the
+                                    // bottom. `vm.loadMore` is concurrency-
+                                    // guarded by `isLoadingMore`, so this
+                                    // can fire multiple times safely.
+                                    if index >= vm.filteredItems.count - 10 {
+                                        Task { await vm.loadMore() }
+                                    }
+                                }
                                 Divider().padding(.leading, 64)
                         }
 
                         if vm.loadedCount < vm.totalItems {
-                            Button("\(L10n.loadMore) (\(vm.loadedCount) \(L10n.of) \(vm.totalItems))...") {
-                                Task { await vm.loadMore() }
+                            // Bottom sentinel — both surfaces a spinner
+                            // while the next page is in flight AND
+                            // re-arms `loadMore` on its own appearance
+                            // for the case where the row-level trigger
+                            // didn't fire (very short result lists, or
+                            // the threshold rebuilt mid-fetch).
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("\(vm.loadedCount) \(L10n.of) \(vm.totalItems)")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
                             }
                             .frame(maxWidth: .infinity)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 8)
+                            .padding(.vertical, 12)
+                            .onAppear {
+                                Task { await vm.loadMore() }
+                            }
                         }
                     }
                 }

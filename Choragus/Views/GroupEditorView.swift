@@ -26,20 +26,40 @@ struct GroupEditorView: View {
     }
 
     private var availableDevices: [SonosDevice] {
+        let coordID = initialGroup.coordinatorID
+        // swGen of the group coordinator: "1" for S1, "2" for S2, "" if
+        // unknown. Sonos rejects S1↔S2 grouping at the firmware level,
+        // so filter the list to same-generation speakers. Unknowns on
+        // either side fall through (conservative) so a discovery race
+        // can't hide a speaker that's actually compatible.
+        let coordDevice = sonosManager.devices[coordID] ?? initialGroup.coordinator
+        let coordSwGen = coordDevice?.swGen ?? ""
+
         var result: [SonosDevice] = []
         var seen = Set<String>()
         for g in sonosManager.groups {
             for member in g.members {
-                if !seen.contains(member.id) {
-                    seen.insert(member.id)
-                    result.append(member)
+                if seen.contains(member.id) { continue }
+                if !coordSwGen.isEmpty,
+                   !member.swGen.isEmpty,
+                   member.swGen != coordSwGen {
+                    continue
                 }
+                seen.insert(member.id)
+                result.append(member)
             }
         }
-        let coordID = initialGroup.coordinatorID
+
+        let memberIDs = optimisticMemberIDs
         return result.sorted { a, b in
+            // 1. Coordinator always first.
             if a.id == coordID { return true }
             if b.id == coordID { return false }
+            // 2. Current-group members above non-members.
+            let aInGroup = memberIDs.contains(a.id)
+            let bInGroup = memberIDs.contains(b.id)
+            if aInGroup != bInGroup { return aInGroup }
+            // 3. Alpha-sort within each bucket.
             return a.roomName.localizedCaseInsensitiveCompare(b.roomName) == .orderedAscending
         }
     }

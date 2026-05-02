@@ -206,6 +206,10 @@ public protocol TransportStateProviding {
     var groupPlayModes: [String: PlayMode] { get }
     var groupPositions: [String: TimeInterval] { get }
     var groupDurations: [String: TimeInterval] { get }
+    /// Shared playhead anchors. Single source of truth for every view
+    /// that displays a continuously-advancing playhead. Maintained by
+    /// the conformer; consumers are read-only.
+    var groupPositionAnchors: [String: PositionAnchor] { get }
     var deviceVolumes: [String: Int] { get }
     var deviceMutes: [String: Bool] { get }
     var awaitingPlayback: [String: Bool] { get }
@@ -225,6 +229,15 @@ public protocol TransportStateProviding {
     func setTransportGrace(groupID: String, duration: TimeInterval)
     func setModeGrace(groupID: String, duration: TimeInterval)
     func setPositionGrace(coordinatorID: String, duration: TimeInterval)
+
+    // MARK: Position anchor (shared playhead, drift-tolerant)
+    func setPositionAnchor(coordinatorID: String, _ anchor: PositionAnchor)
+    func setPositionDragInProgress(coordinatorID: String?)
+    /// Reports an authoritative position+duration from any feed (UPnP
+    /// event, periodic poll, transport strategy). Drives both
+    /// `groupPositions` and the shared anchor; gated by the position
+    /// grace and seek-drag suppression.
+    func transportDidUpdatePosition(_ groupID: String, position: TimeInterval, duration: TimeInterval)
 
     // MARK: Art cache
     func cacheArtURL(_ artURL: String, forURI uri: String, title: String, itemID: String)

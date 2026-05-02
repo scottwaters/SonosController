@@ -22,9 +22,10 @@ struct ContentView: View {
     /// every L10n string in the main window picks up the new language
     /// the moment the picker flips.
     @AppStorage(UDKey.appLanguage) private var appLanguage: String = "en"
+    @AppStorage(UDKey.hideDiagnosticsIcon) private var hideDiagnosticsIcon = false
     @State private var selectedGroupID: String?
-    @State private var showQueue = false
-    @State private var showBrowse = false
+    @AppStorage(UDKey.showQueue) private var showQueue = false
+    @AppStorage(UDKey.showBrowse) private var showBrowse = false
     // Alarms: Sonos S2 app uses cloud API for alarms, not local UPnP AlarmClock.
     // UPnP returns 0 alarms. Feature removed until cloud API access is available.
     @State private var showSettings = false
@@ -40,7 +41,12 @@ struct ContentView: View {
     private let nowPlayingMinWidth: CGFloat = 640
     private let browseMinWidth: CGFloat = 260
     private let browseMaxWidth: CGFloat = 600
-    private let queueMinWidth: CGFloat = 280
+    /// 302 — the queue width measured from the user's reference window
+    /// (1409 × 597) where the four toolbar icons, the title, the track
+    /// count, and the vertical scroll-bar gutter all render without
+    /// clipping. Sums to a `requiredMinWidth` of exactly 1409 pt
+    /// (200 + 260 + 6 + 640 + 1 + 302) when all panels are visible.
+    private let queueMinWidth: CGFloat = 302
     private let queueMaxWidth: CGFloat = 400
     private let sidebarWidth: CGFloat = 200
     /// Pixels eaten by the visible separators between panels. Browse panel
@@ -51,7 +57,12 @@ struct ContentView: View {
     /// queue's vertical scrollbar getting truncated).
     private let browseDividerWidth: CGFloat = 6
     private let queueDividerWidth: CGFloat = 1
-    @State private var userBrowseWidth: CGFloat?
+    /// Sentinel: 0 = no user override (allocator picks default).
+    @AppStorage(UDKey.userBrowseWidth) private var userBrowseWidthStored: Double = 0
+    private var userBrowseWidth: CGFloat? {
+        get { userBrowseWidthStored > 0 ? CGFloat(userBrowseWidthStored) : nil }
+        nonmutating set { userBrowseWidthStored = Double(newValue ?? 0) }
+    }
 
     /// Allocates panel widths so they always sum exactly to
     /// `totalWidth`, every visible panel meets its minimum, and
@@ -106,10 +117,24 @@ struct ContentView: View {
     }
 
     /// Minimum window width needed for current panel configuration.
+    /// Whether the speaker sidebar column is currently consuming
+    /// horizontal space. NavigationSplitView's `.detailOnly`
+    /// visibility hides the sidebar entirely; in that mode we
+    /// shouldn't reserve sidebar width in the OS resize floor or the
+    /// user gets a window minimum 200 pt larger than the actual
+    /// content needs.
+    private var sidebarShown: Bool {
+        sidebarVisibility != .detailOnly
+    }
+
     /// Includes the divider pixels rendered alongside each panel so the
     /// OS-level resize floor exactly matches what `panelWidths` allocates.
+    /// Sidebar width is conditional on `sidebarShown` — when the user
+    /// toggles the sidebar off, the OS minimum drops by `sidebarWidth`
+    /// so they can shrink the window down to just the visible content.
     private var requiredMinWidth: CGFloat {
-        var width = sidebarWidth + nowPlayingMinWidth
+        var width = nowPlayingMinWidth
+        if sidebarShown { width += sidebarWidth }
         if showBrowse { width += browseMinWidth + browseDividerWidth }
         if showQueue { width += queueMinWidth + queueDividerWidth }
         return width
@@ -152,6 +177,13 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Persists the main window's frame across launches via the
+            // host NSWindow's `setFrameAutosaveName`. Background view
+            // because it doesn't render anything itself — it just
+            // attaches to the window once it's available.
+            WindowFrameAutosaver(name: "ChoragusMainWindow")
+                .frame(width: 0, height: 0)
+
             // Error banner
             if errorHandler.showError, let errorMsg = errorHandler.currentError {
                 DismissibleBanner(
@@ -213,9 +245,31 @@ struct ContentView: View {
                 .background(.blue.opacity(0.05))
             }
 
-            NavigationSplitView(columnVisibility: $sidebarVisibility) {
+            // Wrap the visibility binding so toggling the sidebar
+            // re-runs `ensureWindowFits()` — without this the OS-level
+            // minSize would stay set for "sidebar shown" even after
+            // the user hides it, locking the window 200 pt wider than
+            // it needs to be.
+            NavigationSplitView(columnVisibility: Binding(
+                get: { sidebarVisibility },
+                set: { newValue in
+                    sidebarVisibility = newValue
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { ensureWindowFits() }
+                }
+            )) {
                 RoomListView(selectedGroupID: $selectedGroupID)
-                    .navigationSplitViewColumnWidth(min: 140, ideal: 180, max: 220)
+                    // Pinned to the exact width the panel-width
+                    // calculator (`requiredMinWidth`, `panelWidths`)
+                    // assumes. The previous range (min 140, ideal 180,
+                    // max 220) let the user drag the sidebar to a width
+                    // greater than `sidebarWidth`, leaving
+                    // `requiredMinWidth` short by up to 20 pt — the OS
+                    // resize floor was wrong, the queue panel got
+                    // squeezed below its declared minimum, and the
+                    // queue toolbar's trailing icons clipped off the
+                    // right edge. Pinning to a single value keeps the
+                    // calculator and the rendered layout in lockstep.
+                    .navigationSplitViewColumnWidth(sidebarWidth)
             } detail: {
                 if let group = selectedGroup {
                     GeometryReader { geo in
@@ -397,12 +451,6 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "speaker.wave.3")
                     }
-                    // SwiftUI's `Menu` label inherits the ambient
-                    // `.tint` from the root `ContentView`, but the
-                    // surrounding toolbar `Button`s render in
-                    // template/primary. Override the tint just for
-                    // this Menu so all six toolbar icons read as one
-                    // set instead of one accent dot in the middle.
                     .tint(.primary)
                     .help(L10n.muteOrUnmuteAll)
                     .sheet(isPresented: $showPresetManager) {
@@ -419,11 +467,41 @@ struct ContentView: View {
                     .help(L10n.listeningStats)
 
                     Button {
+                        WindowManager.shared.openKaraokeLyricsForActiveGroup()
+                    } label: {
+                        Image(systemName: "music.mic")
+                    }
+                    .help(L10n.popOutLyrics)
+
+                    Button {
                         sonosManager.rescan()
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
                     .help(L10n.rescanNetwork)
+
+                    if !hideDiagnosticsIcon {
+                        Button {
+                            WindowManager.shared.openDiagnostics()
+                        } label: {
+                            if NSImage(named: "BugIcon") != nil {
+                                Image("BugIcon")
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 18, height: 18)
+                            } else {
+                                ZStack(alignment: .topTrailing) {
+                                    Image(systemName: "ant.fill")
+                                    Image(systemName: "exclamationmark.circle.fill")
+                                        .font(.system(size: 8))
+                                        .foregroundStyle(.white, .red)
+                                        .symbolRenderingMode(.palette)
+                                        .offset(x: 5, y: -3)
+                                }
+                            }
+                        }
+                        .help(L10n.diagnostics)
+                    }
 
                     Button {
                         showSettings.toggle()
@@ -491,6 +569,97 @@ struct ContentView: View {
         // `sonosManager.resolvedAccentColor` change colour when the
         // setting is updated, and the picker appears to "do nothing".
         .tint(sonosManager.resolvedAccentColor)
+    }
+
+    /// Karaoke popout — top-level toolbar shortcut so the feature is
+    /// discoverable without drilling into the lyrics tab. Extracted so
+    /// the toolbar's `ToolbarItemGroup` body stays under the Swift
+    /// compiler's type-inference complexity ceiling.
+    @ViewBuilder
+    private var karaokeToolbarButton: some View {
+        Button {
+            if let group = selectedGroup {
+                WindowManager.shared.openKaraokeLyrics(group: group)
+            }
+        } label: {
+            Image(systemName: "music.mic")
+        }
+        .disabled(selectedGroup == nil)
+        .help(L10n.popOutLyrics)
+    }
+
+    /// Speaker / group menu (pause-all, resume-all, mute, presets).
+    /// Extracted so the toolbar `ToolbarItemGroup` body fits inside
+    /// the Swift compiler's type-inference budget once the karaoke
+    /// button and the diagnostics button are also present.
+    @ViewBuilder
+    private var speakerControlMenu: some View {
+        Menu {
+            Button(L10n.pauseAll) {
+                Task { await sonosManager.pauseAll() }
+            }
+            Button(L10n.resumeAll) {
+                Task { await sonosManager.resumeAll() }
+            }
+            Divider()
+            Button(L10n.muteAllSpeakers) {
+                Task { await muteAll(muted: true) }
+            }
+            Button(L10n.unmuteAllSpeakers) {
+                Task { await muteAll(muted: false) }
+            }
+            Section(L10n.groupPresets) {
+                Button(L10n.managePresets) {
+                    showPresetManager = true
+                }
+                ForEach(presetManager.presets) { preset in
+                    Button(preset.name) {
+                        Task {
+                            await presetManager.applyPreset(preset, using: sonosManager)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "speaker.wave.3")
+        }
+        .tint(.primary)
+        .help(L10n.muteOrUnmuteAll)
+        .sheet(isPresented: $showPresetManager) {
+            PresetManagerView()
+                .environmentObject(sonosManager)
+                .environmentObject(presetManager)
+        }
+    }
+
+    /// Same extraction reason as `karaokeToolbarButton` — the inline
+    /// conditional + ZStack composite of the bug icon was tipping the
+    /// toolbar `ToolbarItemGroup` over the type-inference complexity
+    /// budget once the karaoke button was added beside it.
+    @ViewBuilder
+    private var diagnosticsToolbarButton: some View {
+        if !hideDiagnosticsIcon {
+            Button {
+                WindowManager.shared.openDiagnostics()
+            } label: {
+                if NSImage(named: "BugIcon") != nil {
+                    Image("BugIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                } else {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "ant.fill")
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.white, .red)
+                            .symbolRenderingMode(.palette)
+                            .offset(x: 5, y: -3)
+                    }
+                }
+            }
+            .help(L10n.diagnostics)
+        }
     }
 
     private func handlePlayPause() {
@@ -606,5 +775,22 @@ private struct DismissibleBanner: View {
         .padding(.vertical, 6)
         .background(tint.opacity(0.1))
     }
+}
+
+/// Hooks into the host `NSWindow` once it's available and assigns a
+/// stable autosave name so AppKit persists the window's frame
+/// (position + size) to UserDefaults across launches.
+private struct WindowFrameAutosaver: NSViewRepresentable {
+    let name: String
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        // `view.window` is nil at make-time. Defer to the next runloop
+        // tick so the host has attached the view before we look it up.
+        DispatchQueue.main.async {
+            view.window?.setFrameAutosaveName(name)
+        }
+        return view
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 

@@ -107,7 +107,27 @@ struct MusicServicesSettingsSection: View {
     ///      so the user sees the full Sonos universe with state, but
     ///      none of them masquerade as Available.
     private func buildServiceList() -> [CanonicalService] {
-        var out = Self.pinnedServices
+        // Promote pinned service sids to match the household's catalog
+        // when a same-named entry exists. The hardcoded pin sids come
+        // from SoCo's public SMAPI wiki (e.g. Pandora = 3), but Sonos
+        // assigns its own per-household sid for each service in
+        // `availableServices`. SMAPI calls (browse, search, auth) must
+        // use the household sid or they fail. The original sid is kept
+        // as an alternative so dedupe still catches it.
+        var out = Self.pinnedServices.map { pin -> CanonicalService in
+            guard let match = smapiManager.availableServices.first(where: {
+                $0.name.lowercased() == pin.name.lowercased()
+            }), match.id != pin.serviceID else { return pin }
+            sonosDiagLog(.info, tag: "MUSIC-SERVICES",
+                         "Promoting pinned \(pin.name) sid \(pin.serviceID) → \(match.id) (household catalog)")
+            return CanonicalService(
+                key: pin.key,
+                serviceID: match.id,
+                name: pin.name,
+                alternativeIDs: pin.alternativeIDs + [pin.serviceID],
+                plexFlavor: pin.plexFlavor
+            )
+        }
         let hasSMAPIPlexToken = smapiManager.tokenStore.authenticatedServices[ServiceID.plex] != nil
         let hasPlexSerial = smapiManager.serviceSerialNumbers[ServiceID.plex] != nil
         // Also surface the row when the Sonos household lists Plex as
@@ -122,14 +142,23 @@ struct MusicServicesSettingsSection: View {
                              name: "Plex – Cloud", alternativeIDs: [], plexFlavor: .cloud))
         }
         var coveredIDs: Set<Int> = []
+        // Also dedupe by name. Pinned services use a hardcoded sid (e.g.
+        // Pandora = 3 per SoCo's SMAPI wiki) but Sonos's per-household
+        // descriptor catalog has been observed to return the same service
+        // under a different sid. Without name dedupe, the user sees two
+        // identically-labelled rows.
+        var coveredNames: Set<String> = []
         for svc in out {
             coveredIDs.insert(svc.serviceID)
             for alt in svc.alternativeIDs { coveredIDs.insert(alt) }
+            coveredNames.insert(svc.name.lowercased())
         }
         for sid in smapiManager.tokenStore.authenticatedServices.keys where !coveredIDs.contains(sid) {
-            out.append(.init(key: "\(sid).auth", serviceID: sid, name: serviceName(for: sid),
+            let name = serviceName(for: sid)
+            out.append(.init(key: "\(sid).auth", serviceID: sid, name: name,
                              alternativeIDs: [], plexFlavor: .none))
             coveredIDs.insert(sid)
+            coveredNames.insert(name.lowercased())
         }
         let serialIDs = smapiManager.serviceSerialNumbers.keys
             .filter { !coveredIDs.contains($0) }
@@ -139,16 +168,20 @@ struct MusicServicesSettingsSection: View {
             out.append(.init(key: "\(entry.id).sn", serviceID: entry.id, name: entry.name,
                              alternativeIDs: [], plexFlavor: .none))
             coveredIDs.insert(entry.id)
+            coveredNames.insert(entry.name.lowercased())
         }
         // Catalog tail — every other service Sonos knows about.
         // These render gray ("Not connected") or red ("Unavailable").
+        // Filter by both id AND name so a service we already pinned at
+        // one sid doesn't appear a second time at a different sid.
         let catalog = smapiManager.availableServices
-            .filter { !coveredIDs.contains($0.id) }
+            .filter { !coveredIDs.contains($0.id) && !coveredNames.contains($0.name.lowercased()) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         for desc in catalog {
             out.append(.init(key: "\(desc.id).cat", serviceID: desc.id, name: desc.name,
                              alternativeIDs: [], plexFlavor: .none))
             coveredIDs.insert(desc.id)
+            coveredNames.insert(desc.name.lowercased())
         }
         return out
     }

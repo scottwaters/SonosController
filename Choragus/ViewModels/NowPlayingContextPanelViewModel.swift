@@ -1,16 +1,12 @@
-/// NowPlayingContextPanelViewModel.swift — Owns the metadata
-/// state machine for the Lyrics / About / History panel.
-///
-/// Pulls lyrics from `LyricsService`, artist + album info from
-/// `MusicMetadataService`, and persists the per-track lyrics offset.
-/// The View renders state and dispatches actions; all the async
-/// orchestration (cache hit checks, lazy loads, debounced saves,
-/// background pre-warming, refresh) lives here so the View stays
-/// declarative.
+/// NowPlayingContextPanelViewModel.swift — Owns the About + History
+/// tab state for the Now Playing context panel. Lyrics state moved to
+/// `LyricsCoordinator` so the inline panel and the karaoke popout
+/// window share one source of truth (resolved lyrics, parse cache,
+/// load status, user offset).
 import Foundation
 import SonosKit
 
-/// State of one async metadata fetch (lyrics or about).
+/// State of one async metadata fetch (about).
 enum ContextLoadState: Equatable {
     case idle, loading, loaded, missing
     case error(String)
@@ -31,53 +27,29 @@ enum ContextLoadState: Equatable {
 @MainActor
 @Observable
 final class NowPlayingContextPanelViewModel {
-    // MARK: - Lyrics state
-    var lyrics: Lyrics?
-    var lyricsState: ContextLoadState = .idle
-    /// Per-track lyrics timing offset in seconds. Restored from cache
-    /// on every track change (defaults to 0); persisted via the
-    /// LyricsService whenever the user nudges. Positive = lyrics earlier.
-    var lyricsOffset: Double = 0
-
     // MARK: - About state
     var artistInfo: ArtistInfo?
     var albumInfo: AlbumInfo?
     var aboutState: ContextLoadState = .idle
 
     // MARK: - Dependencies
-    private let lyricsService: LyricsService
+    private let lyricsCoordinator: LyricsCoordinator
     private let metadataService: MusicMetadataService
 
-    /// Holds the in-flight debounced offset save so a flurry of taps
-    /// coalesces into a single write at the final value.
-    private var offsetSaveTask: Task<Void, Never>?
-
-    init(lyricsService: LyricsService, metadataService: MusicMetadataService) {
-        self.lyricsService = lyricsService
+    init(lyricsCoordinator: LyricsCoordinator, metadataService: MusicMetadataService) {
+        self.lyricsCoordinator = lyricsCoordinator
         self.metadataService = metadataService
     }
 
     // MARK: - Lifecycle
 
-    /// Reset all state for a new track and restore the persisted
-    /// lyrics offset (if any). Call from the View's `.task(id:)`
-    /// before triggering a load.
+    /// Reset all per-track state for a new track. The coordinator owns
+    /// the per-track lyrics + offset memoisation, so this only clears
+    /// the About fetch state.
     func resetForNewTrack(_ metadata: TrackMetadata) {
-        lyrics = nil
-        lyricsState = .idle
         artistInfo = nil
         albumInfo = nil
         aboutState = .idle
-        // Reset to 0 first so a rapid track skip doesn't briefly show
-        // the previous track's offset before the persisted one lands.
-        lyricsOffset = 0
-        if let saved = lyricsService.loadOffset(
-            artist: metadata.artist,
-            title: metadata.title,
-            album: metadata.album.isEmpty ? nil : metadata.album
-        ) {
-            lyricsOffset = saved
-        }
     }
 
     /// Loads whichever tab is currently active, then pre-warms the
@@ -88,8 +60,10 @@ final class NowPlayingContextPanelViewModel {
     ) async {
         guard !metadata.title.isEmpty else { return }
         switch tab {
-        case .lyrics: await loadLyrics(metadata)
-        case .about:  await loadAbout(metadata)
+        case .lyrics:
+            // Coordinator handles its own idempotent fetch.
+            lyricsCoordinator.loadIfNeeded(for: metadata)
+        case .about:   await loadAbout(metadata)
         case .history: break
         }
         warmInactiveTabCaches(active: tab, metadata: metadata)
@@ -113,47 +87,30 @@ final class NowPlayingContextPanelViewModel {
         await loadAbout(metadata)
     }
 
-    /// Debounced offset persistence. Cancels any in-flight save and
-    /// schedules a new one for 500 ms in the future, so a tap-tap-tap
-    /// of the +/- buttons coalesces into a single write at the final
-    /// value. Captures the metadata at schedule time so a track change
-    /// during the debounce window doesn't cross-contaminate the cache.
-    func scheduleOffsetSave(_ value: Double, metadata: TrackMetadata) {
-        offsetSaveTask?.cancel()
-        let artist = metadata.artist
-        let title = metadata.title
-        let album = metadata.album.isEmpty ? nil : metadata.album
-        // Don't save against a missing identifier — would write under an
-        // empty key and cross-collide with whatever track is playing next.
-        guard !title.isEmpty else { return }
-        let service = lyricsService
-        offsetSaveTask = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            if Task.isCancelled { return }
-            service.saveOffset(artist: artist, title: title, album: album, seconds: value)
-        }
-    }
-
     // MARK: - Private loaders
-
-    private func loadLyrics(_ metadata: TrackMetadata) async {
-        if case .loaded = lyricsState { return }
-        if case .loading = lyricsState { return }
-        lyricsState = .loading
-        let duration = metadata.duration > 0 ? Int(metadata.duration) : nil
-        let result = await lyricsService.fetch(
-            artist: metadata.artist,
-            title: metadata.title,
-            album: metadata.album.isEmpty ? nil : metadata.album,
-            durationSeconds: duration
-        )
-        lyrics = result
-        lyricsState = result == nil ? .missing : .loaded
-    }
 
     private func loadAbout(_ metadata: TrackMetadata) async {
         if case .loaded = aboutState { return }
         if case .loading = aboutState { return }
+        // On radio, the `artist` field frequently carries the station or
+        // soundtrack name rather than the actual performing artist (e.g.
+        // station "Movie Ticket Radio" reports artist="Animal House").
+        // Sending that to Wikipedia / MusicBrainz / Last.fm reliably
+        // produces unrelated articles. Render an empty About card
+        // instead — matches user preference: "if Wikipedia doesn't have
+        // a solid result, don't show anything".
+        if metadata.isRadioStream || !metadata.stationName.isEmpty {
+            let artistField = metadata.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            let stationField = metadata.stationName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let artistMatchesStation = !stationField.isEmpty &&
+                artistField.caseInsensitiveCompare(stationField) == .orderedSame
+            if artistField.isEmpty || artistMatchesStation {
+                artistInfo = nil
+                albumInfo = nil
+                aboutState = .loaded
+                return
+            }
+        }
         aboutState = .loading
         async let artistTask = metadataService.artistInfo(name: metadata.artist)
         async let albumTask: AlbumInfo? = metadata.album.isEmpty
@@ -165,29 +122,20 @@ final class NowPlayingContextPanelViewModel {
     }
 
     /// Fire-and-forget background fetches for the inactive tab(s) so
-    /// the SQLite metadata cache is hot when the user switches tabs.
-    /// Service-layer methods write to that cache, so subsequent
-    /// `loadLyrics` / `loadAbout` calls return immediately on hit.
+    /// the cache is hot when the user switches tabs.
     private func warmInactiveTabCaches(
         active: NowPlayingContextPanelTab,
         metadata: TrackMetadata
     ) {
         guard !metadata.title.isEmpty else { return }
-        let title = metadata.title
+        let metadataRef = metadataService
+        let coordinator = lyricsCoordinator
         let artist = metadata.artist
         let album = metadata.album
-        let duration = metadata.duration > 0 ? Int(metadata.duration) : nil
-        let lyricsRef = lyricsService
-        let metadataRef = metadataService
 
         if active != .lyrics {
-            Task {
-                _ = await lyricsRef.fetch(
-                    artist: artist, title: title,
-                    album: album.isEmpty ? nil : album,
-                    durationSeconds: duration
-                )
-            }
+            // Coordinator's loadIfNeeded is idempotent and cheap on hit.
+            coordinator.loadIfNeeded(for: metadata)
         }
         if active != .about {
             Task {

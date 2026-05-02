@@ -155,11 +155,17 @@ See [docs/LOCALIZATION.md](docs/LOCALIZATION.md) for the full design.
 
 `FirstRunWelcomeView` is shown once after the main window first appears. Dismissal is persisted via `UserDefaults[firstRunWelcome.shown]`. The dialog's *Open Settings* button directly opens the Settings sheet (via the existing `.openSettings` notification) so users can jump to Settings → Music without navigating the toolbar.
 
-### Update Checker
+### Update Channel
 
-Queries `https://api.github.com/repos/scottwaters/Choragus/releases/latest`, compares `tag_name` (normalized — strips leading "v", extracts numeric run) against the running `CFBundleShortVersionString` using a pure numeric semver comparator.
+Two-tier system. Sparkle 2 is the primary path; the GitHub-API checker is the fallback.
 
-Silent background check at most once per 24 h at launch (`UserDefaults[updateChecker.lastCheck]`). Manual check from the app menu always reports a result. All outcomes (`available`, `current`, `error`) are logged via `sonosDebugLog`.
+**Sparkle 2 (primary).** Active when `Info.plist` carries a non-empty `SUFeedURL` and `SUPublicEDKey`. Both keys are placeholders (`$(SPARKLE_FEED_URL)` / `$(SPARKLE_PUBLIC_KEY)`) populated at build time from environment-driven build settings. The release pipeline injects them; ad-hoc and Debug builds leave them empty so Sparkle stays inert.
+
+`SparkleUpdaterObserver.makeForApp()` checks the substituted values for empty / unsubstituted state; when valid, it constructs `SPUStandardUpdaterController(startingUpdater: true, …)` and exposes the `SPUUpdater` plus its KVO state (`canCheckForUpdates`, `automaticallyChecksForUpdates`, `automaticallyDownloadsUpdates`, `lastUpdateCheckDate`) via `@Published` for the SwiftUI Settings panel and Check-for-Updates menu item. The appcast is signed with an EdDSA private key held only by the release-signer; verification keeps the public key in the shipping bundle and rejects unsigned or wrongly-signed payloads at install time.
+
+**GitHub-API fallback (`UpdateChecker.swift`).** Active only when Sparkle is inert. Queries `api.github.com/repos/scottwaters/Choragus/releases/latest`, compares `tag_name` (normalised — strips leading "v", extracts numeric run) against the running `CFBundleShortVersionString` using a pure numeric semver comparator. Silent background check at most once per 24 h at launch (`UserDefaults[updateChecker.lastCheck]`). Manual check from the app menu always reports a result. Notification-only — opens the GitHub release page in the user's browser; no install path. All outcomes (`available`, `current`, `error`) logged via `sonosDebugLog`.
+
+**Settings → Software Updates** in the System tab is rendered only when Sparkle is active. Three controls: auto-check toggle (off = "no scheduled checks", manual still works), auto-download toggle (disabled until auto-check is on), and a Check Now button with a last-checked timestamp. State flows through `SparkleUpdaterObserver`; both toggles write back to `SPUUpdater` so changes persist in Sparkle's standard `SUEnableAutomaticChecks` / `SUAutomaticallyUpdate` defaults keys.
 
 ---
 

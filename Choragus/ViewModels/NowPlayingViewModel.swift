@@ -8,6 +8,27 @@ import Combine
 import Observation
 import SonosKit
 
+/// Anchored position model — single source of truth for "where the
+/// playhead is right now" used by every position-displaying view
+/// (seek slider, time text, synced lyrics). The view layer wraps
+/// `projected(at:)` in a `TimelineView` to advance smoothly between
+/// authoritative events.
+///
+/// Why this exists: the previous design wrote `smoothPosition` from
+/// two competing sources (a 1 Hz timer that nudged forward in 0.5 s
+/// deadband-filtered steps, plus event-driven snap-overwrites from
+/// `groupPositions`). Each write reached the view as a discrete
+/// jump — backward when the speaker's authoritative time lagged the
+/// wall-clock projection, forward when it led, never smooth between.
+/// A single anchor + per-frame wall-clock projection eliminates the
+/// jumps by construction: between authoritative events the view
+/// extrapolates monotonically, and authoritative events only rebase
+/// the anchor when drift exceeds the noise floor.
+// `PositionAnchor` now lives in SonosKit (`Models/PositionAnchor.swift`) so
+// the karaoke popout window and the inline panel read from a single
+// shared anchor maintained by `SonosManager`. The drift-tolerant rebase
+// logic moved alongside it; this VM is now a pure consumer.
+
 @MainActor
 @Observable
 final class NowPlayingViewModel {
@@ -49,32 +70,100 @@ final class NowPlayingViewModel {
         TrackMetadata.filterDeviceID(trackMetadata.artist)
     }
 
-    // MARK: - Volume
+    // MARK: - Volume / Mute (derived from SonosManager)
+    //
+    // No local mirror dictionaries. Volumes and mutes read directly from
+    // `sonosManager.deviceVolumes` / `deviceMutes` so UI re-renders the
+    // moment the manager publishes — no `.onReceive` middleman, no
+    // intermediate-state race when multiple `@Published` writes happen
+    // inside one event handler (the bug that left FP5 visually unmuted
+    // for 10+ s after Office's coord event already propagated to its
+    // member volume).
 
-    var volume: Double = 30
-    var isMuted = false
-    var speakerVolumes: [String: Double] = [:]
-    var speakerMutes: [String: Bool] = [:]
+    /// Master slider scratchpad — only used while the user is actively
+    /// dragging. Outside of drag, `volume` derives from current member
+    /// volumes so external Sonos-app changes surface immediately.
+    var dragVolume: Double = 0
     var isDraggingVolume = false
-    var lastMasterVolume: Double = 0
-    var volumeGraceUntil: Date = .distantPast
-    var muteGraceUntil: Date = .distantPast
+
+    /// Tracks the last master value applied via `applyMasterVolume` so
+    /// proportional / linear distribution can compute the delta against
+    /// the prior tick during a drag. Reset on drag-start by the slider's
+    /// `onEditingChanged`.
+    private var lastAppliedMaster: Double = 0
 
     // MARK: - Position
 
-    var smoothPosition: TimeInterval = 0
+    /// Shared playhead anchor maintained by `SonosManager`. Every
+    /// position-displaying view (panel seek bar, time text, synced
+    /// lyrics, karaoke popout) reads from this single source so they
+    /// stay in lockstep.
+    var positionAnchor: PositionAnchor {
+        sonosManager.groupPositionAnchors[group.coordinatorID] ?? .zero
+    }
+
+    /// Drag scratchpad — populated only while the user is actively
+    /// dragging the seek slider. The slider's binding writes here; the
+    /// time text and lyrics still project from `positionAnchor`. On
+    /// drag-end this value seeds the seek + new anchor.
+    var dragPosition: TimeInterval = 0
     var isDraggingSeek = false
-    var lastKnownPosition: TimeInterval = 0
-    var lastPositionTimestamp: Date = .distantPast
-    var positionFrozenUntil: Date = .distantPast
-    var progressTimer: Timer?
+
     var metadataPollingTask: Task<Void, Never>?
 
     // MARK: - Transport UI
 
     var actionInFlight: String?
     var crossfadeOn = false
-    var isInitialized = false
+
+    // MARK: - Derived state (read directly from SonosManager)
+
+    /// Master volume — average of the group's per-member volumes when
+    /// idle; the user's drag value while a slider is in flight. Reading
+    /// this property registers a SwiftUI dependency on
+    /// `sonosManager.deviceVolumes`, so external speaker-side changes
+    /// reach the slider on the very next render tick.
+    var volume: Double {
+        if isDraggingVolume { return dragVolume }
+        return currentAverageVolume
+    }
+
+    /// True iff every group member is muted. No stored copy — derived
+    /// from `sonosManager.deviceMutes` on every read so optimistic
+    /// coord-driven mute propagation surfaces in the master toggle the
+    /// instant the manager dictionary is written.
+    var isMuted: Bool {
+        let members = group.members
+        guard !members.isEmpty else { return false }
+        return members.allSatisfy { sonosManager.deviceMutes[$0.id] ?? false }
+    }
+
+    /// Per-member volume map. Computed view over manager state — set
+    /// via the `Binding` in `VolumeControlView` whose setter routes
+    /// each diff through `sonosManager.updateDeviceVolume`.
+    var speakerVolumes: [String: Double] {
+        var result: [String: Double] = [:]
+        for member in group.members {
+            result[member.id] = Double(sonosManager.deviceVolumes[member.id] ?? 0)
+        }
+        return result
+    }
+
+    /// Per-member mute map. Same pattern as `speakerVolumes`.
+    var speakerMutes: [String: Bool] {
+        var result: [String: Bool] = [:]
+        for member in group.members {
+            result[member.id] = sonosManager.deviceMutes[member.id] ?? false
+        }
+        return result
+    }
+
+    private var currentAverageVolume: Double {
+        let members = group.members
+        guard !members.isEmpty else { return 0 }
+        let sum = members.reduce(0.0) { $0 + Double(sonosManager.deviceVolumes[$1.id] ?? 0) }
+        return sum / Double(members.count)
+    }
 
     // MARK: - Art
 
@@ -137,7 +226,16 @@ final class NowPlayingViewModel {
         let minutes = (Int(seconds) % 3600) / 60
         let secs = Int(seconds) % 60
         let timeStr = String(format: "%d:%02d:%02d", hours, minutes, secs)
-        positionFrozenUntil = Date().addingTimeInterval(Timing.positionFreezeAfterSeek)
+        // Apply the seek to the shared anchor immediately so every UI
+        // (panel + karaoke window) reflects the new position before the
+        // speaker's confirmation event arrives (Sonos's grace window
+        // suppresses incoming position events for ~3 s anyway).
+        sonosManager.setPositionAnchor(
+            coordinatorID: group.coordinatorID,
+            PositionAnchor(time: max(0, seconds),
+                           wallClock: Date(),
+                           isPlaying: transportState.isPlaying)
+        )
         sonosManager.setPositionGrace(coordinatorID: group.coordinatorID, duration: Timing.positionFreezeAfterSeek)
         Task {
             do {
@@ -148,19 +246,36 @@ final class NowPlayingViewModel {
         }
     }
 
+    // Anchor maintenance moved to `SonosManager` — both the inline
+    // panel and the karaoke popout now consume the same shared anchor
+    // via `sonosManager.groupPositionAnchors[coordinatorID]`. The drift-
+    // tolerant rebase, transport-state freeze, and seek-explicit set
+    // all happen there.
+
+    /// Project the current playhead. Used by code paths that need a
+    /// snapshot value (history logging, copy-track-info, etc.). Views
+    /// should use `TimelineView` and call `positionAnchor.projected(at:)`
+    /// directly so the read happens on each animation frame.
+    var currentPosition: TimeInterval {
+        positionAnchor.projected(at: Date())
+    }
+
     // MARK: - Volume Actions
 
     func toggleMute() {
         let newMuted = !isMuted
-        isMuted = newMuted
-        muteGraceUntil = Date().addingTimeInterval(Timing.playbackGracePeriod)
+        sonosDebugLog("[UI-TAP] toggleMute group=\(group.name) target=\(newMuted)")
+        // Optimistic write straight into the manager. View bindings read
+        // back from `sonosManager.deviceMutes` on the next render — no
+        // local mirror to drift, no `.onReceive` race window.
         for member in group.members {
-            sonosManager.setMuteGrace(deviceID: member.id, duration: Timing.playbackGracePeriod)
-            speakerMutes[member.id] = newMuted
             sonosManager.updateDeviceMute(member.id, muted: newMuted)
         }
+        sonosDebugLog("[UI-OPT] toggleMute applied to \(group.members.count) members value=\(newMuted)")
         let members = group.members
         Task {
+            sonosDebugLog("[UI-SOAP-START] toggleMute group=\(self.group.name)")
+            let started = Date()
             await withTaskGroup(of: Void.self) { tg in
                 for member in members {
                     tg.addTask {
@@ -172,6 +287,8 @@ final class NowPlayingViewModel {
                     }
                 }
             }
+            let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+            sonosDebugLog("[UI-SOAP-END] toggleMute group=\(self.group.name) elapsed=\(elapsedMs)ms")
         }
     }
 
@@ -185,11 +302,10 @@ final class NowPlayingViewModel {
     /// `setVolume()` routing as the slider (grace periods, proportional
     /// group volume, per-speaker fan-out) to stay feature-consistent.
     func applyScrollVolumeStep(_ step: Int) {
-        let current = volume
+        let current = currentAverageVolume
         let next = max(0, min(100, current + Double(step)))
         guard next != current else { return }
-        volume = next
-        setVolume()
+        applyMasterVolume(next)
         scrollVolumeCommitTask?.cancel()
         scrollVolumeCommitTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: Timing.scrollVolumeCommitDelay)
@@ -198,17 +314,20 @@ final class NowPlayingViewModel {
         }
     }
 
-    func setVolume() {
-        let now = Date()
-        volumeGraceUntil = now.addingTimeInterval(Timing.playbackGracePeriod)
-        let oldMaster = lastMasterVolume
-        let newMaster = volume
+    /// Master slider drag-tick: distribute `newMaster` across members
+    /// (proportional or linear) and write the per-member values straight
+    /// into `sonosManager.deviceVolumes`. The slider's get-side reads
+    /// `dragVolume` while a drag is in flight, so visual position
+    /// matches the pointer regardless of proportional rounding drift.
+    /// SOAP commit is deferred to drag-end (`commitVolume`).
+    func applyMasterVolume(_ newMaster: Double) {
+        dragVolume = newMaster
+        let oldMaster = lastAppliedMaster > 0 ? lastAppliedMaster : currentAverageVolume
+        lastAppliedMaster = newMaster
         let proportional = UserDefaults.standard.bool(forKey: UDKey.proportionalGroupVolume)
 
         for member in group.members {
-            sonosManager.setVolumeGrace(deviceID: member.id, duration: Timing.playbackGracePeriod)
-            let currentVol = speakerVolumes[member.id] ?? 0
-
+            let currentVol = Double(sonosManager.deviceVolumes[member.id] ?? 0)
             let newVol: Double
             if proportional && oldMaster > 0 {
                 // Proportional: each speaker keeps its ratio relative to the master.
@@ -222,11 +341,9 @@ final class NowPlayingViewModel {
                 newVol = currentVol + (newMaster - oldMaster)
             }
 
-            let clamped = max(0, min(100, newVol))
-            speakerVolumes[member.id] = clamped
-            sonosManager.updateDeviceVolume(member.id, volume: Int(clamped))
+            let clamped = Int(max(0, min(100, newVol)))
+            sonosManager.updateDeviceVolume(member.id, volume: clamped)
         }
-        lastMasterVolume = volume
     }
 
     func commitVolume() {
@@ -234,13 +351,16 @@ final class NowPlayingViewModel {
         // serial loop took N × ~150 ms (the cumulative SOAP round-trip
         // time), which read as sluggish on 3+ speaker groups. TaskGroup
         // fires them concurrently so the whole commit completes in one
-        // round-trip instead of N.
+        // round-trip instead of N. Reads volumes straight from the
+        // manager (the optimistic distribution wrote them there).
         let members = group.members
-        let snapshot = speakerVolumes
+        let snapshot = members.map { ($0, sonosManager.deviceVolumes[$0.id] ?? 0) }
+        lastAppliedMaster = 0  // reset the drag-delta tracker for the next drag
         Task {
+            sonosDebugLog("[UI-SOAP-START] commitVolume group=\(self.group.name)")
+            let started = Date()
             await withTaskGroup(of: Void.self) { tg in
-                for member in members {
-                    let vol = Int(snapshot[member.id] ?? 0)
+                for (member, vol) in snapshot {
                     tg.addTask {
                         do {
                             try await self.sonosManager.setVolume(device: member, volume: vol)
@@ -250,29 +370,41 @@ final class NowPlayingViewModel {
                     }
                 }
             }
+            let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+            sonosDebugLog("[UI-SOAP-END] commitVolume group=\(self.group.name) elapsed=\(elapsedMs)ms")
         }
     }
 
     // MARK: - Per-Speaker Volume/Mute (called from VolumeControlView)
 
     func setSpeakerVolume(device: SonosDevice, volume: Int) async {
-        sonosManager.setVolumeGrace(deviceID: device.id, duration: Timing.playbackGracePeriod)
+        sonosDebugLog("[UI-TAP] setSpeakerVolume room=\(device.roomName) target=\(volume)")
         sonosManager.updateDeviceVolume(device.id, volume: volume)
+        sonosDebugLog("[UI-OPT] setSpeakerVolume applied")
+        sonosDebugLog("[UI-SOAP-START] setSpeakerVolume room=\(device.roomName)")
+        let started = Date()
         do {
             try await sonosManager.setVolume(device: device, volume: volume)
         } catch {
             sonosDebugLog("[VOLUME] setSpeakerVolume failed for \(device.roomName): \(error)")
         }
+        let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+        sonosDebugLog("[UI-SOAP-END] setSpeakerVolume room=\(device.roomName) elapsed=\(elapsedMs)ms")
     }
 
     func setSpeakerMute(device: SonosDevice, muted: Bool) async {
-        sonosManager.setMuteGrace(deviceID: device.id, duration: Timing.playbackGracePeriod)
+        sonosDebugLog("[UI-TAP] setSpeakerMute room=\(device.roomName) target=\(muted)")
         sonosManager.updateDeviceMute(device.id, muted: muted)
+        sonosDebugLog("[UI-OPT] setSpeakerMute applied")
+        sonosDebugLog("[UI-SOAP-START] setSpeakerMute room=\(device.roomName)")
+        let started = Date()
         do {
             try await sonosManager.setMute(device: device, muted: muted)
         } catch {
             sonosDebugLog("[VOLUME] setSpeakerMute failed for \(device.roomName): \(error)")
         }
+        let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+        sonosDebugLog("[UI-SOAP-END] setSpeakerMute room=\(device.roomName) elapsed=\(elapsedMs)ms")
     }
 
     // MARK: - Copy Track Info
@@ -314,89 +446,20 @@ final class NowPlayingViewModel {
         }
     }
 
-    // MARK: - Sync from Manager
+    // MARK: - Group lifecycle
 
-    /// Reset all local state when switching to a different group
+    /// Reset transient UI state when switching to a different group.
+    /// No volume/mute mirror to clear — those derive directly from
+    /// `sonosManager.deviceVolumes` / `deviceMutes` keyed by the new
+    /// group's members.
     func resetForGroupChange() {
-        isInitialized = false
         isDraggingVolume = false
         isDraggingSeek = false
-        volumeGraceUntil = .distantPast
-        muteGraceUntil = .distantPast
-        speakerVolumes.removeAll()
-        speakerMutes.removeAll()
-        volume = 0
-        isMuted = false
-        smoothPosition = 0
-        lastKnownPosition = 0
-        lastPositionTimestamp = .distantPast
+        lastAppliedMaster = 0
+        sonosManager.setPositionAnchor(coordinatorID: group.coordinatorID, .zero)
+        dragPosition = 0
         crossfadeOn = false
         actionInFlight = nil
-    }
-
-    func syncFromManager() {
-        isInitialized = true
-        syncVolumeFromManager()
-        syncMuteFromManager()
-    }
-
-    func syncVolumeFromManager() {
-        guard !isDraggingVolume else { return } // Don't override while user is dragging
-
-        if group.members.count > 1 {
-            var totalVol = 0.0
-            for member in group.members {
-                if sonosManager.isVolumeGraceActive(deviceID: member.id) {
-                    let v = Double(sonosManager.deviceVolumes[member.id] ?? 0)
-                    if abs((speakerVolumes[member.id] ?? 0) - v) > 0.5 {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            speakerVolumes[member.id] = v
-                        }
-                    }
-                    totalVol += v
-                    continue
-                }
-                let v = Double(sonosManager.deviceVolumes[member.id] ?? 0)
-                if abs((speakerVolumes[member.id] ?? 0) - v) > 0.5 || !isInitialized {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        speakerVolumes[member.id] = v
-                    }
-                }
-                totalVol += v
-            }
-            let avg = totalVol / Double(group.members.count)
-            if abs(volume - avg) > 0.5 || !isInitialized {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    volume = avg
-                }
-            }
-            lastMasterVolume = volume
-        } else if let device = group.coordinator {
-            let v = Double(sonosManager.deviceVolumes[device.id] ?? 0)
-            if abs(volume - v) > 0.5 || !isInitialized {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    volume = v
-                }
-            }
-            lastMasterVolume = volume
-        }
-    }
-
-    func syncMuteFromManager() {
-
-        for member in group.members {
-            if !sonosManager.isMuteGraceActive(deviceID: member.id) {
-                speakerMutes[member.id] = sonosManager.deviceMutes[member.id] ?? false
-            }
-        }
-        syncMasterMuteFromSpeakers()
-    }
-
-    func syncMasterMuteFromSpeakers() {
-        let allMuted = group.members.allSatisfy { speakerMutes[$0.id] == true }
-        if allMuted != isMuted {
-            isMuted = allMuted
-        }
     }
 
     // MARK: - Helpers
@@ -415,8 +478,13 @@ final class NowPlayingViewModel {
         }
     }
 
+    /// Snapshot stringification — for code paths that need a one-shot
+    /// value (e.g. accessibility labels). The visible time text is
+    /// driven by `TimelineView` in the view layer and formats from
+    /// `positionAnchor.projected(at: ctx.date)` directly so the digit
+    /// updates each frame instead of once per render.
     var smoothPositionString: String {
-        formatTime(smoothPosition)
+        formatTime(currentPosition)
     }
 
     func formatTime(_ interval: TimeInterval) -> String {
@@ -437,11 +505,16 @@ final class NowPlayingViewModel {
         let uriChanged = art.lastTrackURI != (metadata.trackURI ?? metadata.title)
         art.handleTrackURIChanged(trackMetadata: metadata, group: group)
 
-        // Reset position on source/track change to avoid stale time display
+        // Reset position on source/track change to avoid stale time display.
+        // Bypasses the drift threshold — track change is by definition a
+        // hard discontinuity, never noise.
         if uriChanged {
-            lastKnownPosition = metadata.position
-            lastPositionTimestamp = Date()
-            smoothPosition = metadata.position
+            sonosManager.setPositionAnchor(
+                coordinatorID: group.coordinatorID,
+                PositionAnchor(time: max(0, metadata.position),
+                               wallClock: Date(),
+                               isPlaying: transportState.isPlaying)
+            )
         }
 
         // Always update display art (handles ad break → station art switch)
@@ -633,7 +706,18 @@ final class NowPlayingViewModel {
         if art.radioStationArtURL == nil, let stationArt = art.displayedArtURL ?? metadata.albumArtURI.flatMap({ URL(string: $0) }) {
             art.radioStationArtURL = stationArt
         }
-        let artist = TrackMetadata.filterDeviceID(metadata.artist)
+        var artist = TrackMetadata.filterDeviceID(metadata.artist)
+        // Radio streams routinely populate the artist field with the
+        // station or soundtrack name rather than the actual performer
+        // (e.g. station "Movie Ticket Radio" sends artist="Animal House").
+        // Searching iTunes with that string poisons the result. When the
+        // artist matches the station name verbatim, drop it — the
+        // service's title-only and OST-shape strategies are more
+        // reliable than an artist+title query against a wrong artist.
+        if !metadata.stationName.isEmpty,
+           artist.caseInsensitiveCompare(metadata.stationName) == .orderedSame {
+            artist = ""
+        }
         // For radio streams, keep the full title including parenthetical content
         // since it often contains the movie/album name (e.g. "Tristania (Troia Troy)")
         let searchTitle = metadata.title
@@ -642,7 +726,7 @@ final class NowPlayingViewModel {
                 artist: artist, title: searchTitle
             ) {
                 sonosDebugLog("[ART/RADIO] resolved \(searchTitle) – \(artist) → \(artURL.prefix(80))")
-                art.setRadioTrackArt(URL(string: artURL))
+                art.setRadioTrackArt(URL(string: artURL), forKey: key)
                 art.playHistoryManager?.updateArtwork(
                     forTitle: metadata.title, artist: metadata.artist, artURL: artURL
                 )
@@ -650,7 +734,7 @@ final class NowPlayingViewModel {
                 sonosManager.cacheArtURL(artURL, forURI: metadata.trackURI ?? "", title: metadata.title, itemID: "")
             } else {
                 sonosDebugLog("[ART/RADIO] no result for \(searchTitle) – \(artist)")
-                art.setRadioTrackArt(nil)
+                art.setRadioTrackArt(nil, forKey: key)
             }
         }
     }
@@ -680,21 +764,18 @@ final class NowPlayingViewModel {
 
     func startProgressTimer() {
         stopProgressTimer()
-        // Position interpolation — no network calls
-        progressTimer = Timer.scheduledTimer(withTimeInterval: Timing.progressTimerInterval, repeats: true) { [weak self] _ in
-            guard let self, !isDraggingSeek else { return }
-            let now = Date()
-            if now > positionFrozenUntil && transportState.isPlaying {
-                let elapsed = now.timeIntervalSince(lastPositionTimestamp)
-                let newPosition = lastKnownPosition + elapsed
-                if abs(newPosition - smoothPosition) >= 0.5 {
-                    smoothPosition = newPosition
-                }
-            }
-        }
-        // Lightweight metadata poll for active group — catches radio track changes
-        // that don't trigger UPnP events. Single getPositionInfo call every 5s.
-        // Updates display state only — history logging handled by TransportStrategy.
+        // No 1 Hz `Timer` advance any more. Position display is now
+        // driven entirely by `TimelineView { ctx in
+        //   positionAnchor.projected(at: ctx.date) }` at the view
+        // layer — the visible position updates at display refresh
+        // (60/120 Hz) rather than in 1 s discrete chunks, eliminating
+        // the seek-bar / time-text "pause then jump" rhythm and
+        // letting the synced lyrics scroll continuously.
+        //
+        // Lightweight metadata poll stays — it catches radio track
+        // changes that don't trigger UPnP events. The poll updates the
+        // anchor through `handleMetadataChanged` (track-change branch)
+        // and `updateAnchorFromAuthoritative` (drift branch).
         metadataPollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: Timing.metadataPolling)
@@ -703,9 +784,16 @@ final class NowPlayingViewModel {
                 do {
                     let position = try await sonosManager.getPositionInfo(group: group)
                     let enriched = await enrichMetadata(position, state: transportState, coordinator: coordinator)
-                    lastKnownPosition = enriched.position
-                    lastPositionTimestamp = Date()
                     handleMetadataChanged(enriched)
+                    // Hand the polled position to the manager so the
+                    // shared anchor's drift-tolerant rebase runs and
+                    // every consumer (panel + karaoke) sees the same
+                    // result.
+                    sonosManager.transportDidUpdatePosition(
+                        group.coordinatorID,
+                        position: enriched.position,
+                        duration: enriched.duration
+                    )
                 } catch {
                     sonosDebugLog("[NOW-PLAYING] Metadata poll failed: \(error)")
                 }
@@ -714,8 +802,6 @@ final class NowPlayingViewModel {
     }
 
     func stopProgressTimer() {
-        progressTimer?.invalidate()
-        progressTimer = nil
         metadataPollingTask?.cancel()
         metadataPollingTask = nil
     }
@@ -730,29 +816,25 @@ final class NowPlayingViewModel {
             await manager.scanGroup(group)
         }
 
-        // Force-set local state from the just-fetched @Published values
-        // No grace period or threshold checks — this is an explicit user action
+        // Force-set local state from the just-fetched @Published values.
+        // No grace period or threshold checks — this is an explicit
+        // user action, so the anchor snaps directly to the freshly
+        // fetched position.
         let meta = sonosManager.groupTrackMetadata[group.coordinatorID] ?? TrackMetadata()
-        lastKnownPosition = meta.position
-        lastPositionTimestamp = Date()
-        smoothPosition = meta.position
+        sonosManager.setPositionAnchor(
+            coordinatorID: group.coordinatorID,
+            PositionAnchor(time: max(0, meta.position),
+                           wallClock: Date(),
+                           isPlaying: transportState.isPlaying)
+        )
         crossfadeOn = (try? await sonosManager.getCrossfadeMode(group: group)) ?? false
 
-        // Force volume/mute from live data — bypass grace periods
-        var totalVol = 0.0
-        for member in group.members {
-            let v = Double(sonosManager.deviceVolumes[member.id] ?? 0)
-            speakerVolumes[member.id] = v
-            speakerMutes[member.id] = sonosManager.deviceMutes[member.id] ?? false
-            totalVol += v
-        }
-        if group.members.count > 1 {
-            volume = totalVol / Double(group.members.count)
-        } else {
-            volume = totalVol
-        }
-        lastMasterVolume = volume
-        isMuted = group.members.allSatisfy { sonosManager.deviceMutes[$0.id] == true }
+        // No local mirror to populate — `volume`, `isMuted`,
+        // `speakerVolumes`, and `speakerMutes` derive directly from
+        // `sonosManager.deviceVolumes` / `deviceMutes`, which `scanGroup`
+        // above just refreshed. Reset the proportional drag-delta
+        // tracker so the next user drag starts from a clean baseline.
+        lastAppliedMaster = 0
     }
 
 }

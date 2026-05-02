@@ -29,6 +29,7 @@ final class MockSonosServices: PlaybackServiceProtocol, VolumeServiceProtocol, E
     var groupPlayModes: [String: PlayMode] = [:]
     var groupPositions: [String: TimeInterval] = [:]
     var groupDurations: [String: TimeInterval] = [:]
+    var groupPositionAnchors: [String: PositionAnchor] = [:]
     var deviceVolumes: [String: Int] = [:]
     var deviceMutes: [String: Bool] = [:]
     var awaitingPlayback: [String: Bool] = [:]
@@ -74,6 +75,19 @@ final class MockSonosServices: PlaybackServiceProtocol, VolumeServiceProtocol, E
 
     func setPositionGrace(coordinatorID: String, duration: TimeInterval) {
         positionGraces[coordinatorID] = Date().addingTimeInterval(duration)
+    }
+
+    func setPositionAnchor(coordinatorID: String, _ anchor: PositionAnchor) {
+        groupPositionAnchors[coordinatorID] = anchor
+    }
+
+    func setPositionDragInProgress(coordinatorID: String?) {
+        // Test stub — production gating not exercised here.
+    }
+
+    func transportDidUpdatePosition(_ groupID: String, position: TimeInterval, duration: TimeInterval) {
+        groupPositions[groupID] = position
+        groupDurations[groupID] = duration
     }
 
     func cacheArtURL(_ artURL: String, forURI uri: String, title: String, itemID: String) {

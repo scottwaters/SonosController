@@ -46,5 +46,61 @@
 	<array>
 		<string>_sonos._tcp</string>
 	</array>
+	<!-- Debug-only build tag substituted from the `CHORAGUS_BUILD_TAG`
+	     xcodebuild build setting. Surfaces as the window title suffix
+	     ("Choragus B1437") so the running Debug build is identifiable
+	     when several have accumulated in macOS's Local Network
+	     permissions list. Lives in a custom key specifically so it
+	     does NOT change CFBundleVersion — TCC treats CFBundleVersion
+	     changes as a new app version and re-prompts for Local Network
+	     access on every rebuild. Release builds leave the variable
+	     unset; Xcode then leaves the literal "$(CHORAGUS_BUILD_TAG)"
+	     string in the bundled plist, which `ChoragusApp.windowTitle`
+	     detects and falls back to plain "Choragus". -->
+	<key>ChoragusBuildTag</key>
+	<string>$(CHORAGUS_BUILD_TAG)</string>
+
+	<!--
+	  Sparkle 2 auto-updater configuration.
+
+	  Both string values default to empty in the committed plist. They
+	  are populated at release time by xcodebuild build-setting
+	  substitution from environment-driven values:
+	    SPARKLE_FEED_URL   → SUFeedURL
+	    SPARKLE_PUBLIC_KEY → SUPublicEDKey
+
+	  Forks: leave empty to disable Sparkle entirely (the existing
+	  GitHub-API `UpdateChecker` "View on GitHub" notification path
+	  takes over). Or fill them with your own appcast URL and EdDSA
+	  public key to publish your own auto-update channel — see
+	  `docs/FORKS.md` for the full setup.
+
+	  Dev builds: ad-hoc / Debug builds don't inject these, so
+	  SUFeedURL stays empty and Sparkle never starts — the Debug
+	  entitlement (`get-task-allow`) breaks Sparkle's signature
+	  verification anyway, so it's deliberately inert for iteration.
+	-->
+	<key>SUFeedURL</key>
+	<string>$(SPARKLE_FEED_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(SPARKLE_PUBLIC_KEY)</string>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+
+	<!--
+	  Bug-report bundle pipeline: maintainer's Curve25519 public key,
+	  base64-encoded. Diagnostic bundles the user submits are wrapped
+	  with this key so only the maintainer can read them. Substituted
+	  at release time from the `BUG_REPORT_PUBLIC_KEY` build setting.
+
+	  Forks / dev builds: leave empty. With no key present, the
+	  encrypted-report buttons in the Diagnostics window hide entirely
+	  and the existing public-tier-scrubbed report buttons remain.
+	  Forks that want their own private channel substitute their own
+	  public key in their release pipeline (and hold the matching
+	  private key offline themselves).
+	-->
+	<key>BugReportPublicKey</key>
+	<string>$(BUG_REPORT_PUBLIC_KEY)</string>
 </dict>
 </plist>

@@ -40,6 +40,7 @@ struct HelpView: View {
         case .musicServices:      musicServices
         case .systems:            systems
         case .preferences:        preferences
+        case .diagnostics:        diagnostics
         case .shortcuts:          shortcuts
         case .about:              about
         }
@@ -93,12 +94,31 @@ struct HelpView: View {
                 L10n.helpBulletLyricsPlain,
                 L10n.helpBulletLyricsOffset
             ])
+            heading(L10n.helpKaraokePopoutHeading)
+            paragraph(L10n.helpKaraokePopoutBody)
             heading(L10n.helpAboutTabHeading)
             paragraph(L10n.helpAboutTabBody)
             heading(L10n.helpHistoryTabHeading)
             paragraph(L10n.helpHistoryTabBody)
             heading(L10n.helpCollapseHeading)
             paragraph(L10n.helpCollapseBody)
+        }
+    }
+
+    private var diagnostics: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            heading(L10n.helpDiagnosticsHeading)
+            paragraph(L10n.helpDiagnosticsBody)
+            heading(L10n.helpDiagnosticsOpeningHeading)
+            paragraph(L10n.helpDiagnosticsOpeningBody)
+            heading(L10n.helpDiagnosticsLiveEventsHeading)
+            paragraph(L10n.helpDiagnosticsLiveEventsBody)
+            heading(L10n.helpDiagnosticsReportingHeading)
+            paragraph(L10n.helpDiagnosticsReportingBody)
+            heading(L10n.helpDiagnosticsEncryptedHeading)
+            paragraph(L10n.helpDiagnosticsEncryptedBody)
+            heading(L10n.helpDiagnosticsRedactionHeading)
+            paragraph(L10n.helpDiagnosticsRedactionBody)
         }
     }
 
@@ -186,8 +206,13 @@ struct HelpView: View {
                 L10n.helpBulletQuickStart,
                 L10n.helpBulletMusicServices,
                 L10n.helpBulletScrobbling,
-                L10n.helpBulletImageCache
+                L10n.helpBulletImageCache,
+                L10n.helpBulletSoftwareUpdates
             ])
+            heading(L10n.helpSoftwareUpdatesHeading)
+            paragraph(L10n.helpSoftwareUpdatesBody)
+            heading(L10n.helpBetaChannelHeading)
+            paragraph(L10n.helpBetaChannelBody)
             heading(L10n.helpListeningStatsSection)
             paragraph(L10n.helpListeningStatsBody)
         }
@@ -308,6 +333,7 @@ enum HelpTopic: String, CaseIterable, Identifiable {
     case musicServices
     case systems
     case preferences
+    case diagnostics
     case shortcuts
     case about
 
@@ -323,6 +349,7 @@ enum HelpTopic: String, CaseIterable, Identifiable {
         case .musicServices:      return L10n.helpMusicServicesTopic
         case .systems:            return L10n.helpS1AndS2
         case .preferences:        return L10n.helpPreferences
+        case .diagnostics:        return L10n.helpDiagnosticsTopic
         case .shortcuts:          return L10n.helpKeyboardShortcuts
         case .about:              return L10n.helpAboutAndSupport
         }
@@ -338,6 +365,7 @@ enum HelpTopic: String, CaseIterable, Identifiable {
         case .musicServices:      return "circle.grid.2x2"
         case .systems:            return "rectangle.on.rectangle"
         case .preferences:        return "gear"
+        case .diagnostics:        return "ant"
         case .shortcuts:          return "keyboard"
         case .about:              return "info.circle"
         }

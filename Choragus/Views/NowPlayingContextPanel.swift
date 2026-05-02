@@ -17,14 +17,13 @@ import SonosKit
 struct NowPlayingContextPanel: View {
     let trackMetadata: TrackMetadata
     let group: SonosGroup
-    /// Live track position in seconds, fed in from the parent view's
-    /// progress timer. Drives the synced-lyrics highlight.
-    let positionSeconds: Double
-    /// True while transport is `.playing`. The lyrics view uses this
-    /// to decide whether to keep scrolling forward in real time
-    /// between Sonos updates (playing) or hold the current position
-    /// (paused).
-    let isPlaying: Bool
+    /// Authoritative playhead anchor sourced from `NowPlayingViewModel`.
+    /// The synced-lyrics view wraps `positionAnchor.projected(at:)` in
+    /// a `TimelineView` so the highlight slides at display refresh
+    /// rate (60/120 Hz) regardless of how often the speaker reports
+    /// new positions. Carries `isPlaying` internally so projection
+    /// freezes during pause without a separate parameter.
+    let positionAnchor: PositionAnchor
 
     @EnvironmentObject var playHistoryManager: PlayHistoryManager
 
@@ -41,6 +40,14 @@ struct NowPlayingContextPanel: View {
     /// can render it.
     @State private var expandedArtistPhotoURL: URL?
 
+    /// Cached result of `matchingHistory()` for the current track.
+    /// Recomputed only when the track changes or the history store
+    /// grows — `matchingHistory()` filters thousands of entries on the
+    /// main thread, so calling it inside the History tab `body` made
+    /// every parent invalidation (transport tick, topology event,
+    /// volume change) re-scan the whole store.
+    @State private var historyEntries: [PlayHistoryEntry] = []
+
     /// Initialises the VM eagerly so body's first render — which fires
     /// before any `.task` modifier — already has the real instance. The
     /// previous `@State var vm: VM?` + `assertionFailure`-guarded getter
@@ -49,59 +56,34 @@ struct NowPlayingContextPanel: View {
     init(
         trackMetadata: TrackMetadata,
         group: SonosGroup,
-        positionSeconds: Double,
-        isPlaying: Bool,
-        lyricsService: LyricsService,
+        positionAnchor: PositionAnchor,
+        lyricsCoordinator: LyricsCoordinator,
         metadataService: MusicMetadataService
     ) {
         self.trackMetadata = trackMetadata
         self.group = group
-        self.positionSeconds = positionSeconds
-        self.isPlaying = isPlaying
+        self.positionAnchor = positionAnchor
         _ctxVM = State(wrappedValue: NowPlayingContextPanelViewModel(
-            lyricsService: lyricsService,
+            lyricsCoordinator: lyricsCoordinator,
             metadataService: metadataService
         ))
     }
 
-    /// Stable per-track identifier. `trackURI` is the canonical
-    /// per-track string and stays the same across speaker polls;
-    /// `title|artist` is a fallback for the rare cases where the
-    /// speaker reports a track without a URI. Album is intentionally
-    /// excluded because some services blank it momentarily during
-    /// track transitions, which used to flip this key and re-fire
-    /// the lyrics-loading task — clearing the cached `lyrics` to
-    /// nil for a frame and making the panel appear to flash empty
-    /// half-way through every long track.
-    private var trackKey: String {
-        // Radio URIs identify the *station*, not the song — the same URI plays
-        // dozens of different tracks back-to-back. For radio, song change is
-        // signalled by title/artist updating, so include those in the key.
-        // For library/streaming tracks the URI is unique per song and stays
-        // stable across the transient empty-metadata flashes some services
-        // emit during the transition, so we keep using URI alone.
-        //
-        // During a metadata fill-in (title arrives but artist hasn't yet),
-        // we hold the key at bare URI to avoid double-firing the task.
-        if let uri = trackMetadata.trackURI, !uri.isEmpty {
-            if Self.isRadioURI(uri) {
-                guard !trackMetadata.title.isEmpty, !trackMetadata.artist.isEmpty else {
-                    return uri
-                }
-                return "\(uri)|\(trackMetadata.title)|\(trackMetadata.artist)"
-            }
-            return uri
-        }
-        return "\(trackMetadata.title)|\(trackMetadata.artist)"
+    @EnvironmentObject var lyricsCoordinator: LyricsCoordinator
+
+    /// Global lyrics timing offset from Settings. Added on top of the
+    /// per-track manual offset (the `±` toolbar) before being passed
+    /// to `SlidingLyricsView`. Default `−2.0 s` empirically.
+    @AppStorage(UDKey.lyricsGlobalOffset) private var lyricsGlobalOffset: Double = -2.0
+
+    private var lyricsResolved: LyricsCoordinator.Resolved {
+        lyricsCoordinator.resolved(for: trackMetadata)
+    }
+    private var lyricsOffset: Double {
+        lyricsCoordinator.offset(for: trackMetadata)
     }
 
-    private static func isRadioURI(_ uri: String) -> Bool {
-        uri.hasPrefix("x-rincon-mp3radio:")
-            || uri.hasPrefix("x-sonosapi-stream:")
-            || uri.hasPrefix("x-sonosapi-radio:")
-            || uri.hasPrefix("x-sonosapi-hls:")
-            || uri.hasPrefix("x-sonosapi-hls-static:")
-    }
+    private var trackKey: String { trackMetadata.stableKey }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -113,13 +95,6 @@ struct NowPlayingContextPanel: View {
         .task(id: trackKey) {
             ctxVM.resetForNewTrack(trackMetadata)
             await ctxVM.loadActiveTab(tab, metadata: trackMetadata)
-        }
-        .onChange(of: ctxVM.lyricsOffset) { _, newValue in
-            // Debounced save so a tap-tap-tap of `+1 +1 +1` writes once
-            // at the final +3 instead of three times. 500 ms is short
-            // enough to feel persistent ("I tapped, it stuck") but long
-            // enough to coalesce a flurry of taps.
-            ctxVM.scheduleOffsetSave(newValue, metadata: trackMetadata)
         }
         .onChange(of: tab) { _, _ in
             Task { await ctxVM.loadActiveTab(tab, metadata: trackMetadata) }
@@ -157,11 +132,11 @@ struct NowPlayingContextPanel: View {
         // path doesn't get wrapped in a ScrollView (which would let
         // its fixed window get clipped or grow unpredictably).
         Group {
-            switch ctxVM.lyricsState {
+            switch lyricsResolved.status {
             case .idle, .loading:
                 loadingPlaceholder(text: L10n.lookingUpLyrics)
             case .loaded:
-                if let lyrics = ctxVM.lyrics {
+                if let lyrics = lyricsResolved.lyrics {
                     renderedLyrics(lyrics)
                 } else {
                     emptyPlaceholder(icon: "text.alignleft",
@@ -170,9 +145,6 @@ struct NowPlayingContextPanel: View {
             case .missing:
                 emptyPlaceholder(icon: "text.alignleft",
                                  text: L10n.noLyricsFound)
-            case .error(let msg):
-                emptyPlaceholder(icon: "exclamationmark.triangle",
-                                 text: L10n.couldNotLoadLyricsFormat(msg))
             }
         }
         .padding(.horizontal, 16)
@@ -189,13 +161,14 @@ struct NowPlayingContextPanel: View {
                 Text(L10n.instrumental).font(.body).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let synced = lyrics.synced {
+        } else if lyrics.synced != nil {
             VStack(spacing: 6) {
                 SlidingLyricsView(
-                    lines: Lyrics.parseSynced(synced),
-                    position: positionSeconds + ctxVM.lyricsOffset,
-                    isPlaying: isPlaying
+                    lines: lyricsCoordinator.parsedLines(for: trackMetadata),
+                    anchor: positionAnchor,
+                    offset: lyricsOffset + lyricsGlobalOffset
                 )
+                .equatable()
                 .frame(maxWidth: .infinity)
                 lyricsOffsetToolbar
             }
@@ -235,7 +208,9 @@ struct NowPlayingContextPanel: View {
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 56)
                 .contentShape(Rectangle())
-                .onTapGesture { ctxVM.lyricsOffset = 0 }
+                .onTapGesture {
+                    lyricsCoordinator.setOffset(0, for: trackMetadata)
+                }
                 .help(L10n.tapToResetOffset)
             offsetButton(label: "+1", delta: 1)
             offsetButton(label: "+5", delta: 5)
@@ -245,14 +220,16 @@ struct NowPlayingContextPanel: View {
     }
 
     private func offsetButton(label: String, delta: Double) -> some View {
-        Button(label) { ctxVM.lyricsOffset += delta }
-            .buttonStyle(.bordered)
-            .controlSize(.mini)
-            .font(.caption.monospacedDigit())
+        Button(label) {
+            lyricsCoordinator.setOffset(lyricsOffset + delta, for: trackMetadata)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+        .font(.caption.monospacedDigit())
     }
 
     private var offsetDisplayString: String {
-        let value = ctxVM.lyricsOffset
+        let value = lyricsOffset
         if value == 0 { return "0.0s" }
         let sign = value > 0 ? "+" : ""
         return String(format: "%@%.1fs", sign, value)
@@ -563,15 +540,14 @@ struct NowPlayingContextPanel: View {
     private var historyTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                let entries = matchingHistory()
-                if entries.isEmpty {
+                if historyEntries.isEmpty {
                     emptyPlaceholder(icon: "clock",
                                      text: L10n.noPreviousPlaysInHistory)
                 } else {
-                    historySummary(entries)
+                    historySummary(historyEntries)
                     Divider().padding(.vertical, 4)
                     Text(L10n.recentPlays).font(.body.weight(.semibold))
-                    ForEach(Array(entries.prefix(20))) { entry in
+                    ForEach(Array(historyEntries.prefix(20))) { entry in
                         HStack(alignment: .top, spacing: 8) {
                             Text(formatRelativeDate(entry.timestamp))
                                 .font(.callout.monospacedDigit())
@@ -588,6 +564,15 @@ struct NowPlayingContextPanel: View {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .task(id: HistoryCacheKey(trackKey: trackKey,
+                                  entriesCount: playHistoryManager.entries.count)) {
+            historyEntries = matchingHistory()
+        }
+    }
+
+    private struct HistoryCacheKey: Hashable {
+        let trackKey: String
+        let entriesCount: Int
     }
 
     private func matchingHistory() -> [PlayHistoryEntry] {
@@ -686,203 +671,5 @@ public final class LyricsServiceHolder: ObservableObject {
 public final class MusicMetadataServiceHolder: ObservableObject {
     public let service: MusicMetadataService
     public init(service: MusicMetadataService) { self.service = service }
-}
-
-// MARK: - SlidingLyricsView
-
-/// Karaoke-style synced lyrics. Shows a fixed window of seven rows,
-/// active line locked in the middle, lines fade as they move further
-/// from centre, smooth slide as the track plays. The fixed-window
-/// approach reads better than free-scroll auto-centering — your eye
-/// always knows where the next line will appear.
-private struct SlidingLyricsView: View {
-    let lines: [(time: Double, line: String)]
-    /// Authoritative position from Sonos. Updated in 0.5s steps from
-    /// the parent's progress timer; the `TimelineView` below keeps
-    /// the visual offset advancing continuously between updates.
-    let position: Double
-    let isPlaying: Bool
-
-    private let visibleRows = 5
-    private let rowHeight: CGFloat = 34
-    private var centreRow: Int { visibleRows / 2 }
-
-    /// Anchor point: the position Sonos reported, plus the wall-clock
-    /// time when we received that report. Between Sonos updates we
-    /// project forward as `anchorPosition + (now - anchorTime)`,
-    /// which gives frame-perfect continuous scrolling. New Sonos
-    /// updates rebase the anchor — for small drifts that's invisible
-    /// (the new estimate matches the projected one); for big jumps
-    /// (seek / track skip) the offset snaps.
-    @State private var anchorPosition: Double = 0
-    @State private var anchorTime: Date = .distantPast
-
-    var body: some View {
-        let windowHeight = CGFloat(visibleRows) * rowHeight
-        // TimelineView drives a re-render every animation frame
-        // (~30 fps default). Each frame, we estimate the current
-        // playhead from the anchor and recompute the offset and
-        // per-line scale. The Sonos position updates only ever touch
-        // the anchor; they never drive the visible motion directly.
-        // No `minimumInterval` — let SwiftUI run at the display's
-        // native refresh rate (60Hz / 120Hz on ProMotion). Capping
-        // at 30Hz produced visible stepping on standard displays.
-        TimelineView(.animation) { context in
-            let liveFractional = fractionalIndex(for: estimatedPosition(at: context.date))
-            let offset = CGFloat(Double(centreRow) - liveFractional) * rowHeight
-            VStack(spacing: 0) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { index, entry in
-                    lyricLine(
-                        entry.line,
-                        distance: abs(Double(index) - liveFractional)
-                    )
-                    .frame(height: rowHeight)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .center)
-            .offset(y: offset)
-            .frame(maxWidth: .infinity, minHeight: windowHeight,
-                   maxHeight: windowHeight, alignment: .top)
-            .clipped()
-            .mask(centreFocusMask)
-        }
-        .onAppear {
-            anchorPosition = position
-            anchorTime = Date()
-        }
-        // Drift-tolerant rebasing. Most Sonos position updates arrive
-        // at almost exactly the value we'd project from wall-clock
-        // elapsed time, so re-anchoring on every update introduced
-        // sub-millisecond offset jumps that the eye picked up as
-        // flicker.
-        //
-        // Now we ignore small drifts (<0.5s — the natural noise
-        // floor of Sonos's polling cadence) and only rebase when the
-        // projection has genuinely fallen out of sync. Big jumps
-        // (>5s — a seek, scrub, or track change) still snap.
-        .onChange(of: position) { _, newValue in
-            let now = Date()
-            let estimated = estimatedPosition(at: now)
-            let drift = newValue - estimated
-            if abs(drift) > 5.0 {
-                // Seek / track change — snap.
-                anchorPosition = newValue
-                anchorTime = now
-            } else if abs(drift) > 0.5 {
-                // Real drift between Sonos's authoritative time and
-                // our wall-clock projection. Rebase smoothly.
-                anchorPosition = newValue
-                anchorTime = now
-            }
-            // Drift ≤ 0.5s: ignore. Let the TimelineView keep
-            // projecting from the existing anchor — that's the
-            // continuous-flow path and the smoothest visual.
-        }
-        // Pause: freeze the anchor at the current estimated position
-        // so projection halts. Resume: rebase to whatever the parent
-        // reports right now.
-        .onChange(of: isPlaying) { _, nowPlaying in
-            let now = Date()
-            if !nowPlaying {
-                anchorPosition = estimatedPosition(at: now)
-                anchorTime = now
-            } else {
-                anchorPosition = position
-                anchorTime = now
-            }
-        }
-    }
-
-    /// Continuously-projected playhead. While playing, equals the
-    /// anchored position plus elapsed wall-clock time since anchor.
-    /// While paused, equals the anchored position exactly (frozen).
-    private func estimatedPosition(at now: Date) -> Double {
-        guard isPlaying, anchorTime != .distantPast else {
-            return anchorPosition
-        }
-        return anchorPosition + now.timeIntervalSince(anchorTime)
-    }
-
-    /// Continuous fractional position of `pos` within the line list.
-    /// Whole numbers = a line is dead-centre; halves = between two
-    /// lines. Negative = pre-roll, scaled so the first line glides
-    /// in from below as the song approaches its first lyric stamp.
-    private func fractionalIndex(for pos: Double) -> Double {
-        guard !lines.isEmpty else { return 0 }
-        var prevIdx = -1
-        var nextIdx = -1
-        for (i, entry) in lines.enumerated() {
-            if entry.time <= pos {
-                prevIdx = i
-            } else {
-                nextIdx = i
-                break
-            }
-        }
-        if prevIdx < 0 {
-            guard let firstTime = lines.first?.time, firstTime > 0 else { return 0 }
-            return (pos / firstTime) - 1.0
-        }
-        if nextIdx < 0 {
-            return Double(prevIdx)
-        }
-        let prevTime = lines[prevIdx].time
-        let nextTime = lines[nextIdx].time
-        let span = nextTime - prevTime
-        if span <= 0 { return Double(prevIdx) }
-        let progress = (pos - prevTime) / span
-        return Double(prevIdx) + min(max(progress, 0), 1)
-    }
-
-    /// Lyric line with distance-based font scaling. The closer a
-    /// line is to the centre (distance ≈ 0), the larger and bolder
-    /// it renders; lines further away shrink toward `.body` size.
-    /// Combined with the alpha gradient mask, this produces a
-    /// karaoke-style pull toward the active lyric without painting
-    /// any single line specially.
-    @ViewBuilder
-    private func lyricLine(_ text: String, distance: Double) -> some View {
-        // Smooth size scaling: full size at centre, tapering to
-        // baseline by distance == 2. Beyond that it stays at the
-        // baseline (these lines are mostly faded out by the mask
-        // anyway).
-        let clamped = min(max(distance, 0), 2.0)
-        let baseSize: CGFloat = 13   // ~.body
-        let peakSize: CGFloat = 19   // bigger than .title3 for impact
-        let t = 1.0 - (clamped / 2.0) // 1 at centre, 0 at edges
-        let size = baseSize + (peakSize - baseSize) * CGFloat(t)
-        // Weight ramps similarly: bold near centre, regular far away.
-        let weight: Font.Weight = t > 0.65 ? .bold
-                                : t > 0.30 ? .semibold
-                                            : .regular
-        Text(text)
-            .font(.system(size: size, weight: weight))
-            .foregroundStyle(Color.primary)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity)
-            .lineLimit(1)
-            .minimumScaleFactor(0.85)
-            .padding(.horizontal, 16)
-            // No `.textSelection` here — the lines are moving
-            // continuously via the TimelineView, which makes SwiftUI's
-            // hit-testing flaky for siblings (the About / History tab
-            // buttons above were sometimes unclickable). Plain
-            // (un-synced) lyrics keep selection enabled.
-            .allowsHitTesting(false)
-    }
-
-    private var centreFocusMask: some View {
-        LinearGradient(
-            stops: [
-                .init(color: Color.black.opacity(0.12), location: 0.00),
-                .init(color: Color.black.opacity(0.55), location: 0.30),
-                .init(color: Color.black.opacity(1.00), location: 0.50),
-                .init(color: Color.black.opacity(0.55), location: 0.70),
-                .init(color: Color.black.opacity(0.12), location: 1.00),
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
 }
 

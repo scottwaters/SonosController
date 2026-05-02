@@ -1,6 +1,230 @@
 
 # Changelog
 
+## v4.5 — 2026-05-02 — Karaoke + auto-update + encrypted bug reports + perf
+
+A substantial release: the karaoke window now has its own resizable popout with smooth art crossfades and radio-art grace handling, Choragus now self-updates via Sparkle 2 with EdDSA-signed releases and an opt-in beta channel, the diagnostics surface gains an encrypted bug-report path that ships an opaque-to-GitHub bundle to the maintainer plus a live UPnP event monitor in a tabbed shell, and there's a substantial under-the-hood pass to drive idle CPU churn and SwiftUI invalidation rate down.
+
+### Sparkle 2 auto-update integration
+
+`SPUStandardUpdaterController` wired in `ChoragusApp.swift` via the new `SparkleUpdaterObserver`. Construction is gated on a non-empty `SUFeedURL` Info.plist value (placeholder-substituted at release time from `scripts/.release.env`); dev builds and forks leave the placeholder unsubstituted and Sparkle stays inert, with the existing GitHub-API `UpdateChecker` running as the fallback notification path.
+
+`startUpdater()` is deferred to 0.5 s after the main `WindowGroup` mounts so Sparkle's first-run permission prompt opens against an already-rendered app window instead of holding initial rendering hostage. KVO observers for `automaticallyChecksForUpdates` and `automaticallyDownloadsUpdates` propagate Sparkle-side state changes (first-run prompt, sparkle CLI tooling, manual `defaults write`) back into the `@Published` mirror so the Settings UI reflects reality.
+
+A new `SparkleUpdaterDelegate` implements `allowedChannels(for:)` reading `UDKey.sparkleBetaChannelEnabled` from UserDefaults — empty set for production-only (default), `["beta"]` when the user has opted in. The hook is read per-update-check, so flipping the toggle takes effect on the next "Check for Updates" without an app relaunch.
+
+`scripts/release.sh` extended: signs each notarised zip with `sign_update`, prepends the new `<item>` entry to `appcast.xml` in a `gh-pages` worktree (with optional `--beta` flag injecting `<sparkle:channel>beta</sparkle:channel>` for staged releases), and pushes. First-run setup landed in the parent-dir `docs/auto-update-setup.md`. Existing v3.x / v4.0 users need one manual update to v4.5; from then on auto.
+
+### Settings — dedicated Software Updates tab
+
+Software Updates moved out of the System tab into its own top-level Settings tab (5th slot, "arrow.down.circle" icon) — only appears when Sparkle is active in the build. Three controls in the main section: auto-check toggle, auto-download toggle (disabled until auto-check is on), manual Check Now with last-checked timestamp.
+
+Below that, a new Beta Channel section with an opt-in toggle and an orange-warning-triangle helper paragraph spelling out that beta builds may be unstable, may lose data, and may break features that work in stable; not recommended for the user's only Mac. Toggle binding writes the `sparkle.betaChannelEnabled` UserDefaults key; the SparkleUpdaterDelegate reads it on each update check.
+
+### Encrypted bug-report bundles
+
+Diagnostics window restructured as a tabbed shell (Log + Live Events). The Log tab's footer gains a "Report Bug (encrypted)" button (visible only when `BugReportEncryptor.isConfigured` — i.e. release builds with `BUG_REPORT_PUBLIC_KEY` substituted into Info.plist).
+
+Click the button → a modal preview sheet opens showing the formatted bundle text exactly as it will be encrypted, with a redaction-counter summary at the bottom (`Substituted: N tokens, M LAN IPs, K paths`). Confirm → Choragus assembles the bundle, encrypts the body, writes a `Choragus-Bug-Bundle-<timestamp>.choragus-bundle` file to the user's Downloads folder, reveals it in Finder, and opens GitHub Issues with the title and body pre-filled (body names the exact filename + tells the user to drag the Finder reveal into the comment).
+
+Two-tier redactor split: `DiagnosticsRedactor.scrubForPersistence` runs at the SQLite write boundary and strips only auth tokens — LAN IPs, file paths, RINCON IDs, and SMAPI account bindings stay so the user's local diagnostic store remains useful for self-debugging. `DiagnosticsRedactor.scrubForPublicOutput` runs at the export boundary (Copy All / Save Bundle / the legacy plaintext "Report on GitHub" / "Report Privately" buttons in dev/fork builds) and runs every redactor.
+
+`BugReportEncryptor` (new in SonosKit) wraps the diagnostic body via X25519 key agreement + HKDF-SHA256 + ChaChaPoly AEAD (standard ECIES envelope: ephemeral X25519 keypair → shared secret → derived symmetric key → AEAD encrypt → concat ephemeral_pubkey ‖ nonce ‖ ciphertext ‖ tag). `BugReportBundle` (also new) wraps the ciphertext in a JSON envelope with a plaintext header (Choragus version, macOS, build tag, locale, event count, generation timestamp) so the maintainer can sort received bundles without decrypting first.
+
+The bundle is opaque to GitHub itself, to any caching proxy, and to anyone who downloads the attached file from GitHub's CDN — only the maintainer's matching private key can unwrap it. Auth tokens are stripped at the source so the maintainer never holds working credentials even after decryption.
+
+A maintainer-side decrypt CLI lives at `scripts/decrypt-bug-bundle.swift` (parent dir, outside the Choragus repo): pure CryptoKit + Foundation, prompts for the private key on stdin if not provided as argv, prints the decrypted entry list. A standalone `ChoragusBugBundleReader.app` (separate package, parent dir, drag-and-drop UI) provides a friendlier path.
+
+A new context-menu item `Copy Row (with payload)` next to the existing scrubbed `Copy Row` exposes the on-disk-tier representation directly to clipboard for local debugging — auth tokens still stripped (those were never on disk), but LAN IPs / paths / device IDs preserved.
+
+The required `com.apple.security.files.downloads.read-write` entitlement was added so the encrypted-bundle write to `~/Downloads` succeeds in the sandboxed app.
+
+### Live Events tab — real-time UPnP event monitor
+
+`HybridEventFirstTransport.handleEvent` now broadcasts every parsed UPnP event via `NotificationCenter` (`SonosUPnPEventNotification`) before dispatching to the existing per-kind handlers. The broadcast carries `serviceType` ("avTransport" / "renderingControl" / "topology"), `deviceID` (RINCON UUID), and the raw NOTIFY body. Single line of new work in the hot path; no measurable cost when nothing's subscribed.
+
+A new app-side `LiveEventLog` (`@MainActor ObservableObject`, owned by `WindowManager.openDiagnostics` so it lives for the whole window's lifetime regardless of which tab is active) subscribes to that notification, resolves `deviceID` → room/group via the live `SonosManager`, parses the body via the existing `LastChangeParser` for one-line summaries, and stores newest-first in a 5,000-event ring buffer with pause-with-buffering semantics.
+
+`LiveEventsView` renders the stream: per-kind toggle filters (RC / AVT / TOPO), per-speaker dropdown filter, expandable rows that reveal the raw NOTIFY XML inline, pause / resume / clear controls. Useful when investigating why a control feels unresponsive — if the event arrives at the speaker but Choragus reacts late, the Live Events tab will show that.
+
+### Karaoke window — crossfade transitions, wordmark/icon resize, radio art grace
+
+Album art crossfade: header `CachedAsyncImage` and the blurred backdrop both wrapped with `.id(url) + .transition(.opacity)` and a parent `.animation(.easeInOut(duration: 0.4), value: resolvedURL)`. Track changes now fade between covers instead of snapping. Same treatment applied to `NowPlayingView.albumArtView` for consistency.
+
+Header wordmark and icon resized: wordmark dropped from `headerArtSize * 0.75` to `headerArtSize * 0.5625` (108pt → 81pt); icon dropped from full `headerArtSize` to `headerArtSize * 0.75` (144pt → 108pt). Both restore the album art's visual prominence after earlier work had over-scaled the brand block.
+
+Radio-track-art grace window: `ArtResolver` now holds the previous song's art for up to 8 s on a radio track changeover so the karaoke display doesn't snap to the station logo during the iTunes-search-in-flight gap. `handleTrackURIChanged` entry gate extended to also accept "title changed on stable radio URI" — radio HLS streams keep the same trackURI for the entire session, so the previous URI-only gate missed every intra-stream song change. Released early on actual track-art resolution; immediate fallback for station-ID titles (empty, or title equals stationName).
+
+Cross-source title-key cache contamination guard: `ArtCacheService.lookupCachedArt` now rejects a title-keyed cache hit when the cached `/getaa?u=<src>` proxy URL embeds a source URI from a different family (local-file vs Apple Music vs Spotify vs radio) than the requesting track's URI. Title is too coarse a key to share across sources — a previous local-library play of "Bohemian Rhapsody" was poisoning the karaoke window for the same nominal title played via Apple Music. URI-key hits are unaffected (URI is unique-per-source already). Defensive design: never breaks a lookup it can't verify.
+
+### Help system — Live Events, encrypted reporting, Software Updates, Beta Channel
+
+Diagnostics topic in the Help window gains two new sections: Live Events tab (what it shows, when to use it) and encrypted bug reports (the preview-sheet flow, how the bundle is opaque to GitHub, EdDSA + ChaChaPoly framing). Preferences topic gains Software Updates Heading and Beta Channel Heading covering the new Settings tab. Help banner inside the Diagnostics window itself rewritten to describe the encrypted-bundle flow, the Live Events tab, and the Copy Row variants.
+
+Eight new help string keys + one bullet under Preferences, all translated to the project's 13 languages.
+
+### Code and functional optimisation
+
+Substantial under-the-hood work to reduce idle CPU churn, eliminate background log floods that were both slowing things down and saturating the diagnostic store, and tighten the SwiftUI invalidation surface so playback and lyric scrolling feel noticeably smoother across the board.
+
+- Several high-frequency debug-log emitters removed (per-frame `[UI-RENDER]` traces, unconditional `[QUEUE] updateCurrentTrack` per metadata refresh, three verbose `[POSITION]` logs, two per-keepalive `[MDNS]` logs); `[DISCOVERY]` log gated inside the device-change-detection guard.
+- Equality gates added on `@Published` writes across `SonosManager` and `ArtCacheService` so identical-value writes don't fire the publisher chain during steady-state playback or topology refresh storms. Sites covered: `groupTrackMetadata` (both same-track-poll write paths in `transportDidUpdateTrackMetadata`), `groupTransportStates` / `groupPlayModes` (in both event handlers and `scanGroup`), `groupPositions` / `groupDurations`, `groupPositionAnchors` (already drift-thresholded; tagged), `deviceVolumes` / `deviceMutes` (in both event handlers and the `updateDeviceVolume` / `updateDeviceMute` public setters that `scanGroup` calls per-member), `awaitingPlayback`, the three topology-refresh flags (`isUsingCachedData` / `isRefreshing` / `staleMessage`), `htSatChannelMaps` (string-serialised tuple comparison since the dict's tuple values aren't Equatable), and the `cacheArtURL` four-key write paths.
+- Source-tagged publisher counters in SonosManager: per-second `[MGR-PUB]` reporter now logs `total=N tag1=A tag2=B untagged=C` so future optimisation work can attribute publish bursts to specific subsystems instead of generic guess-work. Production builds emit at most `total=1-2 untagged=0` per active second in steady-state karaoke playback, down from 14-16/sec pre-optimisation.
+- `BrowseItemArtLoader` process-lifetime negative-art `Set<String>` short-circuits the SOAP cascade on items that have already failed every resolution strategy; per-error `[BROWSE]` log lines removed (the negative cache supersedes them).
+- `NowPlayingContextPanel` history-tab filter cached via `.task(id: HistoryCacheKey(trackKey:entriesCount:))` so the playHistoryManager.entries scan no longer reruns on every parent invalidation.
+- `dev-build.sh` switched to `ONLY_ACTIVE_ARCH=YES` for daily iteration (~halves build time on Apple Silicon); `release.sh` stays universal.
+
+### Karaoke popout window
+
+The Lyrics tab now has a popout button (top-right). Clicking it opens a separate, resizable `LyricsKaraokeWindow` with much larger karaoke-style text — 5 visible rows × 120pt rows, 72pt active / 44pt edge font, readable from across a room. The window is locked to the group it was opened for at open time and won't follow the main UI's selected-group changes (so a karaoke session doesn't get yanked away when the user clicks into a different room). Long lyric lines shrink-to-fit via `.minimumScaleFactor(0.3)` instead of truncating with an ellipsis.
+
+The window header carries a 96pt album-art thumbnail plus the track title, artist, and album. A heavily-blurred full-bleed copy of the album art sits as an atmospheric backdrop at 30% opacity (no `.ignoresSafeArea()` — the backdrop stays bounded to the host contentView so it can't bleed into the macOS title-bar translucency layer).
+
+Window-size floor is enforced at the AppKit level via `NSWindow.contentMinSize`, not via SwiftUI `.frame(minHeight:)`. The latter centres any overflow during resize and was clipping both the header *and* the footer at the same time on shrink. Lifecycle is hardened: every karaoke window carries a stable `NSUserInterfaceItemIdentifier`, an orphan sweep across `NSApp.windows` runs on every open (closes leaked windows from a previous bad state), and a `willCloseNotification` observer keeps the manager's ivar in sync with reality so the next reopen doesn't try to revive a half-torn-down host.
+
+### Shared playhead anchor (refactor)
+
+Underlying the karaoke window's lockstep with the inline panel: `PositionAnchor` was promoted from `Choragus/ViewModels/NowPlayingViewModel.swift` to `SonosKit/Models/PositionAnchor.swift`, and `SonosManager` gained a new `@Published public var groupPositionAnchors: [String: PositionAnchor]` plus the drift-tolerant rebase logic (forward 2 s, backward 30 s asymmetric thresholds) that previously lived in the view model. New public methods: `setPositionAnchor`, `setPositionDragInProgress`, `transportDidUpdatePosition`.
+
+Both the inline panel and the karaoke window are now pure consumers of the shared anchor — neither maintains its own. Drift between the two views is eliminated structurally rather than by per-view re-syncing. The previous bug where the karaoke window's lyrics drifted hundreds of milliseconds out of sync with the panel was caused by each view independently rebuilding anchors with their own `wallClock` stamps; with one shared anchor that class of bug can't recur.
+
+### Background metadata prewarmer
+
+New `MetadataPrewarmService` in SonosKit. Subscribes to `SonosManager.$groupTrackMetadata` once at app start. For every track that begins playing in any group it fires fire-and-forget Tasks against `LyricsService` + `MusicMetadataService` to hydrate caches, regardless of UI state — context panel collapsed, panel open with a different tab, group not currently selected. Cross-group dedup uses the new shared `TrackMetadata.stableKey` (URI for streaming/library tracks, URI+title+artist for radio).
+
+End-result: opening the Lyrics or About tab is now an instant cache hit unless the network was down at the moment of the track change.
+
+### Diagnostics window
+
+A new bug icon in the toolbar (top-right of the main window) opens the new Diagnostics window. Behind the icon is a SQLite-backed ring buffer at `~/Library/Application Support/Choragus/diagnostics.sqlite` — schema is `(id, ts, level, tag, message, context_json)`, with a 30-day TTL and a 5,000-entry hard cap so a runaway error storm can't fill disk.
+
+Capture happens automatically through hooks in two layers:
+- **`SOAPClient.send`** — every SOAP fault (HTTP 500) and every non-2xx response is logged with action, service, URL, fault code, fault string. Catches every UPnP error from any path.
+- **`SonosManager.playBrowseItem` direct-play branch** — captures URI + DIDL metadata + service name when single-track plays fail. Specifically targets the diagnostic surface for issue #19's "SOAP fault when clicking single Spotify track" — the next reproducer will have the exact URI Sonos rejected.
+
+PII redaction is applied at log time before persistence by a new `DiagnosticsRedactor`:
+- Home directory paths → `~`
+- LAN IPv4 (10/8, 172.16/12, 192.168/16, 169.254/16) → `<lan-ip>`
+- Sonos device IDs (`RINCON_<hex>`) → keep last 4 chars, mask the rest
+- SMAPI sub-account binding `sn=<digits>` → `sn=*`
+- OAuth tokens / API keys / `Bearer <hex>` → `<redacted>`
+
+Track titles, artist names, and album names are kept — this is a music app and they're useful for reproducing playback issues.
+
+The Diagnostics window has filter pills (All / Errors only / Warnings + errors), a sortable table, per-row right-click `Copy Row`, and footer actions for `Copy All`, `Save Bundle…`, and `Report on GitHub`. The Report button URL-encodes the bundle into a GitHub `?body=` deep-link; if the bundle exceeds GitHub's URL ceiling (~7 KB) it falls back to clipboard + plain new-issue page so the user pastes manually. Help text in the window banner spells out the two paths (GitHub submission vs manual paste) and notes that GitHub doesn't accept anonymous issues. All three copy paths produce the same self-contained bundle (Choragus version, macOS version, bundle ID, then events) so the maintainer always has version context regardless of which path the reporter used.
+
+A new `Settings → Display → Hide diagnostics icon in toolbar` toggle lets users hide the icon. Diagnostics still capture in the background; only the toolbar entry point is removed.
+
+### Window state remembered across launches
+
+The main window's panel toggles (`showBrowse` / `showQueue`) and the user-set Browse panel width all migrated from `@State` to `@AppStorage` so they persist across launches. A new `WindowFrameAutosaver` `NSViewRepresentable` sets `NSWindow.setFrameAutosaveName("ChoragusMainWindow")` on the main window so AppKit auto-persists the window's frame (position + width + height) to UserDefaults. Subsequent launches restore the previous frame; first launch falls back to `.defaultSize(width: 900, height: 550)` as before.
+
+### Settings checkboxes — instant response
+
+All `Toggle` bindings that previously used the manual `Binding(get: { UserDefaults.standard.bool(...) }, set: { UserDefaults.standard.set(...) })` pattern have been migrated to `@AppStorage`. SwiftUI doesn't observe UserDefaults via the manual pattern — the binding's `get` only re-runs when the parent view re-renders for some other reason, so clicking the toggle wrote the value but the UI didn't re-render to reflect it for half a second or longer. Affected toggles: scroll-volume, middle-click-mute, classic-shuffle, proportional-group-volume, ignore-TV/HDMI Line-In, realtime-stats. The realtime-stats interval `Picker` got the same treatment.
+
+The Music tab section order now reads Play History → Music Services → Playback (was Playback → Play History → Music Services).
+
+### Music Services — duplicate-row fix + per-household sid promotion
+
+`MusicServicesView.buildServiceList` now dedupes by both `coveredIDs` *and* `coveredNames` (lowercased), tracked across all four build stages (pinned → Plex Cloud → authenticated → serial-discovered → catalog). Pinned services with hardcoded SoCo-wiki sids no longer produce duplicate rows when the household catalog lists the same service under a different sid (the Pandora-as-two-rows bug).
+
+But dedup alone wasn't enough — keeping the pinned sid would mean SMAPI calls fail because Sonos doesn't recognise that sid for the household. So pinned-sid promotion was added: when a pinned service's name matches a household-catalog entry, the pinned entry's `serviceID` is replaced with the catalog's sid (the one Sonos understands for that household). The original sid is appended to `alternativeIDs` so dedup still catches any other path that might still reference the SoCo-wiki sid. Promotion is logged via `sonosDiagLog` so per-household sid mappings become observable in the diagnostics bundle — useful data if patterns emerge across reports.
+
+### Last.fm bio depth + iTunes artist-image fallback
+
+`parseLastFMArtist` and `parseLastFMAlbum` now read `bio.content` / `wiki.content` (full text) instead of `bio.summary` / `wiki.summary` (Last.fm-truncated 1–2 paragraph snippet). Both fields end with the same "Read more on Last.fm" trailer that `stripLastFMTrailer` cleans. For artists with rich Last.fm coverage (Weird Al, Eminem, etc.) the about card now shows the full biography instead of an obviously-cut-off summary.
+
+Artist images: when neither Last.fm (placeholder-filtered post-2019) nor Wikipedia provides one, fall back to iTunes Search via the new public `AlbumArtSearchService.searchArtistArt(artist:)` method (uses `entity=musicArtist`). Returns ~100×100 typical, small but better than blank. The `MetadataCacheRepository` artist + album cache keys gain a `v2` schema-version suffix so existing v4.0 cached entries from before these fixes silently miss and re-fetch with the improved logic.
+
+### Lyrics performance — virtualisation + cleaner overflow
+
+`SlidingLyricsView` was extracted from `NowPlayingContextPanel.swift` into its own file and parameterised on `visibleRows` / `rowHeight` / `peakSize` / `baseSize` so the inline panel and karaoke window can size it without forking the implementation.
+
+The renderer slices `lines` to a fixed window of `visibleRows + 2 × bufferRows` instead of iterating the full LRC. Per-frame cost drops from O(N) to O(constant). Long, repeat-dense LRCs — Eminem's *Not Afraid* fans out into ~200 entries via multi-tag chorus repeats — used to push N into the hundreds and the main thread couldn't keep up; the karaoke effect would judder. The slice keeps per-frame work bounded regardless of track length.
+
+The frame uses `maxHeight` only (no `minHeight`) so the view shrinks below `windowHeight` when the parent is smaller, instead of overflowing into adjacent VStack siblings. Long lyric lines shrink-to-fit at `.minimumScaleFactor(0.3)`.
+
+### Settings → System → Network — about copy rewritten
+
+Replaced the four-line "Event-Driven / Legacy Polling / Quick Start / Classic" stub with comprehensive coverage of all current options: Updates (Event-Driven vs Legacy Polling), Startup (Quick Start vs Classic), Discovery (Auto / Bonjour Only / Legacy Multicast — previously undocumented), and the iTunes Throttle status row. Markdown rendering enabled via `LocalizedStringKey(text)` so `**bold**` actually formats and a clickable `github.com/scottwaters/Choragus` link appears at the bottom for users who want deeper troubleshooting detail. Translated to all 13 locales.
+
+### Translations
+
+Substantial translation pass:
+- 24 new diagnostic / karaoke / window-state UI keys translated into all 13 supported locales (`en`, `de`, `fr`, `nl`, `es`, `it`, `sv`, `nb`, `da`, `ja`, `pt`, `pl`, `zh-Hans`).
+- `aboutNetworkBody` updated for all 13 locales with the new comprehensive content.
+- New help-section copy (Karaoke popout + Diagnostics topic) translated to all 13 locales.
+- Settings → Language gains a new `translationHelpNote` underneath the language picker — also translated to all 13 — inviting users to file GitHub issues for incorrect or unnatural translations.
+
+Multi-source verification: terminology was cross-referenced against Apple Console.app column names, Apple System Settings → Toolbar / Symbolleiste, Apple Save dialog convention (Sichern / Enregistrer / 保存), and Apple Finder Tags (kept "Tag" untranslated where Apple does). Confidence high on European locales; medium on `ja` and `zh-Hans` — native review still recommended for those before shipping non-English-default builds.
+
+### Removed
+
+- Five `ErrorHandler.shared.info(...)` queue-add toast call sites in `SonosManager.swift` ("Adding 0 / N tracks…", "Adding X / N tracks…", "Add to Queue: N tracks", "Add to Queue: <title>"). The QueueView's existing inline spinner was always the appropriate in-progress signal; the green banner was redundant noise that interfered with the surrounding UI.
+
+### Browse pagination — SMAPI services + dedup guard
+
+`BrowseViewModel.loadMore` now correctly paginates SMAPI-backed services (Spotify, Plex Cloud, Audible, etc.). The previous implementation routed *every* "Load More" request through the speaker's UPnP `browse(...)` SOAP, which has no understanding of SMAPI item IDs and silently returned empty results — meaning the user could only ever see the first ~100 items in any streaming service browse, with "Load More" doing nothing.
+
+The new dispatch:
+
+- **SMAPI sources** (Spotify, Plex Cloud, Audible, …) → `SMAPIClient.getMetadata` (or `getMetadataAnonymous`) with `index = loadedCount`. Result items go through `ServiceSearchProvider.smapiItemToBrowseItem` to land as normal `BrowseItem` rows.
+- **Local-library / radio search** (`isSearch`, `isServiceSearch`) → bails early; the initial load returns the full result set, no pagination concept.
+- **Default UPnP browse** → speaker `browse(start: loadedCount)` as before.
+
+Plus a new `isLoadingMore` guard prevents the infinite-scroll bottom-sentinel from firing multiple concurrent `loadMore` calls when the user flicks past the threshold quickly. Without it, N concurrent requests produced duplicate rows when they all returned. `defer { isLoadingMore = false }` ensures the guard releases on every code path.
+
+`totalItems` is also now updated from each page's reported total (it can grow during browse — e.g. a service that initially reported 100 items finds 200 in deeper pagination), so the bottom-sentinel keeps firing until the actual end.
+
+### iTunes Search — UI/backfill priority split
+
+`AlbumArtSearchService` now splits its public API by intent:
+
+- **`searchArtwork(artist:album:)`** (no `maxWait`) is the **UI path** — runs `unthrottled: true`, bypassing the local 12 req/min self-throttle. Used by Now Playing art lookup, browse-row art rendering, manual refresh, and the new artist-image fallback.
+- **`searchArtwork(artist:album:maxWait:)`** is the **backfill path** — stays throttled. Used by `playHistoryManager.backfillMissingArtwork()` with `maxWait: 120`, so it patiently waits for slots and yields to UI.
+
+`searchArtistArt` and `searchRadioTrackArt` are also unthrottled. Apple-side 403/429 cooldown still applies to all paths.
+
+Without this split, the post-launch backfill pass (which fires ~60 iTunes calls in the first few seconds) saturated the local 12/min cap and starved any user-initiated lookup happening in the same window — opening an album in Browse, refreshing an artist photo, etc. would silently get throttle-denied. After the split, UI lookups complete regardless of background backfill load.
+
+The `searchArtistArt` cascade (musicArtist → album → song) accounts for an iTunes Search API quirk: `musicArtist` entity records often lack an `artworkUrl100` field, so a representative album cover is used as the artist's About-card photo when no real artist portrait is available.
+
+### Diagnostic logging in iTunes paths
+
+Every `iTunesSearchFull` call now logs to the diagnostics window when it returns nil, distinguishing four failure modes:
+
+- Rate limiter denied or HTTP failure (`WARN ART`, includes the entity)
+- JSON parse failure (`WARN ART`)
+- Zero results from Apple (`INFO ART`, includes the query)
+- Result has no `artworkUrl` field (`INFO ART`, includes the matched `artistName` and result count)
+
+Plus the `ART/ARTIST` summary line includes a snapshot of the rate limiter state (`available`, `cooldownUntil`, `cooldownStatus`, `requestsInWindow`) when all three cascade entities fail. Together these make diagnosis of "why is artwork missing for X?" a single bundle paste rather than a back-and-forth.
+
+`country=US` is now passed explicitly on every iTunes Search URL so the US storefront is queried regardless of caller IP geolocation. Removes one layer of ambiguity for non-US users hitting US-only artists.
+
+### Radio-track-art dedup at two layers
+
+Two separate sources of "previous song's art shows up after a radio station rolls to the next track" got fixes:
+
+- **Menubar art** (`ArtCacheService`) — refuses to use radio URIs as cache keys. A station URI identifies the *station*, not the song; reusing it across the dozens of different tracks the station plays cross-contaminated every lookup. Title-based keys are now the only path for radio.
+- **Now Playing art** (`ArtResolver`) — added `radioTrackArtKey` field tracking the title|artist key the current `radioTrackArtURL` was resolved for. `artURLForDisplay` now compares the stored key against the current track via `radioTrackArtKeyMatches` (title-only comparison; radio metadata arrives in stages so artist drift inside the same title is treated as the same song). Stale URLs from a previous song no longer display after a transition until the next iTunes lookup completes.
+
+`ArtResolver` itself is now `@Observable` so SwiftUI re-renders when async art-search results land in `radioTrackArtURL` / `webArtURL` / `displayedArtURL`. The previous indirection through `NowPlayingViewModel` alone meant SwiftUI never got notified when ArtResolver state mutated after a metadata-driven search finished — visible as art correct on first launch but stuck across subsequent in-session track changes.
+
+### Bug fixes
+
+- Local library files with spaces in their path (e.g. `x-file-cifs://server/Pink Floyd/Wish You Were Here.mp3`) now reliably add to the queue. The `EnqueuedURIs` argument of `AddMultipleURIsToQueue` is a *space-separated* list of URIs — without URL-encoding, the speaker split at the wrong places and silently rejected every URI past the first one. The single-URI `AddURIToQueue` path didn't see this because there's no separator there. Idempotent: existing `%20` sequences are untouched.
+- Synced lyrics no longer re-parse the LRC string on every position-projection tick. `NowPlayingContextPanelViewModel` now memoises one parsed result per source string. Under `@Observable`, the previous design ran the regex + split + sort + allocate cycle 60+ times per second whenever the position projection ticked.
+- `MetadataCacheRepository` artist + album cache keys gain a `v2` schema-version suffix, so existing v4.0 cached `ArtistInfo` / `AlbumInfo` entries from before the bio + image fixes silently miss and re-fetch with the improved logic instead of stranding users on stale "no image" cached results for famous artists.
+
+### Internal cleanup
+
+- Multi-paragraph file docstrings and past-fix narrations trimmed across the lyrics-related files (per the project's "no comment unless WHY is non-obvious" convention). Net reduction across `SlidingLyricsView`, `LyricsKaraokeWindow`, `MetadataPrewarmService`, `NowPlayingContextPanel`: ~120 lines of comments.
+- `trackKey` logic deduplicated into a single `TrackMetadata.stableKey` extension. Was previously hand-rolled in three places (panel, karaoke window, prewarmer).
+- `NowPlayingViewModel` no longer maintains `forwardRebaseThreshold` / `backwardRebaseThreshold` constants or the `updateAnchorFromAuthoritative` / `updateAnchorPlayingState` methods — those are gone with the `PositionAnchor` move to SonosManager.
+- `Info.plist` adds a `ChoragusBuildTag` custom key (populated via Xcode's `$(CHORAGUS_BUILD_TAG)` substitution from `dev-build.sh`). Surfaces as the Debug-only window-title suffix so accumulated dev builds in macOS's Local Network permissions list are individually identifiable. Custom key chosen specifically so it does *not* change `CFBundleVersion` — TCC treats `CFBundleVersion` changes as a new app version and re-prompts for Local Network access on every dev rebuild.
+
 ## v4.0 — 2026-04-27 — Choragus
 
 > **Heads-up — major rework, breaking for existing installs.** v4.0 renames the project from SonosController to Choragus. The bundle ID changes (`com.sonoscontroller.app` → `com.choragus.app`), the executable name changes, and the Keychain service name changes with them. **Existing SonosController installs do not auto-upgrade** — Choragus arrives as a fresh app. **Re-authenticate Spotify, Plex, Audible, Last.fm, and any other connected services on first launch** (one-time). Play history, presets, accent colours, listening-stats data, and other preferences carry forward automatically. The old SonosController build keeps working alongside Choragus until you're ready to switch — they use different sandbox containers.

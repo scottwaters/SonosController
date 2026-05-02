@@ -102,7 +102,6 @@ public final class MDNSDiscovery: SpeakerDiscovery, @unchecked Sendable {
                 seenLocations.insert(location)
                 let port = url.port ?? 1400
                 let hh = txtValue(txt, "hhid")
-                sonosDebugLog("[MDNS] TXT hit: \(name) location=\(location) hh=\(hh ?? "<nil>")")
                 onDeviceFound?(location, host, port, hh)
                 return
             }
@@ -128,7 +127,6 @@ public final class MDNSDiscovery: SpeakerDiscovery, @unchecked Sendable {
                     let location = "http://\(host):\(port)/xml/device_description.xml"
                     if !self.seenLocations.contains(location) {
                         self.seenLocations.insert(location)
-                        sonosDebugLog("[MDNS] Resolved \(name): \(location)")
                         self.onDeviceFound?(location, host, port, nil)
                     }
                 }

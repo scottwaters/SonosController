@@ -192,9 +192,21 @@ public enum UDKey {
     public static let communicationMode = "communicationMode"
     public static let discoveryMode = "discoveryMode"
     public static let appearanceMode = "appearanceMode"
+    /// Independent appearance preference for the karaoke popout
+    /// window. Defaults to `.dark` because the karaoke window is an
+    /// immersive media surface (often AirPlayed to a TV / viewed from
+    /// across the room) and reads better with high contrast against a
+    /// dark backdrop regardless of the rest of the app's theme.
+    public static let karaokeAppearanceMode = "karaokeAppearanceMode"
     public static let appLanguage = "appLanguage"
     public static let lastSelectedGroupID = "lastSelectedGroupID"
     public static let menuBarEnabled = "menuBarEnabled"
+    /// Opt-in for Sparkle's beta channel. When true, the
+    /// `SparkleUpdaterDelegate` returns `["beta"]` from
+    /// `allowedChannels(for:)`, exposing beta-tagged appcast items
+    /// alongside production. Default off — beta channel is
+    /// "may-break-things" by design.
+    public static let sparkleBetaChannelEnabled = "sparkle.betaChannelEnabled"
     public static let playHistoryEnabled = "playHistoryEnabled"
     public static let playHistoryEnabledSet = "playHistoryEnabledSet"
     public static let smapiEnabled = "smapiEnabled"
@@ -223,6 +235,25 @@ public enum UDKey {
     /// Collapses the Lyrics / About / History panel under Now Playing
     /// for users who prefer the cleaner now-playing-only layout.
     public static let contextPanelCollapsed = "contextPanelCollapsed"
+    /// Hides the diagnostics (bug) toolbar icon for users who don't
+    /// want it visible. Diagnostics still capture in the background.
+    public static let hideDiagnosticsIcon = "hideDiagnosticsIcon"
+    /// Persisted main-window panel toggles. Keep the same names users
+    /// click to toggle them so the keys are readable in `defaults read`.
+    public static let showBrowse = "showBrowse"
+    public static let showQueue = "showQueue"
+    /// User-set browse panel width (sentinel 0 = no override, use the
+    /// allocator's computed default). `Double` because `@AppStorage`
+    /// can't represent `Optional<CGFloat>` directly.
+    public static let userBrowseWidth = "userBrowseWidth"
+    /// Global lyrics timing offset in seconds. Applied on top of the
+    /// per-track manual offset (the `±` toolbar in the lyrics panel).
+    /// Default `-2.0` empirically — Sonos position polling typically
+    /// runs ~1–2 s behind true playback head, and LRC databases (LRCLIB)
+    /// are tuned for tracks-as-sung rather than as-streamed, so a
+    /// negative baseline pulls lyrics into perceived sync without
+    /// per-track tweaking.
+    public static let lyricsGlobalOffset = "lyricsGlobalOffset"
 
     // MARK: - Scrobbling (added v3.6)
     /// Per-service enable toggle. Pattern: `scrobbling.<serviceID>.enabled`.

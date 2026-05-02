@@ -4,19 +4,63 @@
 /// state (radio track art, station art, metadata art, web search art).
 /// Does NOT do: ad break detection (TrackMetadata.isAdBreak), DIDL parsing
 /// (TrackMetadata.enrichFromDIDL), or search orchestration (NowPlayingViewModel).
+///
+/// `@Observable` so SwiftUI re-renders when async art-search results
+/// land in `radioTrackArtURL`/`webArtURL`/`displayedArtURL`. Without
+/// this, the view binds to `NowPlayingViewModel` only and never gets
+/// notified when ArtResolver state mutates after a metadata-driven
+/// search finishes — the symptom: art shows correctly on app load
+/// (initial render coincides with cached state) but stays stale across
+/// in-session track changes.
 import Foundation
+import Observation
 import AppKit
 import SonosKit
 
 @MainActor
+@Observable
 final class ArtResolver {
     // MARK: - Display State
 
     var displayedArtURL: URL?
     var radioTrackArtURL: URL?
+    /// `title|artist` key the current `radioTrackArtURL` was resolved
+    /// for. Compared against the *current* track's key in
+    /// `artURLForDisplay` so a stale URL from the previous song doesn't
+    /// keep displaying after the track has changed but before the next
+    /// iTunes lookup completes (or fails). nil means the URL hasn't
+    /// been associated with a specific track key yet.
+    var radioTrackArtKey: String?
     var radioStationArtURL: URL?
     var webArtURL: URL?
     var forceWebArt = false
+
+    /// Radio track-art held over from the previous song so the display
+    /// doesn't snap to the station logo during the brief window between
+    /// "new song started" and "iTunes search returned art for it".
+    /// Set when a real track changeover is detected on radio (see
+    /// `handleTrackURIChanged`); cleared when the next track's art
+    /// resolves or when `radioGraceDeadline` passes.
+    var previousRadioTrackArtURL: URL?
+
+    /// Wall-clock cutoff for honouring `previousRadioTrackArtURL`. Past
+    /// this point the held art releases and the display falls back to
+    /// the station logo. Sized so legitimate iTunes searches finish
+    /// inside the window but a real station ID lands on the station
+    /// logo within seconds rather than holding stale song art.
+    var radioGraceDeadline: Date?
+
+    /// Sleep task that nils `previousRadioTrackArtURL` and
+    /// `radioGraceDeadline` once the deadline passes. Cancelled on
+    /// every re-arm and on every `setRadioTrackArt` call so concurrent
+    /// track flips don't compound.
+    @ObservationIgnored
+    private var radioGraceCleanupTask: Task<Void, Never>?
+
+    /// Grace-window length, in seconds. Tuned so most iTunes radio-
+    /// track searches finish inside it but a station-ID gap doesn't
+    /// hold the prior song's art for an obviously-wrong duration.
+    private static let radioGraceWindow: TimeInterval = 8.0
 
     // MARK: - Dedup Keys
 
@@ -175,7 +219,8 @@ final class ArtResolver {
                let pin = pinnedURL(for: trackMetadata) {
                 return pin
             }
-            if let trackArt = radioTrackArtURL, !trackMetadata.stationName.isEmpty {
+            if let trackArt = radioTrackArtURL, !trackMetadata.stationName.isEmpty,
+               radioTrackArtKeyMatches(trackMetadata) {
                 return trackArt
             }
             let metaArtString = trackMetadata.albumArtURI ?? ""
@@ -209,10 +254,40 @@ final class ArtResolver {
             }
             return radioStationArtURL
         }
-        if let trackArt = radioTrackArtURL, !trackMetadata.stationName.isEmpty {
+        if let trackArt = radioTrackArtURL, !trackMetadata.stationName.isEmpty,
+           radioTrackArtKeyMatches(trackMetadata) {
             return trackArt
         }
+        // Radio grace window: hold the prior song's art while the new
+        // song's iTunes search is in flight. Released as soon as
+        // `setRadioTrackArt` lands or the deadline expires.
+        if !trackMetadata.stationName.isEmpty,
+           let held = previousRadioTrackArtURL,
+           let deadline = radioGraceDeadline,
+           Date() < deadline {
+            return held
+        }
         return displayedArtURL ?? radioStationArtURL
+    }
+
+    /// True when the current `radioTrackArtURL` was resolved for the
+    /// currently-displayed track. Compares titles only — radio metadata
+    /// arrives in stages (title first, artist may fill in later), so an
+    /// `artist|title`-strict comparison would reject correct art when
+    /// the artist field finalises after the search completed. The title
+    /// is the stable per-song identifier; artist drift inside the same
+    /// title is treated as the same song. A nil `radioTrackArtKey`
+    /// means the URL was set without a key (legacy callers / pre-fix
+    /// state) — we trust those.
+    private func radioTrackArtKeyMatches(_ trackMetadata: TrackMetadata) -> Bool {
+        guard let stored = radioTrackArtKey else { return true }
+        let storedTitle = stored
+            .split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+            .first
+            .map(String.init) ?? ""
+        let currentTitle = trackMetadata.title
+        guard !storedTitle.isEmpty, !currentTitle.isEmpty else { return false }
+        return storedTitle.caseInsensitiveCompare(currentTitle) == .orderedSame
     }
 
     /// Whether to show the station badge overlay.
@@ -227,9 +302,25 @@ final class ArtResolver {
 
     func handleTrackURIChanged(trackMetadata: TrackMetadata, group: SonosGroup) {
         let currentURI = trackMetadata.trackURI ?? trackMetadata.title
-        guard currentURI != lastTrackURI, !currentURI.isEmpty else { return }
+        // Radio HLS streams keep the same trackURI for the whole
+        // session — different songs come down the same stream URL.
+        // The bare `currentURI != lastTrackURI` gate misses these
+        // intra-stream song changes, which means the grace window
+        // below never arms and the display falls to the station logo
+        // for the metadata-loading frame. Treat a title change on a
+        // stable radio URI as a track change as well.
+        let onRadio = !trackMetadata.stationName.isEmpty || trackMetadata.isRadioStream
+        let titleChangedOnSameRadioURI =
+            onRadio &&
+            currentURI == lastTrackURI &&
+            !trackMetadata.title.isEmpty &&
+            trackMetadata.title != lastTrackTitle
+        guard (currentURI != lastTrackURI || titleChangedOnSameRadioURI),
+              !currentURI.isEmpty
+        else { return }
         let previousTitle = lastTrackTitle
         let previousArtist = lastTrackArtist
+        let previouslyResolvedRadioArt = radioTrackArtURL
         lastTrackURI = currentURI
         lastTrackTitle = trackMetadata.title
         lastTrackArtist = trackMetadata.artist
@@ -252,6 +343,53 @@ final class ArtResolver {
         displayedArtURL = trackMetadata.albumArtURI.flatMap { URL(string: $0) }
         // Restore any persisted override for this specific track
         loadPersistedArtOverride(trackMetadata: trackMetadata, group: group)
+
+        // Radio grace window: hold the previous song's art over the
+        // metadata-loading gap so the display doesn't snap to the
+        // station logo for the second or two it takes the iTunes search
+        // to return. Skipped when the new "track" looks like a station
+        // ID (empty title, or title equals station name) — in that case
+        // the station logo is the right answer immediately.
+        // `onRadio` reuses the value computed at the top of the
+        // function for the title-change-on-stable-URI gate.
+        let isStationID = trackMetadata.title.isEmpty ||
+            (!trackMetadata.stationName.isEmpty &&
+             trackMetadata.title.caseInsensitiveCompare(trackMetadata.stationName) == .orderedSame)
+        if onRadio, !isStationID, let prior = previouslyResolvedRadioArt {
+            armRadioGraceWindow(holding: prior)
+        } else {
+            cancelRadioGraceWindow()
+        }
+    }
+
+    /// Captures `prior` as the held-over art and arms the deadline. A
+    /// background task fires after `radioGraceWindow` seconds to release
+    /// the hold, so views observing `previousRadioTrackArtURL` /
+    /// `radioGraceDeadline` get an automatic re-render and fall back to
+    /// the station logo when the search fails to land in time.
+    private func armRadioGraceWindow(holding prior: URL) {
+        previousRadioTrackArtURL = prior
+        let deadline = Date().addingTimeInterval(Self.radioGraceWindow)
+        radioGraceDeadline = deadline
+        radioGraceCleanupTask?.cancel()
+        radioGraceCleanupTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.radioGraceWindow * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            // If a newer arm has bumped the deadline forward, defer to it.
+            if let current = self.radioGraceDeadline, current > Date() { return }
+            self.previousRadioTrackArtURL = nil
+            self.radioGraceDeadline = nil
+        }
+    }
+
+    /// Releases any held-over radio art immediately. Called when fresh
+    /// track art lands (`setRadioTrackArt`) or a definitive non-result
+    /// returns from the search.
+    private func cancelRadioGraceWindow() {
+        radioGraceCleanupTask?.cancel()
+        radioGraceCleanupTask = nil
+        previousRadioTrackArtURL = nil
+        radioGraceDeadline = nil
     }
 
     // MARK: - Persistence
@@ -421,11 +559,33 @@ final class ArtResolver {
 
     func setRadioTrackArt(_ url: URL?) {
         radioTrackArtURL = url
+        // Keyless setter — used by call sites that don't yet know which
+        // track this URL belongs to. Clears the gating key so display
+        // doesn't reject the URL. New call sites should prefer
+        // `setRadioTrackArt(_:forKey:)`.
+        radioTrackArtKey = nil
+        // Search resolved (success or definitive nil) — release any
+        // held-over art from the grace window.
+        cancelRadioGraceWindow()
+    }
+
+    /// Records the URL together with the `title|artist` key it was
+    /// resolved for. The display layer compares this against the current
+    /// track's key and refuses to surface a stale URL from a previous
+    /// song while the new search is still in flight.
+    func setRadioTrackArt(_ url: URL?, forKey key: String) {
+        radioTrackArtURL = url
+        radioTrackArtKey = url == nil ? nil : key
+        // Search resolved (success or definitive nil) — release any
+        // held-over art from the grace window.
+        cancelRadioGraceWindow()
     }
 
     func clearRadioTrackArt() {
         radioTrackArtURL = nil
+        radioTrackArtKey = nil
         lastRadioTrackKey = ""
+        cancelRadioGraceWindow()
     }
 
     func setSearchKey(_ key: String) {
@@ -447,6 +607,7 @@ final class ArtResolver {
     func reset() {
         displayedArtURL = nil
         radioTrackArtURL = nil
+        radioTrackArtKey = nil
         radioStationArtURL = nil
         webArtURL = nil
         forceWebArt = false

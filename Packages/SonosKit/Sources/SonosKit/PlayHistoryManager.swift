@@ -24,6 +24,20 @@ public final class PlayHistoryManager: ObservableObject {
     private var rollupTimer: Timer?
     @Published public var lastRollupDate: Date?
 
+    /// O(1) lookup index for `isStarred(title:artist:)`. Maintained
+    /// incrementally on toggleStar / starCurrentTrack and rebuilt from
+    /// scratch on loadEntries / clearHistory / deleteEntries. Backed
+    /// the per-frame `NowPlayingView.isCurrentTrackStarred` check that
+    /// used to linear-scan the entire entries array on every body
+    /// re-eval — measured at ~150 PlayHistoryEntry copies per second
+    /// on the main thread, enough to starve the karaoke window's
+    /// `TimelineView` of frame budget.
+    private var starredKeys: Set<String> = []
+
+    private static func starredKey(title: String, artist: String) -> String {
+        title + "\u{1F}" + artist
+    }
+
     // Legacy JSON path for migration
     private let legacyJSONURL: URL
 
@@ -51,6 +65,22 @@ public final class PlayHistoryManager: ObservableObject {
     private func loadEntries() {
         entries = repo.loadAll()
         pruneIfNeeded()
+        rebuildStarredIndex()
+    }
+
+    private func rebuildStarredIndex() {
+        starredKeys.removeAll(keepingCapacity: true)
+        for entry in entries where entry.starred {
+            starredKeys.insert(Self.starredKey(title: entry.title, artist: entry.artist))
+        }
+    }
+
+    /// O(1) check used by the now-playing star button. Replaces the
+    /// previous `entries.contains(where:)` linear scan which dominated
+    /// the main thread on every NowPlayingView body re-eval.
+    public func isStarred(title: String, artist: String) -> Bool {
+        guard !title.isEmpty else { return false }
+        return starredKeys.contains(Self.starredKey(title: title, artist: artist))
     }
 
     private func pruneIfNeeded() {
@@ -268,6 +298,14 @@ public final class PlayHistoryManager: ObservableObject {
         guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
         entries[idx].starred.toggle()
         repo.setStarred(id: id, starred: entries[idx].starred)
+        let key = Self.starredKey(title: entries[idx].title, artist: entries[idx].artist)
+        if entries[idx].starred {
+            starredKeys.insert(key)
+        } else if !entries.contains(where: { $0.starred && $0.title == entries[idx].title && $0.artist == entries[idx].artist }) {
+            // Only remove from the index when no other entry with the
+            // same (title, artist) is still starred.
+            starredKeys.remove(key)
+        }
     }
 
     /// Star the most recent entry matching this title+artist (for starring the currently playing track)
@@ -277,6 +315,7 @@ public final class PlayHistoryManager: ObservableObject {
                 if !entries[i].starred {
                     entries[i].starred = true
                     repo.setStarred(id: entries[i].id, starred: true)
+                    starredKeys.insert(Self.starredKey(title: title, artist: artist))
                 }
                 return
             }
@@ -291,6 +330,7 @@ public final class PlayHistoryManager: ObservableObject {
     public func clearHistory() {
         entries.removeAll()
         lastLoggedTrack.removeAll()
+        starredKeys.removeAll(keepingCapacity: true)
         repo.deleteAll()
     }
 
@@ -299,6 +339,7 @@ public final class PlayHistoryManager: ObservableObject {
         guard !ids.isEmpty else { return }
         repo.deleteByIDs(Array(ids))
         entries.removeAll { ids.contains($0.id) }
+        rebuildStarredIndex()
     }
 
     // MARK: - Daily Summary Rollup

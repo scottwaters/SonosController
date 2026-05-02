@@ -12,8 +12,14 @@ struct RoomListView: View {
 
     private let iconColumnWidth: CGFloat = 34
 
-    private var playingCoordinatorIDs: Set<String> {
-        Set(sonosManager.groupTransportStates.filter { $0.value.isActive }.map { $0.key })
+    /// Direct O(1) lookup per row. The previous `playingCoordinatorIDs:
+    /// Set<String>` recomputed the whole set on every access (filter +
+    /// map + Set construction over `groupTransportStates`), and was
+    /// accessed once per visible room inside the ForEach — N rooms = N
+    /// full Set rebuilds per body re-eval, contributing to the
+    /// main-thread saturation that starved the karaoke window.
+    private func isPlaying(group: SonosGroup) -> Bool {
+        sonosManager.groupTransportStates[group.coordinatorID]?.isActive ?? false
     }
 
     private var selectionColor: Color {
@@ -80,7 +86,7 @@ struct RoomListView: View {
                         }
 
                         ForEach(section.groups) { group in
-                            let isPlaying = playingCoordinatorIDs.contains(group.coordinatorID)
+                            let isPlaying = isPlaying(group: group)
                             let isSelected = selectedGroupID == group.id
 
                             Button {

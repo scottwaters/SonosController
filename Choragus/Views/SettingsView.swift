@@ -9,6 +9,7 @@ struct SettingsView: View {
     @EnvironmentObject var smapiManager: SMAPIAuthManager
     @EnvironmentObject var scrobbleManager: ScrobbleManager
     @EnvironmentObject var lastFMScrobbler: LastFMScrobbler
+    @EnvironmentObject var sparkleObserver: SparkleUpdaterObserver
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab = 0
 
@@ -29,12 +30,19 @@ struct SettingsView: View {
 
             Divider()
 
-            // Tab picker
+            // Tab picker. Software Updates only appears when Sparkle
+            // is active (release build with a configured feed URL) —
+            // a dedicated tab when there's nothing to show would be
+            // confusing on dev / fork builds where the controls are
+            // necessarily inert.
             Picker("", selection: $selectedTab) {
                 Label(L10n.displayTab, systemImage: "paintbrush").tag(0)
                 Label(L10n.musicTab, systemImage: "music.note").tag(1)
                 Label(L10n.scrobbling, systemImage: "waveform").tag(3)
                 Label(L10n.systemTab, systemImage: "gearshape").tag(2)
+                if sparkleObserver.updater != nil {
+                    Label(L10n.softwareUpdates, systemImage: "arrow.down.circle").tag(4)
+                }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 24)
@@ -47,6 +55,7 @@ struct SettingsView: View {
                 .environmentObject(smapiManager)
                 .environmentObject(scrobbleManager)
                 .environmentObject(lastFMScrobbler)
+                .environmentObject(sparkleObserver)
         }
         .frame(width: 560, height: 720)
         .onDisappear {
@@ -66,12 +75,19 @@ private struct TabContentView: View {
     @Environment(\.dismiss) private var dismiss
     let tab: Int
 
-    /// Bound directly to UserDefaults so the Toggle UI updates
-    /// instantly when flipped — the previous indirection through
-    /// `MenuBarController.shared.isEnabled` wasn't observable, so
-    /// SwiftUI didn't know the value changed and the checkbox felt
-    /// stuck for half a second on each toggle.
+    // Toggle UI updates instantly when flipped because @AppStorage
+    // observes UserDefaults changes. Manual `Binding(get:set:)` against
+    // UserDefaults doesn't, which made the checkboxes feel stuck.
     @AppStorage(UDKey.menuBarEnabled) private var menuBarEnabled = false
+    @AppStorage(UDKey.hideDiagnosticsIcon) private var hideDiagnosticsIcon = false
+    @AppStorage(UDKey.scrollVolumeEnabled) private var scrollVolumeEnabled = false
+    @AppStorage(UDKey.middleClickMuteEnabled) private var middleClickMuteEnabled = true
+    @AppStorage(UDKey.classicShuffleEnabled) private var classicShuffleEnabled = false
+    @AppStorage(UDKey.proportionalGroupVolume) private var proportionalGroupVolume = false
+    @AppStorage(UDKey.ignoreTV) private var ignoreTV = false
+    @AppStorage(UDKey.realtimeStats) private var realtimeStats = false
+    @AppStorage(UDKey.rollupInterval) private var rollupInterval = 60
+    @AppStorage(UDKey.lyricsGlobalOffset) private var lyricsGlobalOffset: Double = -2.0
 
     var body: some View {
         ScrollView {
@@ -80,6 +96,7 @@ private struct TabContentView: View {
                 case 0: displayTab
                 case 1: musicTab
                 case 3: scrobblingTab
+                case 4: softwareUpdatesTab
                 default: systemTab
                 }
             }
@@ -102,12 +119,27 @@ private struct TabContentView: View {
                 }
                 .labelsHidden()
                 .frame(maxWidth: 300)
+
+                Text(LocalizedStringKey(L10n.translationHelpNote))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
 
             // ─── APPEARANCE ───
             settingsSection(L10n.appearance) {
                 settingsRow(L10n.theme) {
                     Picker("", selection: $sonosManager.appearanceMode) {
+                        ForEach(AppearanceMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 240)
+                    .languageReactive()
+                }
+
+                settingsRow(L10n.karaokeTheme) {
+                    Picker("", selection: $sonosManager.karaokeAppearanceMode) {
                         ForEach(AppearanceMode.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .pickerStyle(.segmented)
@@ -150,25 +182,25 @@ private struct TabContentView: View {
                         }
                     }
 
+                Toggle(L10n.hideDiagnosticsIcon, isOn: $hideDiagnosticsIcon)
+                Text(L10n.hideDiagnosticsIconHint)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 Divider()
 
                 Text(L10n.mouseControls)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.secondary)
 
-                Toggle(L10n.scrollWheelAdjustsVolume, isOn: Binding(
-                    get: { UserDefaults.standard.bool(forKey: UDKey.scrollVolumeEnabled) },
-                    set: { UserDefaults.standard.set($0, forKey: UDKey.scrollVolumeEnabled) }
-                ))
+                Toggle(L10n.scrollWheelAdjustsVolume, isOn: $scrollVolumeEnabled)
                 Text(L10n.scrollWheelAdjustsVolumeHint)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Toggle(L10n.middleClickTogglesMute, isOn: Binding(
-                    get: { UserDefaults.standard.bool(forKey: UDKey.middleClickMuteEnabled) },
-                    set: { UserDefaults.standard.set($0, forKey: UDKey.middleClickMuteEnabled) }
-                ))
+                Toggle(L10n.middleClickTogglesMute, isOn: $middleClickMuteEnabled)
                 Text(L10n.middleClickTogglesMuteHint)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -187,27 +219,6 @@ private struct TabContentView: View {
 
     private var musicTab: some View {
         Group {
-            // ─── PLAYBACK ───
-            settingsSection(L10n.playbackSection) {
-                Toggle(L10n.classicShuffleMode, isOn: Binding(
-                    get: { UserDefaults.standard.bool(forKey: UDKey.classicShuffleEnabled) },
-                    set: { UserDefaults.standard.set($0, forKey: UDKey.classicShuffleEnabled) }
-                ))
-                Text(L10n.classicShuffleHelp)
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-
-                Divider().padding(.vertical, 4)
-
-                Toggle(L10n.proportionalGroupVolume, isOn: Binding(
-                    get: { UserDefaults.standard.bool(forKey: UDKey.proportionalGroupVolume) },
-                    set: { UserDefaults.standard.set($0, forKey: UDKey.proportionalGroupVolume) }
-                ))
-                Text(L10n.proportionalVolumeHelp)
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-            }
-
             // ─── PLAY HISTORY ───
             settingsSection(L10n.playHistory) {
                 Toggle(L10n.enablePlayHistory, isOn: Binding(
@@ -215,29 +226,22 @@ private struct TabContentView: View {
                     set: { playHistoryManager.isEnabled = $0 }
                 ))
 
-                Toggle(L10n.ignoreTVHDMILineIn, isOn: Binding(
-                    get: { UserDefaults.standard.bool(forKey: UDKey.ignoreTV) },
-                    set: { UserDefaults.standard.set($0, forKey: UDKey.ignoreTV) }
-                ))
+                Toggle(L10n.ignoreTVHDMILineIn, isOn: $ignoreTV)
 
                 Divider().padding(.vertical, 4)
 
-                Toggle(L10n.realtimeDashboardSummaries, isOn: Binding(
-                    get: { UserDefaults.standard.bool(forKey: UDKey.realtimeStats) },
-                    set: { newValue in
-                        UserDefaults.standard.set(newValue, forKey: UDKey.realtimeStats)
-                        if newValue {
-                            isRebuildingSummaries = true
-                            // Delay rebuild to let UI render first
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                playHistoryManager.rebuildAllSummaries()
-                                isRebuildingSummaries = false
-                            }
+                Toggle(L10n.realtimeDashboardSummaries, isOn: $realtimeStats)
+                    .onChange(of: realtimeStats) { _, newValue in
+                        guard newValue else { return }
+                        isRebuildingSummaries = true
+                        // Delay rebuild to let UI render first
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            playHistoryManager.rebuildAllSummaries()
+                            isRebuildingSummaries = false
                         }
                     }
-                ))
 
-                if UserDefaults.standard.bool(forKey: UDKey.realtimeStats) {
+                if realtimeStats {
                     if isRebuildingSummaries {
                         HStack(spacing: 4) {
                             ProgressView().controlSize(.mini)
@@ -248,10 +252,7 @@ private struct TabContentView: View {
                     }
 
                     settingsRow("Interval") {
-                        Picker("", selection: Binding(
-                            get: { UserDefaults.standard.integer(forKey: UDKey.rollupInterval) == 0 ? 60 : UserDefaults.standard.integer(forKey: UDKey.rollupInterval) },
-                            set: { UserDefaults.standard.set($0, forKey: UDKey.rollupInterval) }
-                        )) {
+                        Picker("", selection: $rollupInterval) {
                             Text("30 min").tag(30)
                             Text("1 hour").tag(60)
                             Text(L10n.manualOnly).tag(0)
@@ -311,10 +312,46 @@ private struct TabContentView: View {
                 }
             }
 
+            // ─── LYRICS ───
+            settingsSection(L10n.tabLyrics) {
+                HStack(spacing: 12) {
+                    Text(L10n.lyricsGlobalTimingOffset)
+                    Spacer()
+                    Text(String(format: "%@%.1fs",
+                                lyricsGlobalOffset > 0 ? "+" : "",
+                                lyricsGlobalOffset))
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 60, alignment: .trailing)
+                    Button(L10n.reset) { lyricsGlobalOffset = -2.0 }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                Slider(value: $lyricsGlobalOffset, in: -5.0...5.0, step: 0.1)
+                Text(L10n.lyricsGlobalOffsetHint)
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+            }
+
             // ─── MUSIC SERVICES ───
             settingsSection(L10n.musicServicesBeta) {
                 MusicServicesSettingsSection()
                     .environmentObject(smapiManager)
+            }
+
+            // ─── PLAYBACK ───
+            settingsSection(L10n.playbackSection) {
+                Toggle(L10n.classicShuffleMode, isOn: $classicShuffleEnabled)
+                Text(L10n.classicShuffleHelp)
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+
+                Divider().padding(.vertical, 4)
+
+                Toggle(L10n.proportionalGroupVolume, isOn: $proportionalGroupVolume)
+                Text(L10n.proportionalVolumeHelp)
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
             }
         }
     }
@@ -463,7 +500,70 @@ private struct TabContentView: View {
                 infoToggle(isExpanded: $showCacheInfo, label: L10n.aboutCache,
                            text: L10n.aboutCacheBody)
             }
+
+            // Software Updates section moved out of the System tab
+            // and into a dedicated top-level tab — see the
+            // `softwareUpdatesTab` case in TabContentView.body.
         }
+    }
+
+    @EnvironmentObject private var sparkleObserver: SparkleUpdaterObserver
+
+    private var softwareUpdatesTab: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            updatesSection
+        }
+    }
+
+    private var updatesSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            settingsSection(L10n.softwareUpdates) {
+                Toggle(L10n.autoCheckForUpdates, isOn: sparkleObserver.autoCheckBinding)
+
+                Toggle(L10n.autoDownloadUpdates, isOn: sparkleObserver.autoDownloadBinding)
+                    .disabled(!sparkleObserver.automaticallyChecksForUpdates)
+
+                HStack(spacing: 8) {
+                    Button(L10n.checkForUpdates) {
+                        sparkleObserver.updater?.checkForUpdates()
+                    }
+                    .controlSize(.small)
+                    .disabled(!sparkleObserver.canCheckForUpdates)
+
+                    Spacer()
+
+                    Text(lastCheckedLabel)
+                        .font(.callout)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            settingsSection(L10n.softwareUpdatesBetaSection) {
+                Toggle(L10n.softwareUpdatesBetaOptIn, isOn: sparkleObserver.betaChannelBinding)
+
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .imageScale(.small)
+                        .padding(.top, 2)
+                    Text(L10n.softwareUpdatesBetaWarning)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var lastCheckedLabel: String {
+        guard let last = sparkleObserver.lastUpdateCheckDate else {
+            return L10n.neverChecked
+        }
+        let fmt = DateFormatter()
+        fmt.dateStyle = .short
+        fmt.timeStyle = .short
+        fmt.locale = L10n.currentLocale
+        return L10n.lastCheckedFormat(fmt.string(from: last))
     }
 
     // MARK: - Layout Helpers
@@ -501,12 +601,16 @@ private struct TabContentView: View {
             .buttonStyle(.plain)
 
             if isExpanded.wrappedValue {
-                Text(text)
+                // `LocalizedStringKey(text)` so SwiftUI renders the
+                // markdown (`**bold**`, `[text](url)`) instead of
+                // showing the raw asterisks and brackets.
+                Text(LocalizedStringKey(text))
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .padding(.top, 2)
                     .padding(.leading, 16)
                     .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
         }
     }

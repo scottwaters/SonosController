@@ -127,7 +127,7 @@ struct QueueView: View {
             .layoutPriority(3)
 
             Button { showSavePlaylist = true } label: {
-                Image(systemName: "square.and.arrow.down").font(.caption)
+                Image(systemName: "text.badge.plus").font(.caption)
             }
             .buttonStyle(.plain)
             .tooltip(L10n.saveAsPlaylist)

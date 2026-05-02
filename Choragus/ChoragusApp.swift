@@ -6,6 +6,25 @@
 /// `ContentView` via `.tint(...)` so every descendant picks it up.
 import SwiftUI
 import SonosKit
+import Sparkle
+
+/// True iff the current build's `Info.plist` carries a non-empty
+/// `SUFeedURL`. Sparkle 2 needs that URL to know where to look for
+/// updates; without it the framework can't operate, and we fall back
+/// to the GitHub-API `UpdateChecker` notification path. The keys are
+/// substituted at release time from environment-driven build settings
+/// (`SPARKLE_FEED_URL`, `SPARKLE_PUBLIC_KEY`). Forks and ad-hoc dev
+/// builds leave them empty so Sparkle stays inert.
+private var sparkleFeedURLConfigured: Bool {
+    let raw = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? ""
+    let trimmed = raw.trimmingCharacters(in: .whitespaces)
+    if trimmed.isEmpty { return false }
+    // Catch the unsubstituted Xcode placeholder (e.g. `$(SPARKLE_FEED_URL)`)
+    // so Debug builds without the variable defined don't accidentally
+    // start Sparkle pointed at a literal "$(...)" string.
+    if trimmed.hasPrefix("$(") { return false }
+    return true
+}
 
 
 extension Notification.Name {
@@ -18,10 +37,41 @@ extension Notification.Name {
     static let menuToggleQueue = Notification.Name("menuToggleQueue")
     static let menuShowStats = Notification.Name("menuShowStats")
     static let menuShowForFun = Notification.Name("menuShowForFun")
+    static let menuOpenKaraoke = Notification.Name("menuOpenKaraoke")
 }
 
 @main
 struct ChoragusApp: App {
+
+    /// Window title. In Debug builds appends the per-build tag
+    /// injected into the custom `ChoragusBuildTag` Info.plist key
+    /// (e.g. "Choragus B1437") so the running build is identifiable
+    /// when several have accumulated in macOS's Local Network
+    /// permissions list.
+    ///
+    /// Release builds (and any build that doesn't set the
+    /// `CHORAGUS_BUILD_TAG` xcodebuild variable) leave the literal
+    /// `$(CHORAGUS_BUILD_TAG)` placeholder in the bundled plist; the
+    /// `hasPrefix("$(")` check below detects that and falls back to
+    /// plain "Choragus".
+    ///
+    /// The previous version read CFBundleVersion. That changed on
+    /// every dev build because the script set CURRENT_PROJECT_VERSION
+    /// to a per-minute timestamp, and macOS's TCC re-prompts for
+    /// Local Network access on every CFBundleVersion change. The
+    /// custom key is invisible to TCC and keeps the LAN permission
+    /// stable across rebuilds.
+    private static var windowTitle: String {
+        #if DEBUG
+        let raw = Bundle.main.object(forInfoDictionaryKey: "ChoragusBuildTag") as? String ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || trimmed.hasPrefix("$(") { return "Choragus" }
+        return "Choragus \(trimmed)"
+        #else
+        return "Choragus"
+        #endif
+    }
+
     @StateObject private var sonosManager = SonosManager()
     @StateObject private var presetManager = PresetManager()
     @StateObject private var playHistoryManager = PlayHistoryManager()
@@ -39,6 +89,14 @@ struct ChoragusApp: App {
     /// non-ObservableObject types without ceremony.
     @StateObject private var metadataServicesHolder = MetadataServicesHolder()
 
+    /// Sparkle 2 observer. Started only on builds whose `Info.plist`
+    /// has been release-signed with a non-empty `SUFeedURL`. Dev / fork
+    /// builds get an inert observer with `updater == nil` and rely on
+    /// `UpdateChecker.swift`'s GitHub-API "view release on web" alert
+    /// instead. Holds the `SPUStandardUpdaterController` strongly so the
+    /// underlying Sparkle controller's lifetime tracks the App.
+    @StateObject private var sparkleObserver = SparkleUpdaterObserver.makeForApp()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -50,8 +108,10 @@ struct ChoragusApp: App {
                 .environmentObject(plexAuth)
                 .environmentObject(lastFMScrobbler)
                 .environmentObject(scrobbleManagerHolder.ensureReady(playHistory: playHistoryManager, lastfm: lastFMScrobbler))
-                .environmentObject(metadataServicesHolder.ensureReady(lastfm: lastFMScrobbler).lyrics)
-                .environmentObject(metadataServicesHolder.ensureReady(lastfm: lastFMScrobbler).metadata)
+                .environmentObject(metadataServicesHolder.ensureReady(lastfm: lastFMScrobbler, sonosManager: sonosManager).lyrics)
+                .environmentObject(metadataServicesHolder.ensureReady(lastfm: lastFMScrobbler, sonosManager: sonosManager).metadata)
+                .environmentObject(metadataServicesHolder.ensureReady(lastfm: lastFMScrobbler, sonosManager: sonosManager).lyricsCoordinator)
+                .environmentObject(sparkleObserver)
                 .onAppear {
                     // Register defaults for new toggles before any
                     // view reads them — keeps them ON for fresh
@@ -61,7 +121,14 @@ struct ChoragusApp: App {
                         // and easy to enable from Settings if wanted.
                         UDKey.scrollVolumeEnabled: false,
                         UDKey.middleClickMuteEnabled: true,
+                        // Lyrics nudged 2 s earlier by default — Sonos
+                        // position polling lags true playback by ~1–2 s
+                        // and most LRCs are tuned to as-sung timing.
+                        UDKey.lyricsGlobalOffset: -2.0,
                     ])
+                    let diagnosticsPath = AppPaths.appSupportDirectory
+                        .appendingPathComponent("diagnostics.sqlite").path
+                    DiagnosticsService.shared.attach(repository: DiagnosticsRepository(dbPath: diagnosticsPath))
                     sonosManager.playHistoryManager = playHistoryManager
                     sonosManager.startDiscovery()
                     MenuBarController.shared.setup(sonosManager: sonosManager)
@@ -71,9 +138,32 @@ struct ChoragusApp: App {
                     }
                     WindowManager.shared.playHistoryManager = playHistoryManager
                     WindowManager.shared.sonosManager = sonosManager
+                    WindowManager.shared.lyricsService = metadataServicesHolder
+                        .ensureReady(lastfm: lastFMScrobbler, sonosManager: sonosManager)
+                        .lyrics
+                    WindowManager.shared.lyricsCoordinator = metadataServicesHolder
+                        .ensureReady(lastfm: lastFMScrobbler, sonosManager: sonosManager)
+                        .lyricsCoordinator
                     WindowManager.shared.colorScheme = colorScheme
-                    // Check GitHub for a newer release at most once per 24h.
-                    UpdateChecker.shared.checkInBackgroundIfDue()
+                    // Sparkle (when active) handles its own scheduled
+                    // checks via `SUEnableAutomaticChecks` /
+                    // `SUScheduledCheckInterval`. The GitHub-API
+                    // `UpdateChecker` is the dev / fork fallback —
+                    // notification-only, no install path — and only
+                    // runs when Sparkle isn't configured.
+                    //
+                    // Sparkle is started AFTER the main window is on
+                    // screen so its first-run permission prompt
+                    // (modal sheet) doesn't block initial app rendering.
+                    // Brief async hop so the window has actually
+                    // mounted before we kick the updater off.
+                    if sparkleObserver.updater != nil {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            sparkleObserver.startUpdaterAfterMainWindow()
+                        }
+                    } else {
+                        UpdateChecker.shared.checkInBackgroundIfDue()
+                    }
                     // Backfill missing/ephemeral artwork from iTunes for
                     // recent history entries. Throttled and capped, so
                     // running it on every launch is cheap; the
@@ -92,7 +182,7 @@ struct ChoragusApp: App {
                 // so the window floor tracks browse / queue visibility.
                 // Setting a static minimum here would lock the floor at
                 // that value and override the dynamic one.
-                .navigationTitle("Choragus")
+                .navigationTitle(Self.windowTitle)
                 .preferredColorScheme(colorScheme)
         }
         .windowStyle(.titleBar)
@@ -113,9 +203,15 @@ struct ChoragusApp: App {
             }
 
             // Check for Updates — sits just below the About item in the app menu.
+            // Routes to Sparkle when the release-time SUFeedURL is set;
+            // otherwise drops to the GitHub-API notification fallback.
             CommandGroup(after: .appInfo) {
-                Button(L10n.checkForUpdates) {
-                    UpdateChecker.shared.checkNow()
+                if sparkleObserver.updater != nil {
+                    CheckForUpdatesMenuItem(observer: sparkleObserver)
+                } else {
+                    Button(L10n.checkForUpdates) {
+                        UpdateChecker.shared.checkNow()
+                    }
                 }
             }
 
@@ -169,6 +265,17 @@ struct ChoragusApp: App {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
 
+                // ⌘K — Karaoke popout. Top-level View menu entry so
+                // the feature is discoverable without drilling into the
+                // lyrics tab. Calls `WindowManager` directly so we
+                // don't have to add another `.onReceive` to ContentView's
+                // body, which is already at the Swift type-inference
+                // complexity ceiling for the toolbar block.
+                Button(L10n.popOutLyrics) {
+                    WindowManager.shared.openKaraokeLyricsForActiveGroup()
+                }
+                .keyboardShortcut("k", modifiers: .command)
+
                 // Visualisations menu hidden until the feature is back —
                 // ForFunView is gitignored locally for now while the
                 // visualisations get reworked. Re-enable by restoring
@@ -217,6 +324,154 @@ struct ChoragusApp: App {
     }
 }
 
+/// Menu item bound to the App-level `SparkleUpdaterObserver`. The
+/// `canCheckForUpdates` flag flows through the shared observer so the
+/// menu item dims out while a check is already running.
+struct CheckForUpdatesMenuItem: View {
+    @ObservedObject var observer: SparkleUpdaterObserver
+
+    var body: some View {
+        Button(L10n.checkForUpdates) {
+            observer.updater?.checkForUpdates()
+        }
+        .disabled(!observer.canCheckForUpdates)
+    }
+}
+
+/// Bridge between Sparkle's KVO state and SwiftUI. Exposes the
+/// settings-relevant updater properties (`canCheckForUpdates`,
+/// `automaticallyChecksForUpdates`, `automaticallyDownloadsUpdates`,
+/// `lastUpdateCheckDate`) as `@Published` so SwiftUI views and
+/// bindings stay in lockstep with Sparkle's persistent state.
+///
+/// `updater` is optional: dev / fork builds without a configured
+/// `SUFeedURL` get an inert observer where the Settings panel hides
+/// and the menu item falls back to the GitHub-API path.
+@MainActor
+final class SparkleUpdaterObserver: ObservableObject {
+    @Published var canCheckForUpdates = false
+    @Published var automaticallyChecksForUpdates = false
+    @Published var automaticallyDownloadsUpdates = false
+    @Published var lastUpdateCheckDate: Date?
+
+    let updater: SPUUpdater?
+    private let controller: SPUStandardUpdaterController?
+    private let delegate: SparkleUpdaterDelegate?
+    private var observations: [NSKeyValueObservation] = []
+
+    /// Whether the running build is opted in to Sparkle's beta
+    /// channel. Persisted via UserDefaults — `SparkleUpdaterDelegate`
+    /// reads the same key on every `allowedChannels(for:)` call so a
+    /// flip in the Settings UI takes effect on the next update check
+    /// without an app relaunch.
+    @Published var betaChannelEnabled: Bool = UserDefaults.standard.bool(forKey: UDKey.sparkleBetaChannelEnabled)
+
+    /// Convenience factory used by the App-level `@StateObject` initializer.
+    /// Reads `SUFeedURL` from `Info.plist`; when absent / unsubstituted /
+    /// blank, returns an inert observer.
+    ///
+    /// `startingUpdater: false` so Sparkle's first-run permission
+    /// prompt doesn't fire during App init — that prompt was modal-
+    /// blocking the main window from rendering until the user
+    /// responded. Caller must invoke `startUpdaterAfterMainWindow()`
+    /// from the main `WindowGroup`'s `.onAppear` instead.
+    static func makeForApp() -> SparkleUpdaterObserver {
+        guard sparkleFeedURLConfigured else {
+            return SparkleUpdaterObserver(controller: nil)
+        }
+        // Strong reference to the delegate so it outlives this scope —
+        // SPUStandardUpdaterController holds it weakly.
+        let delegate = SparkleUpdaterDelegate()
+        let controller = SPUStandardUpdaterController(
+            startingUpdater: false,
+            updaterDelegate: delegate,
+            userDriverDelegate: nil
+        )
+        return SparkleUpdaterObserver(controller: controller, delegate: delegate)
+    }
+
+    /// Starts the updater. Idempotent. Called from the main window's
+    /// `.onAppear` so the first-run permission prompt (if any) opens
+    /// against an already-rendered app window instead of holding the
+    /// window offscreen until the user responds.
+    func startUpdaterAfterMainWindow() {
+        guard let controller else { return }
+        controller.startUpdater()
+    }
+
+    private init(controller: SPUStandardUpdaterController?, delegate: SparkleUpdaterDelegate? = nil) {
+        self.controller = controller
+        self.updater = controller?.updater
+        self.delegate = delegate
+        guard let updater else { return }
+        canCheckForUpdates = updater.canCheckForUpdates
+        automaticallyChecksForUpdates = updater.automaticallyChecksForUpdates
+        automaticallyDownloadsUpdates = updater.automaticallyDownloadsUpdates
+        lastUpdateCheckDate = updater.lastUpdateCheckDate
+        observations.append(updater.observe(\.canCheckForUpdates, options: [.new]) { [weak self] _, change in
+            Task { @MainActor in self?.canCheckForUpdates = change.newValue ?? false }
+        })
+        observations.append(updater.observe(\.lastUpdateCheckDate, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor in self?.lastUpdateCheckDate = updater.lastUpdateCheckDate }
+        })
+        // Sparkle's first-run permission prompt and any external
+        // change to these defaults (Settings panel in another window,
+        // sparkle CLI tooling, manual `defaults write`) need to flow
+        // back into our `@Published` mirror, otherwise the Settings
+        // toggle reads stale and the user thinks their click didn't
+        // take effect.
+        observations.append(updater.observe(\.automaticallyChecksForUpdates, options: [.new]) { [weak self] _, change in
+            Task { @MainActor in self?.automaticallyChecksForUpdates = change.newValue ?? false }
+        })
+        observations.append(updater.observe(\.automaticallyDownloadsUpdates, options: [.new]) { [weak self] _, change in
+            Task { @MainActor in self?.automaticallyDownloadsUpdates = change.newValue ?? false }
+        })
+    }
+
+    var autoCheckBinding: Binding<Bool> {
+        Binding(
+            get: { self.automaticallyChecksForUpdates },
+            set: { newValue in
+                self.automaticallyChecksForUpdates = newValue
+                self.updater?.automaticallyChecksForUpdates = newValue
+            }
+        )
+    }
+
+    var autoDownloadBinding: Binding<Bool> {
+        Binding(
+            get: { self.automaticallyDownloadsUpdates },
+            set: { newValue in
+                self.automaticallyDownloadsUpdates = newValue
+                self.updater?.automaticallyDownloadsUpdates = newValue
+            }
+        )
+    }
+
+    var betaChannelBinding: Binding<Bool> {
+        Binding(
+            get: { self.betaChannelEnabled },
+            set: { newValue in
+                self.betaChannelEnabled = newValue
+                UserDefaults.standard.set(newValue, forKey: UDKey.sparkleBetaChannelEnabled)
+            }
+        )
+    }
+}
+
+/// Sparkle delegate that exposes the user's beta-channel opt-in to
+/// the updater. `allowedChannels(for:)` is called once per update
+/// check, so flipping the Settings toggle takes effect on the next
+/// "Check for Updates" without an app relaunch. Empty set = production
+/// only (default); `["beta"]` = production + beta entries.
+@MainActor
+final class SparkleUpdaterDelegate: NSObject, SPUUpdaterDelegate {
+    nonisolated func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        let enabled = UserDefaults.standard.bool(forKey: UDKey.sparkleBetaChannelEnabled)
+        return enabled ? ["beta"] : []
+    }
+}
+
 /// Holds the `ScrobbleManager` as an `ObservableObject` that gets lazily
 /// initialized with its dependencies on first access. `ScrobbleManager` needs
 /// `PlayHistoryManager` (for the repository) and a list of concrete
@@ -247,18 +502,28 @@ final class MetadataServicesHolder: ObservableObject {
     struct Services {
         let lyrics: LyricsServiceHolder
         let metadata: MusicMetadataServiceHolder
+        let prewarm: MetadataPrewarmService
+        let lyricsCoordinator: LyricsCoordinator
     }
     private var instance: Services?
 
-    func ensureReady(lastfm: LastFMScrobbler) -> Services {
+    func ensureReady(lastfm: LastFMScrobbler, sonosManager: SonosManager) -> Services {
         if let instance { return instance }
         let cachePath = AppPaths.appSupportDirectory.appendingPathComponent("play_history.sqlite").path
         let cache = MetadataCacheRepository(dbPath: cachePath)
         let lyrics = LyricsService(cache: cache)
         let metadata = MusicMetadataService(tokenStore: lastfm.tokenStore, cache: cache)
+        let prewarm = MetadataPrewarmService(lyricsService: lyrics, metadataService: metadata)
+        let lyricsCoordinator = LyricsCoordinator(lyricsService: lyrics)
+        // Wire the prewarmer immediately so lyrics+about hydrate in the
+        // background for every track that plays, regardless of panel
+        // collapse state or which group is on screen.
+        prewarm.attach(to: sonosManager)
         let services = Services(
             lyrics: LyricsServiceHolder(service: lyrics),
-            metadata: MusicMetadataServiceHolder(service: metadata)
+            metadata: MusicMetadataServiceHolder(service: metadata),
+            prewarm: prewarm,
+            lyricsCoordinator: lyricsCoordinator
         )
         self.instance = services
         return services
@@ -311,6 +576,21 @@ private struct ChoragusAboutView: View {
     /// changed, because nothing in the view tree was observing it.
     @AppStorage(UDKey.appLanguage) private var appLanguage: String = "en"
 
+    /// Same UserDefaults trick for theme. The About window is hosted
+    /// in an AppKit `NSWindow` with no `@EnvironmentObject` link to
+    /// `SonosManager`, so we observe the persistence key directly and
+    /// re-apply `preferredColorScheme` on every change. Switching the
+    /// Theme picker in Settings then updates the About window live.
+    @AppStorage(UDKey.appearanceMode) private var appearanceModeRaw: String = "System"
+
+    private var currentColorScheme: ColorScheme? {
+        switch AppearanceMode(rawValue: appearanceModeRaw) ?? .system {
+        case .system: return nil
+        case .light:  return .light
+        case .dark:   return .dark
+        }
+    }
+
     private static let appVersion: String = {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
@@ -319,105 +599,154 @@ private struct ChoragusAboutView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 22) {
-                // Identity
-                Image("ChoragusLogo")
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 128, height: 128)
-                    .padding(.top, 12)
-
-                VStack(spacing: 4) {
-                    Text("Choragus")
-                        .font(.system(size: 28, weight: .semibold))
-                    Text(Self.appVersion)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-
-                Text(L10n.aboutTagline)
-                    .font(.callout)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Divider().padding(.horizontal, 40)
-
-                // Etymology
-                VStack(spacing: 6) {
-                    Text("χορηγός")
-                        .font(.system(size: 30, weight: .semibold))
-                    Text(L10n.etymologyType)
-                        .font(.callout)
-                        .italic()
-                        .foregroundStyle(.secondary)
-                    Text(L10n.etymologyDefinition)
-                        .font(.body)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 6)
-                        .padding(.horizontal, 24)
-                    Text(L10n.choragusMotto)
-                        .font(.callout)
-                        .italic()
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 4)
-                }
-
-                Divider().padding(.horizontal, 40)
-
-                // Credits
-                VStack(spacing: 16) {
-                    Text(L10n.credits).font(.headline)
-
-                    creditsBlock(
-                        title: L10n.dataSources,
-                        caption: L10n.dataSourcesCaption,
-                        links: [
-                            ("LRCLIB", "https://lrclib.net"),
-                            ("Wikipedia", "https://www.wikipedia.org"),
-                            ("MusicBrainz", "https://musicbrainz.org"),
-                            ("Last.fm", "https://www.last.fm"),
-                            ("iTunes Search API", "https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/")
-                        ]
-                    )
-
-                    creditsBlock(
-                        title: L10n.contributors,
-                        caption: L10n.contributorsCaption,
-                        links: [
-                            ("@mbieh", "https://github.com/mbieh"),
-                            ("@steventamm", "https://github.com/steventamm")
-                        ]
-                    )
-                }
-                .padding(.horizontal, 24)
-
-                Divider().padding(.horizontal, 40)
-
-                // Footer
-                VStack(spacing: 6) {
-                    if let repo = AppLinks.repositoryURL {
-                        Link("github.com/scottwaters/Choragus", destination: repo)
-                            .font(.callout)
-                    }
-                    Text(L10n.notAffiliatedWithSonos)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.bottom, 16)
+            VStack(spacing: 32) {
+                identitySection
+                etymologyCard
+                creditsCard
+                footerSection
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 32)
+            .padding(.horizontal, 40)
+            .padding(.vertical, 32)
         }
-        .frame(minWidth: 540, minHeight: 720)
+        .frame(minWidth: 580, minHeight: 760)
+        .preferredColorScheme(currentColorScheme)
+    }
+
+    // MARK: - Identity (logo, wordmark, version, tagline)
+
+    private var identitySection: some View {
+        VStack(spacing: 14) {
+            Image("ChoragusLogo")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 128, height: 128)
+
+            // Wordmark with light/dark luminosity variants — matches the
+            // karaoke header so the brand mark is consistent across surfaces.
+            Image("ChoragusTextLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(height: 72)
+                .accessibilityLabel("Choragus")
+
+            Text(Self.appVersion)
+                .font(.system(.caption, design: .monospaced))
+                .tracking(1.5)
+                .foregroundStyle(.secondary)
+
+            // Serif-italic tagline mirrors the classical Greek brand
+            // concept (the χορηγός as patron of the chorus). New York
+            // is bundled with macOS 11+ and pairs well with the SF-based
+            // wordmark above.
+            Text(L10n.aboutTagline)
+                .font(.system(.title3, design: .serif).italic())
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
+                .padding(.horizontal, 24)
+        }
+    }
+
+    // MARK: - Etymology card
+
+    private var etymologyCard: some View {
+        VStack(spacing: 14) {
+            Text("χορηγός")
+                .font(.system(size: 46, weight: .regular, design: .serif))
+                .padding(.top, 4)
+
+            Text(L10n.etymologyType)
+                .font(.system(.footnote, design: .serif).italic())
+                .foregroundStyle(.secondary)
+
+            Text(L10n.etymologyDefinition)
+                .font(.system(.body, design: .serif))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 8)
+                .padding(.horizontal, 16)
+
+            Text(L10n.choragusMotto)
+                .font(.system(.callout, design: .serif).italic())
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .padding(.horizontal, 28)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(.quaternary, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Credits card
+
+    private var creditsCard: some View {
+        VStack(spacing: 22) {
+            Text(L10n.credits)
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            creditsBlock(
+                title: L10n.dataSources,
+                caption: L10n.dataSourcesCaption,
+                links: [
+                    ("LRCLIB", "https://lrclib.net"),
+                    ("Wikipedia", "https://www.wikipedia.org"),
+                    ("MusicBrainz", "https://musicbrainz.org"),
+                    ("Last.fm", "https://www.last.fm"),
+                    ("iTunes Search API", "https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/")
+                ]
+            )
+
+            Divider().padding(.horizontal, 32)
+
+            creditsBlock(
+                title: L10n.contributors,
+                caption: L10n.contributorsCaption,
+                links: [
+                    ("@mbieh", "https://github.com/mbieh"),
+                    ("@steventamm", "https://github.com/steventamm")
+                ]
+            )
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+        .padding(.horizontal, 24)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(.quaternary, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Footer
+
+    private var footerSection: some View {
+        VStack(spacing: 6) {
+            if let repo = AppLinks.repositoryURL {
+                Link("github.com/scottwaters/Choragus", destination: repo)
+                    .font(.system(.caption, design: .monospaced))
+            }
+            Text(L10n.notAffiliatedWithSonos)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.top, 4)
     }
 
     @ViewBuilder
     private func creditsBlock(title: String, caption: String, links: [(String, String)]) -> some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             Text(title)
-                .font(.subheadline.weight(.semibold))
+                .font(.caption.weight(.semibold))
+                .tracking(1.2)
                 .foregroundStyle(.secondary)
 
             // Wrap-friendly link row: separated by · so a long line breaks
@@ -426,9 +755,10 @@ private struct ChoragusAboutView: View {
 
             Text(caption)
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 8)
         }
     }
 }

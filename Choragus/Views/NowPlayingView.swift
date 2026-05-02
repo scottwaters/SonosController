@@ -25,6 +25,7 @@ struct NowPlayingView: View {
     /// at the App level — `ChoragusApp.swift`).
     @EnvironmentObject var lyricsService: LyricsServiceHolder
     @EnvironmentObject var metadataService: MusicMetadataServiceHolder
+    @EnvironmentObject var lyricsCoordinator: LyricsCoordinator
     @State private var vm: NowPlayingViewModel
     @State private var showShuffleHint = false
     let group: SonosGroup
@@ -40,7 +41,6 @@ struct NowPlayingView: View {
     private var isMuted: Bool { vm.isMuted }
     private var speakerVolumes: [String: Double] { vm.speakerVolumes }
     private var speakerMutes: [String: Bool] { vm.speakerMutes }
-    private var smoothPosition: TimeInterval { vm.smoothPosition }
     private var isDraggingSeek: Bool { vm.isDraggingSeek }
     private var crossfadeOn: Bool { vm.crossfadeOn }
     @State private var showGroupEditor = false
@@ -139,9 +139,8 @@ struct NowPlayingView: View {
                         NowPlayingContextPanel(
                             trackMetadata: trackMetadata,
                             group: group,
-                            positionSeconds: vm.smoothPosition,
-                            isPlaying: transportState == .playing,
-                            lyricsService: lyricsService.service,
+                            positionAnchor: vm.positionAnchor,
+                            lyricsCoordinator: lyricsCoordinator,
                             metadataService: metadataService.service
                         )
                         // 260pt = tab picker (~36) + divider (1) +
@@ -158,10 +157,7 @@ struct NowPlayingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .tint(sonosManager.resolvedAccentColor)
-        .onAppear {
-            startProgressTimer()
-            syncFromManager()
-        }
+        .onAppear { startProgressTimer() }
         // `.task(id:)` replaces the previous `Task { await fetchCurrentState() }`
         // dance: it fires on appear AND whenever the group changes, and
         // auto-cancels when the view goes away — so navigating during a
@@ -176,22 +172,16 @@ struct NowPlayingView: View {
             vm.resetForGroupChange()
             startProgressTimer()
         }
-        .onReceive(sonosManager.$deviceVolumes) { _ in syncVolumeFromManager() }
-        .onReceive(sonosManager.$deviceMutes) { _ in syncMuteFromManager() }
-        .onChange(of: speakerMutes) { syncMasterMuteFromSpeakers() }
-        .onReceive(sonosManager.$groupPositions) { positions in
-            // Sync position from TransportStrategy updates for smooth interpolation
-            if let pos = positions[group.coordinatorID] {
-                vm.lastKnownPosition = pos
-                vm.lastPositionTimestamp = Date()
-                if !vm.isDraggingSeek {
-                    vm.smoothPosition = pos
-                }
-            }
-        }
-        .onReceive(sonosManager.$groupTrackMetadata) { _ in
-            // Force view to re-evaluate trackMetadata computed property
-        }
+        // Volume / mute / track-metadata views read directly from
+        // `sonosManager` via the VM's computed properties, so the prior
+        // `.onReceive($deviceVolumes)` / `.onReceive($deviceMutes)` /
+        // `.onReceive($groupTrackMetadata)` re-sync hooks are gone.
+        // SwiftUI's @Observable / @EnvironmentObject machinery handles
+        // invalidation automatically, and there's no longer a local
+        // mirror to drift out of sync with the manager's authoritative
+        // dictionaries — which removes the race window where a coord
+        // event's optimistic propagation to a member dropped on the
+        // floor until the next unrelated publish woke `.onReceive`.
         .sheet(isPresented: $showGroupEditor) {
             GroupEditorView(initialGroup: group)
                 .environmentObject(sonosManager)
@@ -221,27 +211,60 @@ struct NowPlayingView: View {
         }
     }
 
-    /// Wraps content with the Choragus logo as a top-right watermark
-    /// sized + positioned to mirror the album art on the left. Same
-    /// dimensions (`UILayout.nowPlayingArtSize`), same insets
-    /// (`UILayout.horizontalPadding` from the trailing edge, 12 pt from
-    /// the top to match the album-art HStack's `.padding(.top, 12)`).
-    /// Inert (no hit testing) and rendered as `.background` so it sits
-    /// behind content without disturbing layout.
+    /// Wraps content with the Choragus logo as a top-right watermark.
+    ///
+    /// At wide window sizes the watermark mirrors the album art's
+    /// dimensions on the left (`UILayout.nowPlayingArtSize`). As the
+    /// Now Playing panel narrows the watermark shrinks AND drifts
+    /// further down-and-right so it gets out of the way of the
+    /// transport controls / volume sliders that are now competing for
+    /// the same horizontal real estate. Linear interpolation between
+    /// `Self.watermarkUpperWidth` (full size) and `Self.watermarkLowerWidth`
+    /// (min size). Inert (no hit testing) and rendered as `.background`
+    /// so it sits behind content without disturbing layout.
     @ViewBuilder
     private func choragusWatermarkBackground<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
-            .background(alignment: .topTrailing) {
-                Image("ChoragusLogo")
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: UILayout.nowPlayingArtSize,
-                           height: UILayout.nowPlayingArtSize)
-                    .opacity(0.18)
-                    .padding(.top, 12)
-                    .padding(.trailing, UILayout.horizontalPadding)
-                    .allowsHitTesting(false)
+            .background {
+                GeometryReader { geo in
+                    let layout = Self.watermarkLayout(forWidth: geo.size.width)
+                    Image("ChoragusLogo")
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: layout.size, height: layout.size)
+                        .opacity(0.18)
+                        .padding(.top, layout.topInset)
+                        .padding(.trailing, UILayout.horizontalPadding)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                }
+                .allowsHitTesting(false)
             }
+    }
+
+    /// Watermark size + top inset for a given panel width. At
+    /// `watermarkUpperWidth` and above: full album-art size. At
+    /// `watermarkLowerWidth` and below: minimum size and a deeper top
+    /// inset (so the smaller icon sits lower, freeing the band right
+    /// of the album art for transport controls). Linear in between.
+    private static let watermarkUpperWidth: CGFloat = 900
+    private static let watermarkLowerWidth: CGFloat = 500
+    private static let watermarkMinSize: CGFloat = 60
+
+    private static func watermarkLayout(forWidth width: CGFloat) -> (size: CGFloat, topInset: CGFloat) {
+        let maxSize = UILayout.nowPlayingArtSize
+        let minSize = watermarkMinSize
+        let size: CGFloat
+        if width >= watermarkUpperWidth {
+            size = maxSize
+        } else if width <= watermarkLowerWidth {
+            size = minSize
+        } else {
+            let t = (width - watermarkLowerWidth) / (watermarkUpperWidth - watermarkLowerWidth)
+            size = minSize + t * (maxSize - minSize)
+        }
+        // Top inset slides from 12 pt (full size) to 30 pt (min size).
+        let topInset: CGFloat = 12 + (maxSize - size) * 0.15
+        return (size, topInset)
     }
 
     private var playbackSectionContent: some View {
@@ -404,36 +427,74 @@ struct NowPlayingView: View {
 
                 Divider()
 
-                // Time/seek area — fixed height to prevent layout shift
+                // Time/seek area — fixed height to prevent layout shift.
+                //
+                // 10 Hz `TimelineView` projects `vm.positionAnchor` so
+                // the seek-bar value and time text advance smoothly. The
+                // earlier `.animation` schedule (60/120 Hz at display
+                // refresh) was the per-frame culprit behind karaoke
+                // window jitter — `Slider` re-binds at every tick, which
+                // saturates the main thread enough to starve the karaoke
+                // popout's `TimelineView`. 10 Hz is visually smooth for a
+                // slowly-advancing seek bar and frees ~50 frames/sec of
+                // main-thread budget for other windows.
+                //
+                // While the user is dragging the slider, the binding
+                // reads `vm.dragPosition` instead of the projection so
+                // their drag isn't fought by per-frame projection
+                // updates. On drag-end, `seekToPosition` updates the
+                // anchor, which the projection picks up immediately.
                 VStack(spacing: 4) {
-                    if trackMetadata.duration > 0 {
-                        SliderWithPopup(
-                            value: Binding(get: { vm.smoothPosition }, set: { vm.smoothPosition = $0 }),
-                            range: 0...trackMetadata.duration,
-                            format: { formatTime($0) }
-                        ) { editing in
-                            vm.isDraggingSeek = editing
-                            if !editing {
-                                seekToPosition(vm.smoothPosition)
+                    TimelineView(.periodic(from: .now, by: 0.1)) { context in
+                        let live = vm.isDraggingSeek
+                            ? vm.dragPosition
+                            : vm.positionAnchor.projected(at: context.date)
+
+                        if trackMetadata.duration > 0 {
+                            SliderWithPopup(
+                                value: Binding(
+                                    get: { live },
+                                    set: { vm.dragPosition = $0 }
+                                ),
+                                range: 0...trackMetadata.duration,
+                                format: { formatTime($0) }
+                            ) { editing in
+                                if editing {
+                                    // Capture the current projected value as
+                                    // the drag starting point so the slider
+                                    // doesn't snap to an old `dragPosition`
+                                    // from a previous gesture.
+                                    vm.dragPosition = vm.positionAnchor.projected(at: context.date)
+                                    vm.isDraggingSeek = true
+                                    // Tell the manager to suppress shared-anchor
+                                    // rebases while the slider is being dragged
+                                    // — otherwise the speaker's pre-drag
+                                    // position reports would fight the user.
+                                    sonosManager.setPositionDragInProgress(coordinatorID: group.coordinatorID)
+                                } else {
+                                    vm.isDraggingSeek = false
+                                    sonosManager.setPositionDragInProgress(coordinatorID: nil)
+                                    seekToPosition(vm.dragPosition)
+                                }
                             }
                         }
-                    }
 
-                    HStack {
-                        Text(transportState.isActive ? smoothPositionString : " ")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                        Spacer()
-                        if trackMetadata.duration > 0 {
-                            Text(trackMetadata.durationString)
+                        HStack {
+                            Text(transportState.isActive ? formatTime(live) : " ")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
-                        } else if transportState.isActive {
-                            Text(L10n.live)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            Spacer()
+                            if trackMetadata.duration > 0 {
+                                Text(trackMetadata.durationString)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            } else if transportState.isActive {
+                                Text(L10n.live)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -540,15 +601,14 @@ struct NowPlayingView: View {
                         value: Binding(
                             get: { vm.volume },
                             set: { newValue in
-                                // Live-update per-speaker rows during drag.
-                                // setVolume() is local-only (no SOAP) — it
-                                // mutates `speakerVolumes` + the manager's
-                                // @Published `deviceVolumes` so individual
-                                // rows reflect the proportional / linear
-                                // change in real time. SOAP commit waits
-                                // for drag-end (`commitVolume()`).
-                                vm.volume = newValue
-                                vm.setVolume()
+                                // `applyMasterVolume` distributes the new
+                                // master to each member proportionally /
+                                // linearly and writes straight into
+                                // `sonosManager.deviceVolumes`. The per-row
+                                // sliders read from there on the next
+                                // render — no local-mirror copy step.
+                                // SOAP commit still deferred to drag-end.
+                                vm.applyMasterVolume(newValue)
                             }
                         ),
                         range: 0...100
@@ -575,8 +635,35 @@ struct NowPlayingView: View {
                 // Per-speaker volumes for grouped speakers
                 if group.members.count > 1 {
                     VolumeControlView(group: group,
-                                      speakerVolumes: Binding(get: { vm.speakerVolumes }, set: { vm.speakerVolumes = $0 }),
-                                      speakerMutes: Binding(get: { vm.speakerMutes }, set: { vm.speakerMutes = $0 }),
+                                      speakerVolumes: Binding(
+                                          get: { vm.speakerVolumes },
+                                          set: { newDict in
+                                              // Per-row slider drag writes
+                                              // straight into the manager.
+                                              // The dict-as-binding pattern
+                                              // arrives here with the full
+                                              // map; we forward only the
+                                              // changed key.
+                                              for (id, v) in newDict {
+                                                  let current = sonosManager.deviceVolumes[id] ?? 0
+                                                  let target = Int(v)
+                                                  if target != current {
+                                                      sonosManager.updateDeviceVolume(id, volume: target)
+                                                  }
+                                              }
+                                          }
+                                      ),
+                                      speakerMutes: Binding(
+                                          get: { vm.speakerMutes },
+                                          set: { newDict in
+                                              for (id, m) in newDict {
+                                                  let current = sonosManager.deviceMutes[id] ?? false
+                                                  if m != current {
+                                                      sonosManager.updateDeviceMute(id, muted: m)
+                                                  }
+                                              }
+                                          }
+                                      ),
                                       accentColor: sonosManager.resolvedAccentColor ?? .accentColor,
                                       onSetVolume: { device, vol in await vm.setSpeakerVolume(device: device, volume: vol) },
                                       onToggleMute: { device, muted in await vm.setSpeakerMute(device: device, muted: muted) },
@@ -616,9 +703,20 @@ struct NowPlayingView: View {
     // MARK: - Album Art (layout in view, logic in ViewModel)
 
     private var albumArtView: some View {
-        ZStack(alignment: .bottomTrailing) {
-            if let url = vm.art.artURLForDisplay(trackMetadata: trackMetadata) {
+        // Resolve the URL once so `.id` and `.animation` observe the
+        // same Optional<URL> rather than re-invoking the resolver per
+        // modifier. Crossfade is driven by the value-based animation
+        // attached at the end of the ZStack.
+        let resolvedURL = vm.art.artURLForDisplay(trackMetadata: trackMetadata)
+        return ZStack(alignment: .bottomTrailing) {
+            if let url = resolvedURL {
                 CachedAsyncImage(url: url, cornerRadius: 8, priority: .interactive)
+                    // `.id(url)` makes SwiftUI treat each new URL as a
+                    // view replacement, which lets `.transition(.opacity)`
+                    // crossfade between the old and new art instead of
+                    // snapping.
+                    .id(url)
+                    .transition(.opacity)
             } else {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(
@@ -633,6 +731,7 @@ struct NowPlayingView: View {
                             .font(.system(size: 48))
                             .foregroundStyle(.white.opacity(0.6))
                     }
+                    .transition(.opacity)
             }
             // Station-art mini badge on the bottom-right of the album art is
             // disabled — its resolution heuristic is flaky and it was flickering.
@@ -646,6 +745,7 @@ struct NowPlayingView: View {
             //         .padding(6)
             // }
         }
+        .animation(.easeInOut(duration: 0.4), value: resolvedURL)
         .onAppear {
             vm.onArtAppear()
         }
@@ -697,7 +797,6 @@ struct NowPlayingView: View {
 
     private var volumeIcon: String { vm.volumeIcon }
     private var repeatIcon: String { vm.repeatIcon }
-    private var smoothPositionString: String { vm.smoothPositionString }
     private func formatTime(_ interval: TimeInterval) -> String { vm.formatTime(interval) }
 
     // MARK: - Actions (delegated to ViewModel)
@@ -706,7 +805,6 @@ struct NowPlayingView: View {
     private func seekToPosition(_ seconds: TimeInterval) { vm.seekToPosition(seconds) }
     private func toggleMute() { vm.toggleMute() }
 
-    private func setVolume() { vm.setVolume() }
     private func commitVolume() { vm.commitVolume() }
     private func showVolumePending() { /* handled by ViewModel */ }
     private func clearVolumePending() { /* handled by ViewModel */ }
@@ -733,9 +831,10 @@ struct NowPlayingView: View {
 
     private var isCurrentTrackStarred: Bool {
         guard !trackMetadata.title.isEmpty else { return false }
-        return sonosManager.playHistoryManager?.entries.contains {
-            $0.title == trackMetadata.title && $0.artist == trackMetadata.artist && $0.starred
-        } ?? false
+        return sonosManager.playHistoryManager?.isStarred(
+            title: trackMetadata.title,
+            artist: trackMetadata.artist
+        ) ?? false
     }
 
     private func performAction(_ id: String, _ action: @escaping () async throws -> Void) {
@@ -747,11 +846,6 @@ struct NowPlayingView: View {
     private func fetchCurrentState() async { await vm.fetchCurrentState() }
     private func startProgressTimer() { vm.startProgressTimer() }
     private func stopProgressTimer() { vm.stopProgressTimer() }
-
-    private func syncFromManager() { vm.syncFromManager() }
-    private func syncVolumeFromManager() { vm.syncVolumeFromManager() }
-    private func syncMuteFromManager() { vm.syncMuteFromManager() }
-    private func syncMasterMuteFromSpeakers() { vm.syncMasterMuteFromSpeakers() }
 }
 
 // MARK: - Expanded Art View

@@ -205,7 +205,20 @@ public final class ContentDirectoryService {
     ) async throws -> (firstTrackNumber: Int, numAdded: Int) {
         precondition(uris.count == metadatas.count, "uris and metadatas must be the same length")
         guard !uris.isEmpty else { return (0, 0) }
-        let joinedURIs = uris.joined(separator: " ")
+        // The `EnqueuedURIs` argument is a SPACE-SEPARATED list of URIs.
+        // Local-library SMB paths (`x-file-cifs://server/Pink Floyd/...`)
+        // and many service URIs contain literal spaces inside the path
+        // — without encoding, the speaker splits at the wrong places
+        // and silently rejects every URI past the first one. The
+        // single-URI `AddURIToQueue` path doesn't see this because
+        // there's no separator there. Idempotent: existing `%20`
+        // sequences are untouched.
+        //
+        // Metadata blobs are space-joined too, but each DIDL-Lite
+        // element is delimited by `</DIDL-Lite>`, so internal spaces
+        // there are unambiguous to the speaker's parser.
+        let encodedURIs = uris.map { $0.replacingOccurrences(of: " ", with: "%20") }
+        let joinedURIs = encodedURIs.joined(separator: " ")
         let joinedMeta = metadatas.joined(separator: " ")
         let result = try await soap.send(
             to: device.baseURL,

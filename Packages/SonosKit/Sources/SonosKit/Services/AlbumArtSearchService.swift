@@ -23,11 +23,24 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
     /// 1. Album search with artist + title
     /// 2. Album search with just title
     /// 3. Artist search (for artist-level containers)
+    ///
+    /// **No-maxWait variant is the UI path** — runs `unthrottled: true`
+    /// so background `backfillMissingArtwork` sweeps can't saturate the
+    /// local 12 req/min self-throttle and starve a now-playing or
+    /// browse-render lookup. Apple-side 403/429 cooldown still applies.
     public func searchArtwork(artist: String, album: String) async -> String? {
-        await searchArtwork(artist: artist, album: album, maxWait: 0)
+        await searchArtworkInternal(artist: artist, album: album, maxWait: 0, unthrottled: true)
     }
 
+    /// Patient variant — for background backfill sweeps. Stays on the
+    /// throttled path so it yields slots to UI requests above. With
+    /// `maxWait` typically set to 60–120 s, backfill completes over
+    /// minutes without dropping entries on transient saturation.
     public func searchArtwork(artist: String, album: String, maxWait: TimeInterval) async -> String? {
+        await searchArtworkInternal(artist: artist, album: album, maxWait: maxWait, unthrottled: false)
+    }
+
+    private func searchArtworkInternal(artist: String, album: String, maxWait: TimeInterval, unthrottled: Bool) async -> String? {
         let cacheKey = "art:\(artist.lowercased())|\(album.lowercased())"
         cacheLock.lock()
         if let cached = cache[cacheKey] {
@@ -38,7 +51,7 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
 
         // Strategy 1: Combined artist + album search
         if !artist.isEmpty && !album.isEmpty {
-            if let url = await iTunesSearch(query: "\(artist) \(album)", entity: "album", maxWait: maxWait) {
+            if let url = await iTunesSearch(query: "\(artist) \(album)", entity: "album", maxWait: maxWait, unthrottled: unthrottled) {
                 cacheSet(cacheKey, url)
                 return url
             }
@@ -46,7 +59,7 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
 
         // Strategy 2: Album-only search
         if !album.isEmpty {
-            if let url = await iTunesSearch(query: album, entity: "album", maxWait: maxWait) {
+            if let url = await iTunesSearch(query: album, entity: "album", maxWait: maxWait, unthrottled: unthrottled) {
                 cacheSet(cacheKey, url)
                 return url
             }
@@ -55,7 +68,7 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
         // Strategy 3: Artist search (returns artist image)
         let artistQuery = !artist.isEmpty ? artist : album
         if !artistQuery.isEmpty {
-            if let url = await iTunesSearch(query: artistQuery, entity: "musicArtist", maxWait: maxWait) {
+            if let url = await iTunesSearch(query: artistQuery, entity: "musicArtist", maxWait: maxWait, unthrottled: unthrottled) {
                 cacheSet(cacheKey, url)
                 return url
             }
@@ -63,12 +76,72 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
 
         // Strategy 4: Broad song search (might find artwork from a popular track)
         if !album.isEmpty {
-            if let url = await iTunesSearch(query: album, entity: "song", maxWait: maxWait) {
+            if let url = await iTunesSearch(query: album, entity: "song", maxWait: maxWait, unthrottled: unthrottled) {
                 cacheSet(cacheKey, url)
                 return url
             }
         }
 
+        cacheSet(cacheKey, nil)
+        return nil
+    }
+
+    /// Artist-image lookup via iTunes Search. Used by
+    /// `MusicMetadataService` as a fallback when neither Last.fm
+    /// (placeholder-filtered post-2019) nor Wikipedia returned an
+    /// artist photo.
+    ///
+    /// Cascades through three iTunes entity types because the API has
+    /// a quirk: `musicArtist` records frequently come back *without*
+    /// `artworkUrl100` populated — iTunes stores artist photos in
+    /// their Store frontend but not consistently in the Search JSON.
+    /// Album and song entities always carry artwork. A representative
+    /// album cover beats a blank silhouette in the About card, even
+    /// if it isn't a true artist photo.
+    public func searchArtistArt(artist: String) async -> String? {
+        let trimmed = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let cacheKey = "artist:\(trimmed.lowercased())"
+        cacheLock.lock()
+        if let cached = cache[cacheKey] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        // Strip straight + smart quotes from the query. iTunes Search
+        // treats query quotes as phrase delimiters — names like
+        // `"Weird Al" Yankovic` return zero results when sent literally
+        // even though the catalog entry exists.
+        let cleaned = trimmed.replacingOccurrences(
+            of: "[\"\u{201C}\u{201D}\u{2018}\u{2019}]",
+            with: "",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespaces)
+
+        for entity in ["musicArtist", "album", "song"] {
+            // `unthrottled: true` so the user-initiated artist-image
+            // lookup isn't starved by background `backfillMissingArtwork`
+            // calls that can saturate the local 12 req/min self-throttle.
+            // Same policy the radio-track-art lookup uses for the same
+            // reason: this is a user-facing latency-sensitive path,
+            // infrequent enough that bypassing the local soft cap is
+            // safe. Apple-side 403/429 cooldown still applies.
+            if let url = await iTunesSearch(query: cleaned, entity: entity, unthrottled: true) {
+                // Demoted to debug — successful lookups happen on every
+                // track change in the background prewarm, and a saturated
+                // INFO-level diagnostics ring buffer evicts real warnings
+                // within minutes. Keep this line for verbose debugging
+                // sessions only.
+                sonosDiagLog(.debug, tag: "ART/ARTIST",
+                             "iTunes \(entity) hit for \(trimmed) → \(url.prefix(80))")
+                cacheSet(cacheKey, url)
+                return url
+            }
+        }
+        let snapshot = await ITunesRateLimiter.shared.snapshot()
+        sonosDiagLog(.warning, tag: "ART/ARTIST",
+                     "iTunes returned no artwork across musicArtist/album/song for \(trimmed) (cleaned: \(cleaned)) — limiter: available=\(snapshot.isAvailable), cooldownUntil=\(snapshot.cooldownUntil.map { String(describing: $0) } ?? "nil"), cooldownStatus=\(snapshot.cooldownStatus.map(String.init) ?? "nil"), requestsInWindow=\(snapshot.requestsInWindow)")
         cacheSet(cacheKey, nil)
         return nil
     }
@@ -84,49 +157,67 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
         }
         cacheLock.unlock()
 
+        // The user is actively watching the now-playing pane while a
+        // radio track plays — this is a user-facing latency-sensitive
+        // path, equivalent in priority to the manual Search Artwork
+        // dialog. Bypass the self-throttle so background browse art
+        // enrichment can't starve us when the rate window is full.
+        // Apple-side 403/429 cooldown still applies.
+        let unt = true
+
         // Strategy 0a: Soundtrack-track shape via title ("X End Titles",
-        // "Theme From X", etc.) — see `extractMovieName`.
+        // "Theme From X", etc.) — see `extractMovieName`. Strong signal
+        // (title pattern) so it stays at the top.
         if Self.titleHasSoundtrackShape(title),
            let movie = Self.extractMovieName(from: title), !movie.isEmpty {
-            if let url = await iTunesSearch(query: "\(movie) soundtrack", entity: "album") {
+            if let url = await iTunesSearch(query: "\(movie) soundtrack", entity: "album", unthrottled: unt) {
                 sonosDebugLog("[ART/RADIO] OST hit (title) movie=\(movie) artist=\(artist)")
                 cacheSet(cacheKey, url)
                 return url
             }
         }
 
-        // Strategy 0b: Soundtrack stations frequently put the *movie name*
-        // in the artist field instead of the actual composer/performer
-        // (e.g. 1.FM Movie Soundtracks Hits sends artist="Beauty and the
-        // Beast" for "Battle on the Tower"). When Strategy 0a missed,
-        // try treating the artist string as the movie name and search
-        // its OST. Constrained to non-trivial multi-character strings
-        // so we don't fire for empty / one-word artists.
-        if !artist.isEmpty, artist.count >= 3 {
-            if let url = await iTunesSearch(query: "\(artist) soundtrack", entity: "album") {
-                sonosDebugLog("[ART/RADIO] OST hit (artist-as-movie) movie=\(artist)")
-                cacheSet(cacheKey, url)
-                return url
-            }
-        }
-
-        // Strategy 1: Verified song search with artist + title
+        // Strategy 1: Verified song search with artist + title.
+        // Promoted ahead of the "artist-as-movie" OST guess (was Strategy
+        // 0b) — that earlier order returned compilation albums for
+        // legitimate artists (e.g. Billy Joel + "Say Goodbye To Hollywood"
+        // resolved to "The Essential Billy Joel" via "Billy Joel
+        // soundtrack" because iTunes loosely matches "soundtrack" against
+        // marketing copy). Verified song search is exact and wins for
+        // every real performing artist; the OST guess remains as a
+        // fallback for soundtrack stations (Strategy 3 below).
         if !artist.isEmpty {
-            if let url = await verifiedSongSearch(query: "\(artist) \(title)", expectedTitle: title) {
+            if let url = await verifiedSongSearch(query: "\(artist) \(title)", expectedTitle: title, unthrottled: unt) {
                 cacheSet(cacheKey, url)
                 return url
             }
         }
 
         // Strategy 2: Verified song search with just title
-        if let url = await verifiedSongSearch(query: title, expectedTitle: title) {
+        if let url = await verifiedSongSearch(query: title, expectedTitle: title, unthrottled: unt) {
             cacheSet(cacheKey, url)
             return url
         }
 
+        // Strategy 2b (was 0b): Soundtrack stations frequently put the
+        // *movie name* in the artist field instead of the actual
+        // composer/performer (e.g. 1.FM Movie Soundtracks Hits sends
+        // artist="Beauty and the Beast" for "Battle on the Tower").
+        // After verified song search has missed, try treating the artist
+        // string as the movie name and search its OST. Constrained to
+        // non-trivial multi-character strings so we don't fire for
+        // empty / one-word artists.
+        if !artist.isEmpty, artist.count >= 3 {
+            if let url = await iTunesSearch(query: "\(artist) soundtrack", entity: "album", unthrottled: unt) {
+                sonosDebugLog("[ART/RADIO] OST hit (artist-as-movie) movie=\(artist)")
+                cacheSet(cacheKey, url)
+                return url
+            }
+        }
+
         // Strategy 3: Album search with title only (for soundtrack albums)
         // Use title without artist — the artist (orchestra) is too generic for soundtrack matching
-        if let url = await iTunesSearch(query: "\(title) soundtrack", entity: "album") {
+        if let url = await iTunesSearch(query: "\(title) soundtrack", entity: "album", unthrottled: unt) {
             cacheSet(cacheKey, url)
             return url
         }
@@ -139,13 +230,13 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
 
         if titleChanged || artistChanged {
             if !cleanedArtist.isEmpty && !cleanedTitle.isEmpty {
-                if let url = await verifiedSongSearch(query: "\(cleanedArtist) \(cleanedTitle)", expectedTitle: cleanedTitle) {
+                if let url = await verifiedSongSearch(query: "\(cleanedArtist) \(cleanedTitle)", expectedTitle: cleanedTitle, unthrottled: unt) {
                     cacheSet(cacheKey, url)
                     return url
                 }
             }
             if !cleanedTitle.isEmpty {
-                if let url = await verifiedSongSearch(query: cleanedTitle, expectedTitle: cleanedTitle) {
+                if let url = await verifiedSongSearch(query: cleanedTitle, expectedTitle: cleanedTitle, unthrottled: unt) {
                     cacheSet(cacheKey, url)
                     return url
                 }
@@ -278,33 +369,71 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
         cacheLock.unlock()
     }
 
-    /// Low-level iTunes Search API call
-    private func iTunesSearch(query: String, entity: String, limit: Int = 1, maxWait: TimeInterval = 0) async -> String? {
-        let result = await iTunesSearchFull(query: query, entity: entity, limit: limit, maxWait: maxWait)
+    /// Low-level iTunes Search API call. `unthrottled` routes around
+    /// the self-throttle (12 req/min cap) for user-facing latency-
+    /// sensitive paths — matches the policy in
+    /// `ServiceSearchProvider.fetchiTunes` and `ArtworkSearchView` so
+    /// background art enrichment can't starve the now-playing radio
+    /// art lookup. Apple-side 403/429 cooldown still applies in both
+    /// modes; only the local soft-limit is bypassed.
+    private func iTunesSearch(query: String, entity: String, limit: Int = 1, maxWait: TimeInterval = 0, unthrottled: Bool = false) async -> String? {
+        let result = await iTunesSearchFull(query: query, entity: entity, limit: limit, maxWait: maxWait, unthrottled: unthrottled)
         return result?.artURL
     }
 
     /// iTunes search that also returns metadata for verification
-    private func iTunesSearchFull(query: String, entity: String, limit: Int = 3, maxWait: TimeInterval = 0) async -> (artURL: String, artistName: String, collectionName: String, trackName: String)? {
+    private func iTunesSearchFull(query: String, entity: String, limit: Int = 3, maxWait: TimeInterval = 0, unthrottled: Bool = false) async -> (artURL: String, artistName: String, collectionName: String, trackName: String)? {
+        // Explicit `country=US` so the US iTunes catalog is searched
+        // regardless of the caller's IP geolocation. Maximises chance
+        // of finding artists who may not have storefronts in every region.
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&media=music&entity=\(entity)&limit=\(limit)") else {
+              let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&media=music&entity=\(entity)&limit=\(limit)&country=US") else {
             return nil
         }
 
-        guard let (data, _) = await ITunesRateLimiter.shared.perform(url: url, session: session, maxWait: maxWait) else {
+        let result: (Data, URLResponse)?
+        if unthrottled {
+            result = await ITunesRateLimiter.shared.performUnthrottled(url: url, session: session)
+        } else {
+            result = await ITunesRateLimiter.shared.perform(url: url, session: session, maxWait: maxWait)
+        }
+        guard let (data, _) = result else {
+            // Rate limiter swallowed the request (cooldown, throttle,
+            // network error, non-2xx). Its own log already captured why.
+            sonosDiagLog(.warning, tag: "ART",
+                         "iTunes \(entity) request returned nil for query=\(query) — rate limiter denied or HTTP failure")
             return nil
         }
 
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let results = json["results"] as? [[String: Any]],
-              let first = results.first else {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            sonosDiagLog(.warning, tag: "ART",
+                         "iTunes \(entity) JSON parse failed for query=\(query)")
+            return nil
+        }
+        let results = (json["results"] as? [[String: Any]]) ?? []
+        guard let first = results.first else {
+            // Demoted to debug — most tracks the background prewarmer
+            // queries don't have iTunes-indexed art; this is normal
+            // miss noise that was saturating the diagnostics ring
+            // buffer (1000-entry cap evicted in minutes during heavy
+            // playback) and burying real warnings.
+            sonosDiagLog(.debug, tag: "ART",
+                         "iTunes \(entity) returned 0 results for query=\(query)")
             return nil
         }
 
         let artURL = first["artworkUrl100"] as? String ??
                      first["artworkUrl60"] as? String ??
                      first["artworkUrl30"] as? String
-        guard let art = artURL else { return nil }
+        guard let art = artURL else {
+            let artistName = first["artistName"] as? String ?? "<nil>"
+            // Demoted to debug — same noise reason as the 0-results
+            // case above. The outer `searchArtistArt` cascade already
+            // emits a single warning when ALL entity types miss.
+            sonosDiagLog(.debug, tag: "ART",
+                         "iTunes \(entity) result for \(query) has no artworkUrl (artistName=\(artistName), totalResults=\(results.count))")
+            return nil
+        }
 
         let upscaled = art.replacingOccurrences(of: "100x100", with: "600x600")
                           .replacingOccurrences(of: "60x60", with: "600x600")
@@ -376,8 +505,8 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
         "edit", "mix", "live", "album", "single", "deluxe", "edition"
     ]
 
-    private func verifiedSongSearch(query: String, expectedTitle: String) async -> String? {
-        guard let results = await iTunesSearchAll(query: query, entity: "song", limit: 10) else { return nil }
+    private func verifiedSongSearch(query: String, expectedTitle: String, unthrottled: Bool = false) async -> String? {
+        guard let results = await iTunesSearchAll(query: query, entity: "song", limit: 10, unthrottled: unthrottled) else { return nil }
         let expected = expectedTitle.lowercased()
         // Filter to significant words: > 2 chars and not common filler
         let expectedWords = expected.components(separatedBy: .whitespaces)
@@ -402,14 +531,21 @@ public final class AlbumArtSearchService: AlbumArtSearchProtocol {
     }
 
     /// iTunes search returning all results for scoring
-    private func iTunesSearchAll(query: String, entity: String, limit: Int) async -> [(artURL: String, trackName: String, collectionName: String)]? {
+    private func iTunesSearchAll(query: String, entity: String, limit: Int, unthrottled: Bool = false) async -> [(artURL: String, trackName: String, collectionName: String)]? {
+        // Explicit `country=US` so the US iTunes catalog is searched
+        // regardless of the caller's IP geolocation. Maximises chance
+        // of finding artists who may not have storefronts in every region.
         guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&media=music&entity=\(entity)&limit=\(limit)") else {
+              let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&media=music&entity=\(entity)&limit=\(limit)&country=US") else {
             return nil
         }
-        guard let (data, _) = await ITunesRateLimiter.shared.perform(url: url, session: session) else {
-            return nil
+        let result: (Data, URLResponse)?
+        if unthrottled {
+            result = await ITunesRateLimiter.shared.performUnthrottled(url: url, session: session)
+        } else {
+            result = await ITunesRateLimiter.shared.perform(url: url, session: session)
         }
+        guard let (data, _) = result else { return nil }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = json["results"] as? [[String: Any]] else { return nil }
         return items.compactMap { item in

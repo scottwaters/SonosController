@@ -41,64 +41,53 @@ Why the favourited-song step? Sonos generates an internal account identifier the
 
 ---
 
-## What's New in v4.0
+## What's New in v4.5
 
-> **Upgrading from SonosController?** v4.0 is a major rework — the project was renamed, the bundle identifier changed, and the place macOS keeps your saved logins moved with it. **Existing SonosController installs do not auto-upgrade.** You'll download Choragus as a fresh app, and on first launch you'll need to:
->
-> - **Re-authenticate any connected music services** (Spotify, Plex, Audible, Last.fm scrobbling, etc.) — one-time, then they're saved again.
-> - Re-grant **Local Network permission** the first time macOS asks.
->
-> Your **play history, presets, listening stats, accent colour, and other preferences carry over automatically** on first launch. Speakers are re-discovered on the network as normal — nothing to set up there.
->
-> If you'd rather not re-authenticate, the old SonosController build keeps working alongside Choragus until you're ready to switch. They use different sandbox containers and won't fight each other.
+A polished karaoke experience, automatic updates, encrypted bug reporting, and substantial under-the-hood performance work.
 
-- **Renamed to Choragus** — same app, new name (in respect of the Sonos trademark). See the upgrade note above for what to expect on first launch.
-- **Works on tricky home networks** — if your speakers are on a guest network or smart-home VLAN, they now show up automatically. No router tweaks required.
-- **Now Playing has tabs** — the bottom of the Now Playing screen is now organised into three tabs: **Lyrics** (synced word-by-word when available, plain otherwise), **About** (artist bios, photos, related artists, album tracklists), and **History** (recent plays of this track). Don't want it visible? Click the chevron to collapse the whole panel.
+### Features
 
-  ![Synced lyrics with active-line emphasis and offset chips](screenshots/v4/nowplaying_lyrics_synced.png)
+- **Karaoke window, much improved** — open it from the **microphone icon (🎤) in the main window toolbar**, or **Window → Pop Out Karaoke Lyrics (⌘K)**. It opens in its own resizable window with karaoke-style text readable from across the room. Album art and the blurred backdrop crossfade smoothly between tracks instead of snapping. On radio stations, the previous song's art now stays on screen during the brief metadata-loading gap between tracks — no more flicker back to the station logo when a new song starts. Stays locked to the room you opened it for so it doesn't get yanked away when you click around the main UI.
 
-- **Bios in your language** — artist info is now pulled from Wikipedia and Last.fm in your chosen language. Switch the app to French or Japanese and the bios switch with you. Everything you've already looked at stays cached on your Mac, so we're not re-hammering those free public services every time you skip a track.
+  ![Karaoke popout — Bohemian Rhapsody with album art and synced lyrics](screenshots/v4.5/karaoke_popout.png)
 
-  ![About tab — Wikipedia bio, tags, similar artists, album tracklist](screenshots/v4/nowplaying_about.png)
+  **Karaoke party setup** — get the karaoke window onto a big screen one of two ways:
 
-- **Apple Music sorting** — when you tap an artist in Apple Music search, you can now sort their albums by Newest, Oldest, Title, Artist, or Relevance. Same for tracks inside an album.
+  - **Wirelessly via AirPlay** to any AirPlay-compatible display (Apple TV, an AirPlay-receiving smart TV, or another Mac running macOS Sonoma or later). System Settings → Displays → "Add Display" → pick the receiver → "Use as separate display".
+  - **Wired directly** with an HDMI / USB-C / Thunderbolt cable from your Mac to a TV or external monitor — zero latency, no Wi-Fi dependency. The TV / monitor appears as a regular extended display under System Settings → Displays the moment you plug in.
 
-  ![Apple Music drill-down sorted by oldest first](screenshots/v4/applemusic_sort.png)
-- **More services on the list** — Audible is confirmed working (alongside Spotify and Plex). Pandora is now visible in Settings → Music as untested — connect at your own risk and let us know if it works.
-- **Home Theater EQ shows up reliably** — editing a soundbar/sub/surrounds preset now shows all the EQ controls (Night Mode, Dialog Enhancement, Sub level, Surround level, etc.) without having to toggle anything to make them appear.
-- **Settings tidied up** — Settings keeps its four tabs (Display, Music, Scrobbling, System) but each tab is now broken into clearly labelled sections — Discovery, Cache controls, Mouse Controls, Colours, Language, etc. — so it's easier to find what you want without scanning a wall of toggles.
+  Either way, drag the karaoke window onto that screen and hit ⌃⌘F for fullscreen. Music plays through your Sonos speakers as normal; the lyrics show on the external display. From there, you can control everything from your phone using the regular Sonos app — skip, queue, pause, regroup rooms — and the lyrics update automatically as the song changes. The Mac just needs to stay awake and signed in. If the lyrics drift behind the music by a fraction of a second (AirPlay video has ~100–200 ms latency over the wireless path; the wired path is essentially zero), nudge them back into sync once with the offset chips at the bottom of the karaoke window; the offset is remembered per track.
+
+- **Automatic updates** — Choragus now checks for and installs new releases on its own. A new **Software Updates** tab in Settings has toggles for automatic checking and downloading, a manual "Check Now" button, and an opt-in **Beta Channel** for early access to in-progress releases (with a clear warning that beta builds may be unstable). Updates are cryptographically signed and verified before install — a tampered or impersonated update is rejected.
+
+  ![Toolbar — diagnostics bug icon next to Settings](screenshots/v4.5/toolbar_diagnostics_icon.png)
+
+- **Encrypted bug reporting** — the Diagnostics window has a new "Report Bug (encrypted)" button. Click it → a preview shows you exactly what's being shared (with redaction markers visible) → confirm, and Choragus writes a `.choragus-bundle` file to your Downloads folder, opens GitHub Issues with the title and body pre-filled, and reveals the bundle in Finder so you can drag it into the comment. The bundle is opaque to GitHub and to anyone but the maintainer — auth tokens are stripped at the source, then the rest is encrypted with the maintainer's public key. A new **Live Events** tab in the same window shows the raw UPnP traffic from your speakers in real time, useful when troubleshooting why a control feels unresponsive.
+
+  ![Diagnostics window — filter pills, help banner, footer actions](screenshots/v4.5/diagnostics.png)
+
+
+- **Heavy code and functional optimisation** — substantial work under the hood to reduce idle CPU churn, eliminate background log floods that were both slowing things down and saturating the diagnostic store, and tighten the SwiftUI invalidation surface so playback and lyric scrolling feel noticeably smoother across the board.
+
+- **Smaller things** — window state (open panels, size, position, Browse-panel width) carries across launches; About card falls back to iTunes for artist photos when Last.fm doesn't have one.
+
+### Fixes
+
+- **Mute, volume, and group state update instantly across grouped speakers** — substantial internal rework of how Choragus mirrors speaker state. Previously, a change made from the Sonos app to a grouped speaker (especially a portable Float in a group with a wired coordinator) could take 10+ seconds to surface in the Choragus UI: the coordinator would update immediately, the member would lag, occasionally appearing to flip between states until unrelated events caught up. The UI now reads directly from the authoritative source instead of maintaining a derived local mirror — both faster and more correct, with a side benefit of less idle CPU churn.
+- **Browse paginates properly for streaming services** — Spotify, Plex Cloud, and Audible browse now fetch beyond the first ~100 items via infinite scroll. Previously "Load More" silently returned nothing for any SMAPI-backed service because the wrong protocol was being asked for the next page. Local-library + UPnP browse paginates the same way. Quick scrolls no longer fire duplicate concurrent loads.
+- **Full Last.fm bios** — the About card was previously showing only Last.fm's truncated one-paragraph summary for famous artists. It now shows the full biography. If you've already looked at an artist, hit the right-click "Refresh metadata" once to drop the old short version from the cache.
+- **Settings checkboxes are responsive again** — toggling Ignore TV/HDMI Line-In, Realtime dashboard summaries, Classic Shuffle, etc. now updates instantly instead of feeling stuck for a second after click.
+- **No more "Adding to queue" green banners** — the transient banner that appeared whenever you added tracks to the queue is gone. The queue panel's own spinner is the in-progress signal.
+- **Music Services list no longer duplicates** — Pandora and other pinned services no longer show up twice when your Sonos household lists them under a different internal ID.
+- **Album art stays in sync on radio** — fixed two long-standing radio-art bugs: Now Playing showing the previous song's cover briefly after a station rolled to the next track (now keyed to the current title), and the menubar showing the previous song's cover for the same reason (radio URIs no longer poison the art cache).
+- **Local library files with spaces** — files in folders with spaces in their path (e.g. `Pink Floyd/`) now reliably add to the queue. Previously they were silently rejected past the first track when adding multiples.
+- **iTunes search prioritises UI over background work** — the artwork search backend now lets user-initiated lookups (Now Playing, Browse, manual refresh, artist photo) skip past the local rate cap that background art-backfill uses. Result: opening an album in Browse no longer waits for the post-launch backfill pass to drain.
 
 For the full per-feature change list with technical details, see [CHANGELOG.md](CHANGELOG.md).
 
-## What's New in v3.6
+For older releases (v4.0, v3.x, v2.x, v1.0), see [CHANGELOG.md](CHANGELOG.md). The "What's New" sections in this README only carry the most recent shipping version; CHANGELOG.md is the full, dated history.
 
-- **Last.fm scrobbling** — new Scrobbling tab in Settings. Register your own Last.fm API app (BYO — no bundled credentials, no shared quota), paste the API key + shared secret, connect via the browser-based approval flow. Submissions come entirely from the local play-history table — no additional network traffic to your speakers. Filter by room and music service; a Filter Preview disclosure shows exactly what would send and what's blocked (with sample rows) so "why isn't this scrobbling?" has an answer without log-diving. Auto-scrobble every 5 minutes is opt-in; manual "Scrobble Pending Now" is always available.
-- **Scroll-wheel volume + middle-click mute** — scroll on the selected speaker to adjust volume (300 ms debounced so rapid flicks don't stack SOAP calls), middle-click to toggle mute.
-- **Unified Keychain store** — all credentials (SMAPI tokens + Last.fm API app + session keys) live in one Keychain item with automatic migration from the old per-service locations. Result: one "Always Allow" prompt per rebuild instead of one per credential.
-- **Music-service filter fixed** — the scrobbling filter's service matcher now uses authoritative Sonos service IDs (confirmed by a live `ListAvailableServices` probe): Apple Music (sid=204), Spotify (12), TuneIn (254), SoundCloud (160), Sonos Radio (303), Calm Radio (144), YouTube Music (284), Amazon Music (201). Previous guesses were silently dropping matches for several services.
-- **Radio streams now scrobble** — tracks with `duration=0` (Sonos's value for continuous streams) are treated as unknown-duration and passed to Last.fm, which applies its own rules.
-- **Paste restored in Settings** — ⌘V in the credential text fields works again.
-- **Service-status matrix in the README** — the Music Services section now says which services this app can drive directly vs. which are locked to Sonos's own apps (Apple Music as SMAPI, Amazon Music, YouTube Music, SoundCloud — confirmed by live probe).
-
-## What's New in v3.5
-
-- **Sonos S1 + S2 coexistence** — legacy S1 speakers and modern S2 speakers on the same network now show up together in the sidebar, grouped by system with a horizontal divider. If you only have one system, nothing changes.
-
-  ![S1 and S2 speakers in one sidebar (dark mode)](screenshots/v3/s2_s1_darkmode.png)
-
-- **Stable multi-household rescans** — speakers no longer flicker in and out of the sidebar during periodic rescans, even when different speakers in the same household briefly return slightly different topology views. Room sections stay put.
-- **Stable radio artwork** — album art on radio streams no longer flashes back to the station logo between tracks or while paused.
-- **In-app Help** — `Help → Choragus Help` (⌘?) opens a built-in help window with eight topics, including a searchable keyboard-shortcuts reference.
-- **Check for Updates** — `Choragus → Check for Updates…` queries the project's GitHub releases and tells you when a new version is available. A quiet background check runs at most once a day at launch.
-- **Better macOS menus** — new Controls menu (⌘P play/pause, ⌘→ next, ⌘← previous, ⌥⌘↓ mute), new View menu items (⌘B browse, ⌥⌘U queue, ⇧⌘S stats), and a proper About panel with version info and a link to the project repo.
-- **Main volume slider respects your accent colour** — the master volume slider now reliably reflects the custom accent colour you set in Settings, matching the per-speaker sliders.
-- **First-run welcome** — a one-time popup on first launch points you to the official Sonos app for speaker and service setup, then to Settings → Music for enabling services in this app.
-- **Localized UI for v3.5 additions** — menus, update-check dialogs, the About panel, Help topic titles, and the welcome popup are all translated across the 13 supported languages.
-
-Earlier highlights from v3.0 — v3.1 (music services, listening stats, star/favourite tracks, artwork management, menu-bar redesign) are still covered below.
-
-For the full per-release history, see [CHANGELOG.md](CHANGELOG.md).
+> **Upgrading from SonosController?** v4.0 was a major rework — the project was renamed, the bundle identifier changed, and the place macOS keeps your saved logins moved with it. Existing SonosController installs do not auto-upgrade; download Choragus as a fresh app and re-authenticate any connected music services on first launch. Play history, presets, stats, and preferences carry over automatically. The full upgrade note is in [CHANGELOG.md](CHANGELOG.md#v40--2026-04-27--choragus).
 
 ---
 
@@ -267,6 +256,12 @@ Building from source? See [technical_readme.md](technical_readme.md#building-fro
 
 ---
 
+## Forking & home builds
+
+A few features in the upstream binary depend on credentials and infrastructure that aren't included in the source. Self-built copies still work — those features simply stay inert or fall back. See **[docs/FORKS.md](docs/FORKS.md)** for what's affected and how to substitute your own.
+
+---
+
 ## Known Limitations
 
 - **Apple Music** — search works via the iTunes API; playback requires Apple Music connected in the Sonos app plus one favorited song.
@@ -277,7 +272,7 @@ Building from source? See [technical_readme.md](technical_readme.md#building-fro
 
 ## License
 
-MIT License — see [LICENSE](LICENSE). Copyright © 2026.
+PolyForm Noncommercial 1.0.0 — see [LICENSE](LICENSE). Copyright © 2024-2026 Choragus contributors. Free for personal, hobbyist, educational, charitable, and other noncommercial use; commercial use requires a separate agreement. These terms apply retroactively to every version of the software ever released under any name — including all releases previously distributed as **SonosController** (the project's former name). Any prior MIT-licensed SonosController or Choragus releases are superseded.
 
 ## Disclaimer
 

@@ -6,6 +6,13 @@
 	<true/>
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+	<!-- Required by the encrypted-report flow in Diagnostics, which
+	     writes Choragus-Bug-Bundle-*.choragus-bundle to ~/Downloads
+	     and reveals it in Finder for the user to drag into the
+	     GitHub Issues / PVR form. Without this the write throws and
+	     the buttons appear to do nothing. -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>com.apple.security.network.server</key>

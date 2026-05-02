@@ -19,6 +19,12 @@ final class BrowseViewModel {
     var totalItems = 0
     var isLoading = true
     var loadedCount = 0
+    /// True while a `loadMore` round-trip is in flight. Prevents the
+    /// infinite-scroll trigger on the bottom sentinel from firing
+    /// repeatedly while the previous page is still arriving — without
+    /// this guard, a quick scroll past the threshold sends N concurrent
+    /// requests and produces duplicate rows when they all return.
+    var isLoadingMore = false
     var errorMessage: String?
     var selectedFilter: String?
     var playbackError: String?
@@ -146,12 +152,57 @@ final class BrowseViewModel {
         loadedCount = items.count
     }
 
+    /// Fetches the next page and appends to `items`. Idempotent on
+    /// concurrent calls (guarded by `isLoadingMore`) so the
+    /// infinite-scroll bottom sentinel can fire freely.
+    ///
+    /// Dispatches by source type:
+    /// - **SMAPI** (Spotify, Plex cloud, Audible, …) → calls the SMAPI
+    ///   client with `index = loadedCount`. The previous version
+    ///   incorrectly routed SMAPI pagination through the speaker's
+    ///   `browse(...)` SOAP, which doesn't know SMAPI item IDs and
+    ///   silently returned empty results — meaning Load More was a
+    ///   no-op for every SMAPI service.
+    /// - **Local-library / radio search** (`isSearch`,
+    ///   `isServiceSearch`) — full result set was returned in the
+    ///   initial load, no pagination concept; bails early.
+    /// - **Default UPnP browse** → speaker `browse(start: loadedCount)`.
     func loadMore() async {
-        guard !isSearch else { return }
+        guard !isLoadingMore else { return }
+        guard loadedCount < totalItems else { return }
+        guard !isSearch, !isServiceSearch else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
         do {
-            let (result, _) = try await sonosManager.browse(objectID: objectID, start: loadedCount, count: pageSize)
-            items.append(contentsOf: result)
-            loadedCount += result.count
+            if isSMAPI {
+                guard let uri = smapiServiceURI, let client = smapiClient else { return }
+                let result: (items: [SMAPIMediaItem], total: Int)
+                if let token = smapiToken {
+                    result = try await client.getMetadata(serviceURI: uri, token: token,
+                                                          id: smapiItemID,
+                                                          index: loadedCount, count: pageSize)
+                } else {
+                    result = try await client.getMetadataAnonymous(serviceURI: uri,
+                                                                    deviceID: smapiDeviceID,
+                                                                    id: smapiItemID,
+                                                                    index: loadedCount,
+                                                                    count: pageSize)
+                }
+                let sid = smapiServiceID ?? 0
+                let sn = smapiSerialNumber
+                let mapped = result.items.map {
+                    ServiceSearchProvider.shared.smapiItemToBrowseItem($0, serviceID: sid, sn: sn)
+                }
+                items.append(contentsOf: mapped)
+                loadedCount = items.count
+                if result.total > totalItems { totalItems = result.total }
+            } else {
+                let (result, total) = try await sonosManager.browse(objectID: objectID, start: loadedCount, count: pageSize)
+                items.append(contentsOf: result)
+                loadedCount += result.count
+                if total > totalItems { totalItems = total }
+            }
         } catch {
             ErrorHandler.shared.handle(error, context: "BROWSE")
         }

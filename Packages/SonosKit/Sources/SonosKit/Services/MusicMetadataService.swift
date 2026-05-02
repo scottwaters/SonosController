@@ -116,14 +116,23 @@ public final class MusicMetadataService {
     public func invalidateArtist(name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        cache.clear(MetadataCacheRepository.Kind.artist.key(lastFMLanguageCode(), trimmed))
+        cache.clear(MetadataCacheRepository.Kind.artist.key(Self.metadataSchemaVersion, lastFMLanguageCode(), trimmed))
     }
 
     /// Drops the cached `albumInfo` entry. Mirrors `invalidateArtist`.
     public func invalidateAlbum(artist: String, album: String) {
         guard !album.isEmpty else { return }
-        cache.clear(MetadataCacheRepository.Kind.album.key(lastFMLanguageCode(), artist, album))
+        cache.clear(MetadataCacheRepository.Kind.album.key(Self.metadataSchemaVersion, lastFMLanguageCode(), artist, album))
     }
+
+    /// Cache schema version for `ArtistInfo` / `AlbumInfo` payloads.
+    /// Bump this when a fix changes how empty/placeholder values are
+    /// produced so existing entries from the previous version are
+    /// silently ignored (they remain in the DB until natural TTL
+    /// expiry but never match the new key shape). Avoids stranding
+    /// users on stale "no image" cache hits for famous artists when
+    /// the underlying lookup logic improves.
+    private static let metadataSchemaVersion = "v2"
 
     public func artistInfo(name: String) async -> ArtistInfo? {
         // Suspect inputs that shouldn't be sent to artist-lookup endpoints —
@@ -139,16 +148,22 @@ public final class MusicMetadataService {
         // Cache key includes the user's app language so a German bio and
         // a French bio for the same artist don't fight for the same
         // entry. Switching language re-resolves rather than serving the
-        // previously-cached translation.
-        let key = MetadataCacheRepository.Kind.artist.key(lastFMLanguageCode(), trimmed)
+        // previously-cached translation. Schema version prefix lets us
+        // invalidate the entire cache when fix logic changes (see
+        // `metadataSchemaVersion`).
+        let key = MetadataCacheRepository.Kind.artist.key(Self.metadataSchemaVersion, lastFMLanguageCode(), trimmed)
         if let cached = cache.get(key),
            let data = cached.data(using: .utf8),
            let info = try? JSONDecoder().decode(ArtistInfo.self, from: data) {
             // Treat cached placeholder/garbage entries as a miss and
             // re-resolve. Catches results that were stored under a
             // legitimate-looking name before the source-side filter
-            // was added.
-            if !Self.looksLikePlaceholderArtist(info) {
+            // was added — also catches the "all-empty" entries written
+            // when the Wikipedia bare-name candidate was temporarily
+            // disabled, so users don't wait out the 30-day TTL for
+            // famous artists (Madonna, U2, Radiohead, …) to recover.
+            if !Self.looksLikePlaceholderArtist(info)
+                && !Self.looksLikeEmptyArtist(info) {
                 return info
             }
         }
@@ -161,10 +176,29 @@ public final class MusicMetadataService {
         async let lfm = lastFMArtist(name: trimmed)
 
         let parts: [ArtistInfo?] = await [wiki, mb, lfm]
-        let merged = mergeArtist(name: trimmed, parts: parts.compactMap { $0 })
-        guard let merged else { return nil }
+        var merged = mergeArtist(name: trimmed, parts: parts.compactMap { $0 })
+        guard let unwrapped = merged else { return nil }
 
-        if let encoded = try? JSONEncoder().encode(merged),
+        // Image fallback: Last.fm withdrew real artist images post-2019
+        // (we filter the placeholder), and Wikipedia thumbnails are only
+        // present when the article has a lead image. For artists missing
+        // both, fall back to iTunes Search's artist endpoint — typically
+        // returns a 100×100 photo, small but better than blank.
+        if (unwrapped.imageURL?.isEmpty ?? true),
+           let itunesArt = await AlbumArtSearchService.shared.searchArtistArt(artist: trimmed) {
+            merged = ArtistInfo(
+                name: unwrapped.name,
+                bio: unwrapped.bio,
+                tags: unwrapped.tags,
+                similarArtists: unwrapped.similarArtists,
+                listeners: unwrapped.listeners,
+                imageURL: itunesArt,
+                wikipediaURL: unwrapped.wikipediaURL
+            )
+        }
+
+        if let final = merged,
+           let encoded = try? JSONEncoder().encode(final),
            let str = String(data: encoded, encoding: .utf8) {
             cache.set(key, payload: str, ttlSeconds: 30 * 24 * 60 * 60)
         }
@@ -204,6 +238,30 @@ public final class MusicMetadataService {
         return false
     }
 
+    /// True for cached entries that resolved to "nothing useful" — no
+    /// bio, no image, no tags, no listeners. A cache hit on one of
+    /// these gives the user the same blank About card that prompted
+    /// the original lookup, so we treat it as a miss and re-resolve.
+    /// Catches both the disabled-candidate hangover and any source
+    /// that is back online after a previous outage.
+    nonisolated private static func looksLikeEmptyArtist(_ info: ArtistInfo) -> Bool {
+        let hasBio = !(info.bio?.isEmpty ?? true)
+        let hasImage = !(info.imageURL?.isEmpty ?? true)
+        let hasTags = !info.tags.isEmpty
+        let hasListeners = info.listeners != nil
+        return !(hasBio || hasImage || hasTags || hasListeners)
+    }
+
+    /// Album equivalent of `looksLikeEmptyArtist` — same rationale.
+    nonisolated private static func looksLikeEmptyAlbum(_ info: AlbumInfo) -> Bool {
+        let hasSummary = !(info.summary?.isEmpty ?? true)
+        let hasImage = !(info.imageURL?.isEmpty ?? true)
+        let hasTags = !info.tags.isEmpty
+        let hasTracks = !info.tracks.isEmpty
+        let hasReleaseDate = !(info.releaseDate?.isEmpty ?? true)
+        return !(hasSummary || hasImage || hasTags || hasTracks || hasReleaseDate)
+    }
+
     /// MusicBrainz returns several "special purpose" placeholder artists
     /// when a query doesn't find a real match — `[unknown]`,
     /// `[anonymous]`, `[various artists]`, etc. They carry tags like
@@ -232,11 +290,14 @@ public final class MusicMetadataService {
     public func albumInfo(artist: String, album: String) async -> AlbumInfo? {
         // Language-prefixed key — same rationale as `artistInfo`: the
         // cache stores per-locale results so flipping the app language
-        // serves a fresh translation instead of the cached one.
-        let key = MetadataCacheRepository.Kind.album.key(lastFMLanguageCode(), artist, album)
+        // serves a fresh translation instead of the cached one. Schema
+        // version prefix invalidates pre-fix cached entries on first
+        // access; see `metadataSchemaVersion`.
+        let key = MetadataCacheRepository.Kind.album.key(Self.metadataSchemaVersion, lastFMLanguageCode(), artist, album)
         if let cached = cache.get(key),
            let data = cached.data(using: .utf8),
-           let info = try? JSONDecoder().decode(AlbumInfo.self, from: data) {
+           let info = try? JSONDecoder().decode(AlbumInfo.self, from: data),
+           !Self.looksLikeEmptyAlbum(info) {
             return info
         }
 
@@ -331,10 +392,19 @@ public final class MusicMetadataService {
     /// title match (handles disambiguations and minor name variants),
     /// then the summary endpoint returns the article extract.
     private func wikipediaArtist(name: String) async -> ArtistInfo? {
-        // Try title candidates in order. "(band)" and "(musician)"
-        // disambiguators are Wikipedia conventions — most music
-        // articles live under one of those titles. Plain name is the
-        // last resort and risks landing on a disambiguation page.
+        // Try music-disambiguated forms first, then fall back to the
+        // bare name. Many famous artists (Madonna, U2, Radiohead,
+        // Coldplay, Pink Floyd, Lorde, …) have plain-title articles
+        // with no `(band)` / `(musician)` disambiguator, so dropping
+        // the bare candidate eliminates the most common case. The
+        // description guard below (`descriptionLooksLikeArtist`)
+        // catches non-music articles that the fuzzy OpenSearch lookup
+        // can otherwise return for a bare query — e.g. "Animal House"
+        // → 1978 film (description: "1978 American comedy film"
+        // → no music token → rejected); "Air" → chemical element
+        // (description: "mixture of gases…" → rejected). Any article
+        // whose description names the subject as a musician/band/etc.
+        // is accepted.
         let candidates = [
             "\(name) (band)",
             "\(name) (musician)",
@@ -343,7 +413,10 @@ public final class MusicMetadataService {
         for candidate in candidates {
             guard let summary = await fetchLocalisedWikipediaSummary(query: candidate),
                   summary.type != "disambiguation",
-                  let extract = summary.extract, !extract.isEmpty
+                  let extract = summary.extract, !extract.isEmpty,
+                  Self.resolvedTitleMatchesQuery(candidate: candidate,
+                                                 resolvedTitle: summary.resolvedTitle),
+                  Self.descriptionLooksLikeArtist(summary.description)
             else { continue }
             return ArtistInfo(
                 name: name,
@@ -358,18 +431,77 @@ public final class MusicMetadataService {
         return nil
     }
 
+    /// True when the OpenSearch-resolved title is plausibly the article
+    /// the candidate query was asking about. OpenSearch is fuzzy and will
+    /// happily return "Animal husbandry" for "Animal House (band)" — we
+    /// reject those by requiring the candidate's core (everything before
+    /// any disambiguator) to appear as a substring of the resolved title.
+    /// Resolution is case-insensitive and ignores diacritics.
+    nonisolated private static func resolvedTitleMatchesQuery(candidate: String,
+                                                              resolvedTitle: String?) -> Bool {
+        guard let resolved = resolvedTitle, !resolved.isEmpty else {
+            // No resolved title returned — direct-title lookup, accept.
+            return true
+        }
+        // Strip the trailing "(...)" disambiguator from the candidate so
+        // "Animal House (band)" compares as "Animal House".
+        let core = candidate
+            .replacingOccurrences(of: "\\s*\\([^)]*\\)\\s*$",
+                                  with: "",
+                                  options: .regularExpression)
+            .folding(options: .diacriticInsensitive, locale: .current)
+            .lowercased()
+            .trimmingCharacters(in: .whitespaces)
+        guard !core.isEmpty else { return true }
+        let resolvedFolded = resolved
+            .folding(options: .diacriticInsensitive, locale: .current)
+            .lowercased()
+        return resolvedFolded.contains(core)
+    }
+
+    /// True when the Wikipedia summary's `description` field reads as a
+    /// musician or musical group. Used as a final guard — even when the
+    /// title matches, the article can be about a place, film, or species
+    /// (e.g. "Air" the village in France). Wikipedia's short_description
+    /// almost always names the subject's category in one short phrase.
+    /// Empty/missing descriptions pass through; treating "no description"
+    /// as a fail would over-prune (smaller articles legitimately omit it).
+    nonisolated private static func descriptionLooksLikeArtist(_ description: String?) -> Bool {
+        guard let desc = description?.lowercased(), !desc.isEmpty else { return true }
+        let musicTokens = [
+            "musician", "band", "singer", "rapper", "vocalist", "songwriter",
+            "composer", "producer", "guitarist", "pianist", "drummer", "bassist",
+            "violinist", "saxophonist", "trumpeter", "cellist", "percussionist",
+            "dj", " mc ", "duo", "trio", "quartet", "quintet", "ensemble",
+            "orchestra", "choir", "music group", "musical group", "rock group",
+            "pop group", "boy band", "girl group", "hip hop group",
+            "music project", "recording artist"
+        ]
+        for token in musicTokens where desc.contains(token) { return true }
+        return false
+    }
+
     private func wikipediaAlbum(artist: String, album: String) async -> AlbumInfo? {
-        // Wikipedia album titles are usually disambiguated as
-        // "<Album> (<Artist> album)". Fall back to plain title.
+        // Try music-disambiguated forms first, then fall back to the
+        // bare title. Many albums (Random Access Memories, Abbey Road,
+        // OK Computer, …) live at plain-title URLs with no `(album)`
+        // qualifier. The description guard below
+        // (`descriptionLooksLikeRelease`) catches non-album articles
+        // a bare match could land on — descriptions naming the subject
+        // as an album / EP / single / soundtrack pass; everything else
+        // is rejected.
         let candidates = [
             "\(album) (\(artist) album)",
             "\(album) (album)",
+            "\(album) (soundtrack)",
+            "\(album) (EP)",
             album,
         ]
         for title in candidates {
             if let summary = await fetchLocalisedWikipediaSummary(directTitle: title),
                summary.type != "disambiguation",
-               let extract = summary.extract, !extract.isEmpty {
+               let extract = summary.extract, !extract.isEmpty,
+               Self.descriptionLooksLikeRelease(summary.description) {
                 return AlbumInfo(
                     title: album, artist: artist,
                     releaseDate: nil,
@@ -383,6 +515,22 @@ public final class MusicMetadataService {
         return nil
     }
 
+    /// True when the Wikipedia summary's description reads as a release
+    /// (album, EP, single, soundtrack). Mirror of
+    /// `descriptionLooksLikeArtist` for the album branch. Empty/missing
+    /// descriptions pass through.
+    nonisolated private static func descriptionLooksLikeRelease(_ description: String?) -> Bool {
+        guard let desc = description?.lowercased(), !desc.isEmpty else { return true }
+        let releaseTokens = [
+            "album", "ep ", " ep,", "single by", "soundtrack",
+            "compilation", "studio album", "live album", "remix album",
+            "mixtape", "boxed set", "box set", "song by",
+            "extended play"
+        ]
+        for token in releaseTokens where desc.contains(token) { return true }
+        return false
+    }
+
     /// Resolves a Wikipedia article in the user's app language, falling
     /// back to English on miss. The returned `pageURL` points at
     /// whichever Wikipedia served the article — when you tap "Read on
@@ -393,10 +541,14 @@ public final class MusicMetadataService {
     /// can't predict), `directTitle` skips OpenSearch and goes straight
     /// to the summary endpoint (used for album titles where the
     /// candidate strings are already canonical).
+    ///
+    /// `resolvedTitle` is propagated on the result so callers can apply
+    /// a fuzzy-mismatch guard (OpenSearch silently substitutes
+    /// edit-distance matches when no exact article exists).
     private nonisolated func fetchLocalisedWikipediaSummary(query: String) async -> WikipediaSummary? {
         let primary = wikipediaLanguageCode()
         if let title = await wikipediaResolveTitle(query: query, lang: primary),
-           let summary = await wikipediaSummary(title: title, lang: primary) {
+           let summary = await wikipediaSummary(title: title, lang: primary, resolvedTitle: title) {
             return summary
         }
         // Fallback chain: not every article has a translation, so on a
@@ -404,18 +556,18 @@ public final class MusicMetadataService {
         // already on English.
         guard primary != "en" else { return nil }
         if let title = await wikipediaResolveTitle(query: query, lang: "en") {
-            return await wikipediaSummary(title: title, lang: "en")
+            return await wikipediaSummary(title: title, lang: "en", resolvedTitle: title)
         }
         return nil
     }
 
     private nonisolated func fetchLocalisedWikipediaSummary(directTitle: String) async -> WikipediaSummary? {
         let primary = wikipediaLanguageCode()
-        if let summary = await wikipediaSummary(title: directTitle, lang: primary) {
+        if let summary = await wikipediaSummary(title: directTitle, lang: primary, resolvedTitle: nil) {
             return summary
         }
         guard primary != "en" else { return nil }
-        return await wikipediaSummary(title: directTitle, lang: "en")
+        return await wikipediaSummary(title: directTitle, lang: "en", resolvedTitle: nil)
     }
 
     /// Resolves the best matching Wikipedia article title using the
@@ -453,9 +605,19 @@ public final class MusicMetadataService {
         let thumbnailURL: String?
         let type: String?
         let pageURL: String?
+        /// One-line plain-language category from `description` (e.g.
+        /// "American rock band", "1978 American comedy film"). Used as
+        /// a category guard so non-music articles can be rejected even
+        /// when the title check passes.
+        let description: String?
+        /// Title returned by OpenSearch (when this summary came from a
+        /// query lookup), so callers can verify the fuzzy match wasn't
+        /// substantially different from what they asked for. Nil for
+        /// direct-title lookups where no resolution step happened.
+        let resolvedTitle: String?
     }
 
-    private nonisolated func wikipediaSummary(title: String, lang: String) async -> WikipediaSummary? {
+    private nonisolated func wikipediaSummary(title: String, lang: String, resolvedTitle: String?) async -> WikipediaSummary? {
         let path = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? title
         guard let url = URL(string: "https://\(lang).wikipedia.org/api/rest_v1/page/summary/\(path)")
         else { return nil }
@@ -474,10 +636,14 @@ public final class MusicMetadataService {
             let extract = json["extract"] as? String
             let type = json["type"] as? String
             let thumb = (json["thumbnail"] as? [String: Any])?["source"] as? String
+            let description = json["description"] as? String
             // `content_urls.desktop.page` is the canonical web URL for the
             // article — what users get when they "Open in Browser".
             let page = ((json["content_urls"] as? [String: Any])?["desktop"] as? [String: Any])?["page"] as? String
-            return WikipediaSummary(extract: extract, thumbnailURL: thumb, type: type, pageURL: page)
+            return WikipediaSummary(extract: extract, thumbnailURL: thumb,
+                                    type: type, pageURL: page,
+                                    description: description,
+                                    resolvedTitle: resolvedTitle)
         } catch {
             return nil
         }
@@ -628,7 +794,12 @@ public final class MusicMetadataService {
     private func parseLastFMArtist(_ json: [String: Any], fallbackName: String) -> ArtistInfo? {
         guard let artist = json["artist"] as? [String: Any] else { return nil }
         let name = (artist["name"] as? String) ?? fallbackName
-        let bio = ((artist["bio"] as? [String: Any])?["summary"] as? String).flatMap(stripLastFMTrailer)
+        // Prefer `bio.content` (full text) over `bio.summary` (intentionally
+        // truncated to ~1–2 paragraphs by Last.fm). Both end with the same
+        // "Read more on Last.fm" trailer that `stripLastFMTrailer` removes.
+        let bioDict = artist["bio"] as? [String: Any]
+        let bio = ((bioDict?["content"] as? String) ?? (bioDict?["summary"] as? String))
+            .flatMap(stripLastFMTrailer)
         let tags = ((artist["tags"] as? [String: Any])?["tag"] as? [[String: Any]])?
             .compactMap { $0["name"] as? String } ?? []
         let similar = ((artist["similar"] as? [String: Any])?["artist"] as? [[String: Any]])?
@@ -647,8 +818,11 @@ public final class MusicMetadataService {
         let title = (album["name"] as? String) ?? fallbackAlbum
         let artist = (album["artist"] as? String) ?? fallbackArtist
         let releaseDate = album["releasedate"] as? String
+        // Same `content` over `summary` preference as the artist path —
+        // Last.fm's summary is a hard-truncated 1–2 paragraph snippet.
         let wiki = album["wiki"] as? [String: Any]
-        let summary = (wiki?["summary"] as? String).flatMap(stripLastFMTrailer)
+        let summary = ((wiki?["content"] as? String) ?? (wiki?["summary"] as? String))
+            .flatMap(stripLastFMTrailer)
         let tags = ((album["tags"] as? [String: Any])?["tag"] as? [[String: Any]])?
             .compactMap { $0["name"] as? String } ?? []
         let trackList = ((album["tracks"] as? [String: Any])?["track"] as? [[String: Any]]) ?? []
@@ -681,10 +855,27 @@ public final class MusicMetadataService {
         let preferred = ["mega", "extralarge", "large", "medium", "small"]
         for size in preferred {
             if let entry = images.first(where: { ($0["size"] as? String) == size }),
-               let url = entry["#text"] as? String, !url.isEmpty {
+               let url = entry["#text"] as? String, !url.isEmpty,
+               !Self.isLastFMPlaceholderImage(url) {
                 return url
             }
         }
         return nil
+    }
+
+    /// Last.fm withdrew real artist images from its API around 2019
+    /// and now serves a single well-known placeholder graphic (a
+    /// generic vinyl-and-star shape) for every artist whose image
+    /// hasn't been re-uploaded by the community. The placeholder URL
+    /// always contains the same hash; suppressing it here lets the
+    /// merge step fall through to the Wikipedia thumbnail (or render
+    /// no image at all) instead of every Last.fm-only result showing
+    /// the same stock graphic.
+    nonisolated private static func isLastFMPlaceholderImage(_ url: String) -> Bool {
+        // The 32-char hash is stable across all sizes and CDNs —
+        // matching by substring beats hard-coding the host because
+        // Last.fm has rotated CDNs (`last.fm`,
+        // `lastfm.freetls.fastly.net`, etc.) and would do so again.
+        return url.contains("2a96cbd8b46e442fc41c2b86b821562f")
     }
 }

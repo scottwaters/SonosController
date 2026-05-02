@@ -44,6 +44,21 @@ public struct TrackMetadata: Equatable {
         trackURI.map(URIPrefix.isRadio) ?? false
     }
 
+    /// Stable per-track dedup key. URI alone is unique per song for
+    /// streaming/library tracks; for radio one URI serves many songs
+    /// back-to-back, so include title+artist. Falls back to title|artist
+    /// when no URI is present.
+    public var stableKey: String {
+        if let uri = trackURI, !uri.isEmpty {
+            if isRadioStream {
+                guard !title.isEmpty, !artist.isEmpty else { return uri }
+                return "\(uri)|\(title)|\(artist)"
+            }
+            return uri
+        }
+        return "\(title)|\(artist)"
+    }
+
     // MARK: - Formatting
 
     public var durationString: String { formatTime(duration) }

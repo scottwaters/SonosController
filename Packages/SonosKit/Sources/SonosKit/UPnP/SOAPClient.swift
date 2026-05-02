@@ -89,10 +89,27 @@ public final class SOAPClient: SOAPClientProtocol {
         if httpResponse.statusCode == 500 {
             // SOAP fault
             let fault = XMLResponseParser.parseFault(responseBody)
+            sonosDiagLog(.error, tag: "SOAP",
+                         "\(action) → SOAP fault [\(fault.code)] \(fault.string)",
+                         context: [
+                            "service": service,
+                            "action": action,
+                            "url": url.absoluteString,
+                            "fault_code": fault.code,
+                            "fault_string": fault.string
+                         ])
             throw SOAPError.soapFault(fault.code, fault.string)
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
+            sonosDiagLog(.error, tag: "SOAP",
+                         "\(action) → HTTP \(httpResponse.statusCode)",
+                         context: [
+                            "service": service,
+                            "action": action,
+                            "url": url.absoluteString,
+                            "http_status": "\(httpResponse.statusCode)"
+                         ])
             throw SOAPError.httpError(httpResponse.statusCode, responseBody)
         }
 

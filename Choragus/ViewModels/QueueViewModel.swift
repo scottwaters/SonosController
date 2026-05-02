@@ -41,8 +41,6 @@ final class QueueViewModel: ObservableObject {
         }
         let playing = isPlayingFromQueue
 
-        sonosDebugLog("[QUEUE] updateCurrentTrack: title='\(meta?.title ?? "nil")' trackNum=\(meta?.trackNumber ?? -1) station='\(meta?.stationName ?? "")' isQueue=\(playing) isQueueSource=\(meta?.isQueueSource ?? false) uri=\(String(meta?.trackURI?.prefix(40) ?? "nil")) currentTrack=\(currentTrack) queueCount=\(queueItems.count)")
-
         guard playing else { return }
 
         // Authoritative source: Sonos's `Track` field from GetPositionInfo

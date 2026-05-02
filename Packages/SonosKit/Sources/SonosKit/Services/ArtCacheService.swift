@@ -34,30 +34,117 @@ public final class ArtCacheService: ObservableObject, ArtCacheProtocol {
     /// Stores an art URL with multiple cache keys for flexible lookup.
     /// Persistence is debounced via `Timing.rescanDebounce` so a burst of
     /// browse-list updates collapses into a single disk write.
+    ///
+    /// Radio URIs are NOT stored as a key — those URIs identify the
+    /// *station*, not the song, and re-using the same URI across the
+    /// dozens of different tracks the station plays would cross-
+    /// contaminate every lookup (the menubar would show the previous
+    /// song's cover on every transition). Only title-based keys are
+    /// safe for radio.
     public func cacheArtURL(_ artURL: String, forURI uri: String, title: String = "", itemID: String = "") {
-        if !uri.isEmpty {
+        // Equality gates: @Published fires on every assignment. Without
+        // these guards, repeated cacheArtURL calls for the same already-
+        // cached art (browse-row reappearance, art-resolver retries,
+        // metadata prewarm) burst-fire `objectWillChange` and forward
+        // through `SonosManager.artCacheSubscription` into every
+        // `@EnvironmentObject sonosManager` observer.
+        var didChange = false
+        if !uri.isEmpty && !URIPrefix.isRadio(uri),
+           discoveredArtURLs[uri] != artURL {
             discoveredArtURLs[uri] = artURL
+            didChange = true
         }
         if !title.isEmpty {
-            discoveredArtURLs["title:\(title.lowercased())"] = artURL
+            let titleKey = "title:\(title.lowercased())"
+            if discoveredArtURLs[titleKey] != artURL {
+                discoveredArtURLs[titleKey] = artURL
+                didChange = true
+            }
             let normalized = Self.normalizeForCache(title)
             if !normalized.isEmpty {
-                discoveredArtURLs["norm:\(normalized)"] = artURL
+                let normKey = "norm:\(normalized)"
+                if discoveredArtURLs[normKey] != artURL {
+                    discoveredArtURLs[normKey] = artURL
+                    didChange = true
+                }
             }
         }
-        if !itemID.isEmpty {
+        if !itemID.isEmpty, discoveredArtURLs[itemID] != artURL {
             discoveredArtURLs[itemID] = artURL
+            didChange = true
         }
-        scheduleSave()
+        if didChange { scheduleSave() }
     }
 
     /// Looks up cached art by URI, exact-case-insensitive title, or normalized title.
+    /// For radio URIs the URI lookup is skipped — see `cacheArtURL` for
+    /// why. Pre-existing radio-URI entries (written before this guard
+    /// landed) are also bypassed at read time, so stale ones don't keep
+    /// surfacing the previous song's art until they get overwritten.
+    ///
+    /// Title-key cache hits are validated against the requesting track's
+    /// URI source-family. Title is a coarse key — different sources
+    /// (Apple Music, Spotify, local SMB library) can ship the same
+    /// nominal track ("Bohemian Rhapsody"), and the title-keyed cache
+    /// entry written by the first play of a name will otherwise be
+    /// returned for every subsequent same-title play regardless of
+    /// source. The cached value is typically a Sonos `/getaa?u=<src>`
+    /// proxy URL whose `u=` parameter binds it to a specific source —
+    /// returning a local-file proxy URL for an Apple Music track makes
+    /// the speaker serve a 404 (wrong source URL on possibly the wrong
+    /// speaker), which renders as blank art in the consumer.
     public func lookupCachedArt(uri: String?, title: String) -> String? {
-        if let uri = uri, let art = discoveredArtURLs[uri] { return art }
-        if let art = discoveredArtURLs["title:\(title.lowercased())"] { return art }
+        if let uri = uri, !URIPrefix.isRadio(uri), let art = discoveredArtURLs[uri] { return art }
+        let titleKey = "title:\(title.lowercased())"
+        if let art = discoveredArtURLs[titleKey],
+           !Self.isStaleCrossSource(cachedArt: art, currentURI: uri) {
+            return art
+        }
         let normalized = Self.normalizeForCache(title)
-        if !normalized.isEmpty, let art = discoveredArtURLs["norm:\(normalized)"] { return art }
+        if !normalized.isEmpty,
+           let art = discoveredArtURLs["norm:\(normalized)"],
+           !Self.isStaleCrossSource(cachedArt: art, currentURI: uri) {
+            return art
+        }
         return nil
+    }
+
+    /// True when the cached art URL is a `/getaa?u=<src>` proxy whose
+    /// embedded source URI belongs to a different source family than
+    /// the requesting track's URI. Returns false (i.e. trust the cache)
+    /// when either side can't be classified, so we never break a
+    /// working lookup just because we couldn't prove the negative.
+    private static func isStaleCrossSource(cachedArt: String, currentURI: String?) -> Bool {
+        guard let currentURI, !currentURI.isEmpty else { return false }
+        guard let comps = URLComponents(string: cachedArt) else { return false }
+        // /getaa?u=<encoded source URI>
+        guard let cachedSourceURI = comps.queryItems?.first(where: { $0.name == "u" })?.value,
+              !cachedSourceURI.isEmpty
+        else { return false }
+        let cachedFamily = sourceFamily(of: cachedSourceURI)
+        let currentFamily = sourceFamily(of: currentURI)
+        guard cachedFamily != .unknown, currentFamily != .unknown else { return false }
+        return cachedFamily != currentFamily
+    }
+
+    /// Coarse source-family classification of a Sonos resource URI.
+    /// Used by the cross-source cache validator above. Distinct
+    /// services map to distinct families so a title-keyed cache entry
+    /// written for one source is rejected when the cache is queried
+    /// for another.
+    private enum SourceFamily {
+        case localFile, appleMusic, spotify, http, radio, queue, container, unknown
+    }
+
+    private static func sourceFamily(of uri: String) -> SourceFamily {
+        if uri.hasPrefix(URIPrefix.fileCifs) || uri.hasPrefix(URIPrefix.smb) { return .localFile }
+        if uri.hasPrefix(URIPrefix.sonosApiHLSStatic) || uri.hasPrefix(URIPrefix.sonosApiHLS) { return .appleMusic }
+        if uri.hasPrefix("x-sonos-spotify:") { return .spotify }
+        if uri.hasPrefix(URIPrefix.sonosApiStream) || uri.hasPrefix(URIPrefix.sonosApiRadio) || uri.hasPrefix(URIPrefix.rinconMP3Radio) { return .radio }
+        if uri.hasPrefix("x-sonos-http:") { return .http }
+        if uri.hasPrefix(URIPrefix.rinconQueue) { return .queue }
+        if uri.hasPrefix(URIPrefix.rinconContainer) { return .container }
+        return .unknown
     }
 
     private func scheduleSave() {
