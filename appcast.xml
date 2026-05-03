@@ -8,6 +8,20 @@
     <description>Auto-update feed for Choragus, the Sonos controller for macOS.</description>
     <language>en</language>
 <item>
+      <title>Version 4.6.2 (beta 21)</title>
+      <pubDate>Sun, 03 May 2026 16:37:18 +1000</pubDate>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:version>21</sparkle:version>
+      <sparkle:shortVersionString>4.6.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/scottwaters/Choragus/releases/tag/v4.6.2-beta21</sparkle:releaseNotesLink>
+      <enclosure
+        url="https://github.com/scottwaters/Choragus/releases/download/v4.6.2-beta21/Choragus.zip"
+        length="14681449"
+        type="application/octet-stream"
+        sparkle:edSignature="awWqSWuyACodr1xdD5qOz2kPD4WYAyXxPbRMuebJJKpvSo7zc/L8xqSDnoJDGac10w8OqOZAg0TBFS0/0h2eBw=="/>
+    </item>
+<item>
       <title>Version 4.6.1 (beta 20)</title>
       <pubDate>Sun, 03 May 2026 16:27:40 +1000</pubDate>
       <sparkle:channel>beta</sparkle:channel>
