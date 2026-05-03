@@ -221,6 +221,27 @@ final class NowPlayingViewModel {
         }
     }
 
+    /// Convenience seek-by-offset for the ±15s / ±30s skip buttons in
+    /// the Now Playing transport row. Reads the projected playhead via
+    /// `currentPosition`, clamps to the track range, and dispatches to
+    /// the absolute-position seek path. Disabled at the call site for
+    /// non-queue radio/stream sources where seeking is meaningless.
+    func seekRelative(by deltaSeconds: TimeInterval) {
+        let now = currentPosition
+        let target = max(0, now + deltaSeconds)
+        let duration = trackMetadata.duration
+        let clamped: TimeInterval
+        if duration > 0 {
+            // Stop a hair before the end so we don't trigger an immediate
+            // queue advance when the user holds +30 near the track end —
+            // they wanted to skip in-track, not to the next song.
+            clamped = min(target, max(0, duration - 1))
+        } else {
+            clamped = target
+        }
+        seekToPosition(clamped)
+    }
+
     func seekToPosition(_ seconds: TimeInterval) {
         let hours = Int(seconds) / 3600
         let minutes = (Int(seconds) % 3600) / 60

@@ -452,11 +452,22 @@ struct DiagnosticsView: View {
     /// Builds the preview text + opens the consent sheet. The actual
     /// bundle write + encryption + Finder reveal + browser open all
     /// happen on user confirmation inside `previewSheet`.
+    ///
+    /// Preview uses `bundleText` (the public-output scrub) so the
+    /// preview matches what `submitEncryptedReport` actually writes
+    /// into the encrypted body. Earlier this used `bundleTextWithPayload`
+    /// (no public scrub) while the bundle itself was also unscrubbed —
+    /// the user saw an honest-but-leaky preview, and the bundle leaked
+    /// `sn=`, LAN IPs, and home paths despite the bundle's
+    /// "encrypted-to-the-maintainer" framing implying minimisation.
+    /// Now both paths apply `scrubForPublicOutput`, and the redaction
+    /// summary at the bottom of the preview reflects the actual on-wire
+    /// content.
     private func presentEncryptedReportPreview(target: EncryptedReportTarget) {
         let rows = selection.isEmpty
             ? filteredEntries
             : filteredEntries.filter { selection.contains($0.id) }
-        let preview = bundleTextWithPayload(for: rows)
+        let preview = bundleText(for: rows)
         pendingEncryptedReport = PendingEncryptedReport(
             target: target,
             rows: rows,
@@ -541,13 +552,26 @@ struct DiagnosticsView: View {
     }
 
     /// Runs after the user clicks "Encrypt and Open Form" in the
-    /// preview sheet. Encrypts the on-disk-tier rows, writes the
-    /// resulting envelope to ~/Downloads, reveals it in Finder, and
-    /// opens the right destination form (public Issues or PVR).
+    /// preview sheet. Scrubs every payload string with
+    /// `scrubForPublicOutput` (the export-tier pass), encrypts the
+    /// scrubbed rows, writes the resulting envelope to ~/Downloads,
+    /// reveals it in Finder, and opens the right destination form
+    /// (public Issues or PVR).
+    ///
+    /// Scrubbing happens at the boundary where the row leaves the
+    /// process — the same point as the clipboard / GitHub URL paths.
+    /// Encryption to the maintainer's pubkey is defence-in-depth, not a
+    /// substitute for minimisation: if the maintainer's private key is
+    /// ever compromised or lost, every past bundle becomes readable, so
+    /// the principle is to ship only what the maintainer needs to
+    /// diagnose. `sid=` stays (identifies Spotify vs Apple Music etc.);
+    /// `sn=` (account binding) is removed; LAN IPs collapse to
+    /// `<lan-ip>`; home paths collapse to `~/`; RINCON device IDs keep
+    /// last 4 chars for cross-event correlation.
     private func submitEncryptedReport(_ pending: PendingEncryptedReport) {
         pendingEncryptedReport = nil
 
-        let payloadEntries = pending.rows.map { e in
+        let rawPayload = pending.rows.map { e in
             BugReportBundle.EntryPayload(
                 timestamp: Self.bundleStampFormatter.string(from: e.timestamp),
                 level: e.level.rawValue.uppercased(),
@@ -556,6 +580,7 @@ struct DiagnosticsView: View {
                 context: e.contextJSON
             )
         }
+        let payloadEntries = BugReportBundle.scrubForPublicOutput(rawPayload)
 
         let envelope: Data
         do {
@@ -567,8 +592,19 @@ struct DiagnosticsView: View {
 
         // Land the file in ~/Downloads so it's where Finder reveals
         // and where the user expects "I just saved a thing".
+        //
+        // The trailing `.log` suffix is here so GitHub's attachment
+        // uploader accepts the file on drag-drop without a manual
+        // rename — the underlying contents are still the
+        // `ChoragusBugBundle` JSON envelope, and the maintainer-side
+        // decrypter doesn't care about the filename. Issue #19's
+        // reporter discovered this workaround themselves and noted
+        // it ("I added a `.log` extension so I could upload it
+        // here") — baking it in removes the friction. The double
+        // extension also signals to the user that the file is opaque
+        // / app-specific even though it's named like a log.
         let stamp = Self.fileNameFormatter.string(from: Date())
-        let filename = "Choragus-Bug-Bundle-\(stamp).choragus-bundle"
+        let filename = "Choragus-Bug-Bundle-\(stamp).choragus-bundle.log"
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         guard let target = downloads?.appendingPathComponent(filename) else {
             encryptedReportError = "Could not locate Downloads folder."

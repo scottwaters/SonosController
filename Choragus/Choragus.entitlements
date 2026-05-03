@@ -7,15 +7,40 @@
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
 	<!-- Required by the encrypted-report flow in Diagnostics, which
-	     writes Choragus-Bug-Bundle-*.choragus-bundle to ~/Downloads
+	     writes Choragus-Bug-Bundle-*.choragus-bundle.log to ~/Downloads
 	     and reveals it in Finder for the user to drag into the
-	     GitHub Issues / PVR form. Without this the write throws and
-	     the buttons appear to do nothing. -->
+	     GitHub Issues / PVR form. The trailing `.log` is purely so
+	     GitHub's attachment uploader accepts the file without a
+	     manual rename — the contents are still the encrypted bundle.
+	     Without this entitlement the write throws and the buttons
+	     appear to do nothing. -->
 	<key>com.apple.security.files.downloads.read-write</key>
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
+	<!-- Sparkle 2 in a sandboxed app: TWO sets of mach-lookup
+	     entitlements are required.
+	     1. The static XPC services bundled inside Sparkle.framework
+	        (InstallerLauncher.xpc, Downloader.xpc) — service names
+	        match each XPC bundle's CFBundleIdentifier.
+	     2. The DYNAMIC per-app services Sparkle's installer registers
+	        with launchd at install time, named `<app-bundle-id>-spk*`.
+	        These carry status / installer-connection / progress IPC
+	        back from the unsandboxed Autoupdate helper to the
+	        sandboxed parent app. Without them, install fails after
+	        the launcher starts with: "Error: failed to probe status
+	        service for <bundle-id> from the framework" — the exact
+	        symptom that surfaces as "An error occurred while
+	        launching the installer." -->
+	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+	<array>
+		<string>org.sparkle-project.InstallerLauncher</string>
+		<string>org.sparkle-project.DownloaderService</string>
+		<string>com.choragus.app-spki</string>
+		<string>com.choragus.app-spks</string>
+		<string>com.choragus.app-spkp</string>
+	</array>
 </dict>
 </plist>

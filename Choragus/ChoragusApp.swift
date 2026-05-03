@@ -187,6 +187,37 @@ struct ChoragusApp: App {
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 900, height: 550)
+
+        // Standard macOS Preferences window — separate non-modal scene
+        // wired automatically by SwiftUI to the system "Settings…" menu
+        // item with ⌘, and to the `@Environment(\.openSettings)` action
+        // used inside `ContentView`. Replaced an earlier `.sheet`-based
+        // presentation that locked the main window into a modal state,
+        // which (a) blocked the user from interacting with other
+        // Choragus windows while Settings was open and (b) prevented
+        // Sparkle's "Install and Relaunch" alert from surfacing during
+        // an in-app update because it tried to attach to the same
+        // already-modal window. The Settings scene needs the same
+        // environment-object injections as the main WindowGroup so
+        // every preferences pane that reads SonosManager / SMAPIAuth /
+        // Plex / scrobbling state finds its provider.
+        Settings {
+            SettingsView()
+                .environmentObject(sonosManager)
+                .environmentObject(presetManager)
+                .environmentObject(playHistoryManager)
+                .environmentObject(playlistScanner)
+                .environmentObject(smapiManager)
+                .environmentObject(plexAuth)
+                .environmentObject(lastFMScrobbler)
+                .environmentObject(scrobbleManagerHolder.ensureReady(playHistory: playHistoryManager, lastfm: lastFMScrobbler))
+                .environmentObject(metadataServicesHolder.ensureReady(lastfm: lastFMScrobbler, sonosManager: sonosManager).lyrics)
+                .environmentObject(metadataServicesHolder.ensureReady(lastfm: lastFMScrobbler, sonosManager: sonosManager).metadata)
+                .environmentObject(metadataServicesHolder.ensureReady(lastfm: lastFMScrobbler, sonosManager: sonosManager).lyricsCoordinator)
+                .environmentObject(sparkleObserver)
+                .preferredColorScheme(colorScheme)
+        }
+
         .commands {
             // No document model, so hide File > New. Keep the Edit menu
             // (undo/redo, cut/copy/paste, select-all) intact — Settings has
@@ -234,13 +265,11 @@ struct ChoragusApp: App {
                 }
             }
 
-            // Settings — app menu, ⌘,
-            CommandGroup(replacing: .appSettings) {
-                Button("\(L10n.settings)\u{2026}") {
-                    NotificationCenter.default.post(name: .openSettings, object: nil)
-                }
-                .keyboardShortcut(",", modifiers: .command)
-            }
+            // Settings menu item — automatically wired by the
+            // `Settings { }` scene above. SwiftUI replaces the default
+            // "Settings…" item with one bound to that scene and the
+            // ⌘, shortcut. Removing our previous CommandGroup
+            // override; the system handles it now.
 
             // View — panel toggles. Items are injected into the system-provided
             // View menu (via the .sidebar placement) instead of creating a
@@ -533,14 +562,18 @@ final class MetadataServicesHolder: ObservableObject {
 /// Opens the custom Choragus About window. Replaces
 /// `orderFrontStandardAboutPanel` because that panel is fixed at ~280 pt
 /// wide — too cramped for the etymology block, tagline, and credits sections.
+///
+/// Internal (not private) so the Settings → Software Updates pane can
+/// open it from the clickable version label there. Also wired to the
+/// app-menu About item.
 @MainActor
-private func showAboutPanel() {
+func showAboutPanel() {
     ChoragusAboutWindow.show()
 }
 
 /// Owns the singleton About window so reopening doesn't stack copies.
 @MainActor
-private enum ChoragusAboutWindow {
+enum ChoragusAboutWindow {
     static var controller: NSWindowController?
 
     static func show() {

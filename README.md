@@ -22,11 +22,13 @@ Tested against a live Sonos system with 16 speakers across 10 zones, a large loc
 
 ## Installing on macOS
 
-1. From the [latest release](https://github.com/scottwaters/Choragus/releases/latest), download `Choragus.zip` and double-click to unzip.
-2. Drag `Choragus.app` into `/Applications`.
-3. Double-click to launch.
+1. From the [latest release](https://github.com/scottwaters/Choragus/releases/latest), download `Choragus.dmg` and double-click it.
+2. Drag `Choragus.app` into the Applications folder shown in the mounted window.
+3. Eject the disk image, then launch Choragus from `/Applications`.
 
-The build is signed with a Developer ID and notarized by Apple, so it launches cleanly with no Gatekeeper warning. On first launch macOS will ask for permission to access devices on your local network — grant it, or speaker discovery will not work.
+The DMG is signed with a Developer ID and notarized by Apple, so it launches cleanly with no Gatekeeper warning. On first launch macOS will ask for permission to access devices on your local network — grant it, or speaker discovery will not work.
+
+> **Upgrading from v4.5?** Please install v4.6 manually once via the steps above. The in-app auto-update from v4.5 won't work because of an entitlements gap baked into the v4.5 binary; v4.6 ships the fix, but the fix only takes effect once v4.6 is installed. From v4.6 onward, all updates install themselves automatically.
 
 ## Setting Up Music Services
 
@@ -38,6 +40,20 @@ Short version:
 - **Spotify / Plex / Apple Music playback** — first add the service in the official Sonos app, then *(Spotify and Apple Music only)* play one song from it and save it as a Sonos Favorite, then come back to Choragus, press `⌘,`, **Music → Connected Services → Connect**, and sign in via the browser.
 
 Why the favourited-song step? Sonos generates an internal account identifier the first time you save content from a service. Without it, no third-party app can authenticate playback through that service. It is a Sonos design constraint, not a Choragus limitation. The full explanation is in [Setupguide.md](Setupguide.md).
+
+---
+
+## What's New in v4.6
+
+- **Standard DMG installer.** Choragus now ships as a signed `.dmg` with the usual drag-to-Applications layout.
+- **In-app updates work.** Check for Updates → installs and relaunches automatically from v4.6 onward (see the upgrade note above for the one-time manual install needed if you're on v4.5).
+- **Spotify and Apple Music: "Add All" on an artist's album list now adds every album.** Same fix covers Plex playlist lists.
+- **Spotify playback fix** for accounts (often outside the US) where clicking a single song would error instead of playing.
+- **Plex local tracks show their actual length and a working seek bar** in Now Playing.
+- **±15 s and ±30 s seek buttons** added to Now Playing for quick scrubbing within a track.
+- **Settings opens as a proper Preferences window** (⌘,) instead of blocking the rest of the app.
+
+Full change list in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -85,7 +101,7 @@ A polished karaoke experience, automatic updates, encrypted bug reporting, and s
 
 For the full per-feature change list with technical details, see [CHANGELOG.md](CHANGELOG.md).
 
-For older releases (v4.0, v3.x, v2.x, v1.0), see [CHANGELOG.md](CHANGELOG.md). The "What's New" sections in this README only carry the most recent shipping version; CHANGELOG.md is the full, dated history.
+For older releases (v4.0, v3.x, v2.x, v1.0), see [CHANGELOG.md](CHANGELOG.md) — the full, dated history.
 
 > **Upgrading from SonosController?** v4.0 was a major rework — the project was renamed, the bundle identifier changed, and the place macOS keeps your saved logins moved with it. Existing SonosController installs do not auto-upgrade; download Choragus as a fresh app and re-authenticate any connected music services on first launch. Play history, presets, stats, and preferences carry over automatically. The full upgrade note is in [CHANGELOG.md](CHANGELOG.md#v40--2026-04-27--choragus).
 

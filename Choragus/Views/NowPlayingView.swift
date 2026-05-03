@@ -533,7 +533,13 @@ struct NowPlayingView: View {
                                 }
                         }
 
-                        transportButton("previous", icon: "backward.fill", size: .title2) {
+                        // `backward.end.fill` is SF Symbols' "skip to
+                        // previous track" glyph (triangle + tape-head
+                        // line). The earlier `backward.fill` reads as
+                        // rewind/scrub, which is the wrong metaphor —
+                        // Sonos treats this control as a hard track-to-
+                        // track jump, not a continuous seek.
+                        transportButton("previous", icon: "backward.end.fill", size: .title2) {
                             performAction("previous") { try await sonosManager.previous(group: group) }
                         }
                         .tooltip(L10n.previous)
@@ -557,9 +563,13 @@ struct NowPlayingView: View {
                     .tooltip(transportState.isPlaying ? L10n.pause : L10n.play)
                     .keyboardShortcut(.space, modifiers: [])
 
-                    // Right side: next + repeat + crossfade
+                    // Right side: next + 15s/30s seek + repeat + crossfade
                     HStack(spacing: 24) {
-                        transportButton("next", icon: "forward.fill", size: .title2) {
+                        // `forward.end.fill` mirrors `backward.end.fill` —
+                        // the SF Symbols pair Apple uses everywhere for
+                        // skip-to-next / skip-to-previous track. Sonos's
+                        // semantics match (hard track-to-track jump).
+                        transportButton("next", icon: "forward.end.fill", size: .title2) {
                             performAction("next") { try await sonosManager.next(group: group) }
                         }
                         .tooltip(L10n.next)
@@ -586,8 +596,63 @@ struct NowPlayingView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.vertical, 16)
+                .padding(.top, 16)
                 .padding(.horizontal, UILayout.horizontalPadding)
+
+                // In-track seek row — same outer column structure as the
+                // main transport row above, so each seek pair straddles
+                // the prev / next icon: -30 sits outside, -15 sits in
+                // the centre column, putting prev visually between the
+                // two buttons. Symmetric on the forward side. Smaller
+                // visual weight via .footnote sizing keeps the main
+                // transport dominant.
+                HStack(spacing: 24) {
+                    HStack(spacing: 0) {
+                        Spacer()
+                        transportButton("skipBack30", icon: "gobackward.30", size: .footnote) {
+                            vm.seekRelative(by: -30)
+                        }
+                        .tooltip(L10n.skipBack30)
+                        .disabled(!trackMetadata.isQueueSource &&
+                                  (trackMetadata.isRadioStream || !trackMetadata.stationName.isEmpty))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
+                    HStack(spacing: 24) {
+                        transportButton("skipBack15", icon: "gobackward.15", size: .footnote) {
+                            vm.seekRelative(by: -15)
+                        }
+                        .tooltip(L10n.skipBack15)
+                        .disabled(!trackMetadata.isQueueSource &&
+                                  (trackMetadata.isRadioStream || !trackMetadata.stationName.isEmpty))
+
+                        // 44pt empty matches the play button's centred
+                        // width above, keeping the symmetric column.
+                        Color.clear.frame(width: 44, height: 1)
+
+                        transportButton("skipForward15", icon: "goforward.15", size: .footnote) {
+                            vm.seekRelative(by: 15)
+                        }
+                        .tooltip(L10n.skipForward15)
+                        .disabled(!trackMetadata.isQueueSource &&
+                                  (trackMetadata.isRadioStream || !trackMetadata.stationName.isEmpty))
+                    }
+
+                    HStack(spacing: 0) {
+                        transportButton("skipForward30", icon: "goforward.30", size: .footnote) {
+                            vm.seekRelative(by: 30)
+                        }
+                        .tooltip(L10n.skipForward30)
+                        .disabled(!trackMetadata.isQueueSource &&
+                                  (trackMetadata.isRadioStream || !trackMetadata.stationName.isEmpty))
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.top, 4)
+                .padding(.bottom, 12)
+                .padding(.horizontal, UILayout.horizontalPadding)
+                .frame(maxWidth: .infinity)
 
                 // Volume
                 HStack(spacing: 12) {

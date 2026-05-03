@@ -92,6 +92,29 @@ public enum BugReportBundle {
         public let encryptedBody: String   // base64
     }
 
+    /// Returns a new entry list with `DiagnosticsRedactor.scrubForPublicOutput`
+    /// applied to every `message` and `context` value.
+    ///
+    /// Bundle assembly intentionally stays neutral so internal tooling
+    /// can ship raw payloads when needed; production callers
+    /// (`DiagnosticsView.submitEncryptedReport`) compose `scrubForPublicOutput`
+    /// then `assemble` so the final bundle never carries `sn=` account
+    /// bindings, LAN topology, home paths, RINCON device IDs, or auth
+    /// tokens — even though the body is encrypted to the maintainer's
+    /// pubkey, minimisation defends against later key compromise. See
+    /// the regression test in `BugReportBundleScrubTests`.
+    public static func scrubForPublicOutput(_ entries: [EntryPayload]) -> [EntryPayload] {
+        entries.map { e in
+            EntryPayload(
+                timestamp: e.timestamp,
+                level: e.level,
+                tag: e.tag,
+                message: DiagnosticsRedactor.scrubForPublicOutput(e.message),
+                context: e.context.map(DiagnosticsRedactor.scrubForPublicOutput)
+            )
+        }
+    }
+
     /// Builds the envelope: serialises `entries` as JSON, runs the
     /// JSON through `BugReportEncryptor.wrap(...)`, base64-encodes the
     /// result, and wraps in the JSON header. Returns the file bytes

@@ -1446,7 +1446,16 @@ public class SonosManager: ObservableObject {
         var metas: [String] = []
         var sources: [BrowseItem] = []
         for item in items {
-            guard let uri = item.resourceURI, !uri.isEmpty, !item.isContainer else { continue }
+            // Skip only items with no usable URI. SMAPI containers
+            // (`x-rincon-cpcontainer:` album/playlist URIs from
+            // Spotify, Apple Music, Plex etc.) DO have a URI and Sonos
+            // expands them server-side inside AddMultipleURIsToQueue
+            // / AddURIToQueue — same as the singular
+            // `addBrowseItemToQueue` path. The earlier `!item.isContainer`
+            // filter was silently dropping every container in the
+            // background fill, which made Play All on an artist's
+            // album list play only the first album.
+            guard let uri = item.resourceURI, !uri.isEmpty else { continue }
             uris.append(uri)
             var meta = item.resourceMetadata ?? ""
             if meta.contains("&lt;") { meta = XMLResponseParser.xmlUnescape(meta) }
@@ -1940,6 +1949,24 @@ public class SonosManager: ObservableObject {
     /// items (which would expand server-side to many tracks) are skipped —
     /// use `addBrowseItemToQueue` individually for those.
     @discardableResult
+    /// Filter for batch queue actions (`addBrowseItemsToQueue`,
+    /// `fillQueueInBackground`). The contract: an item is queueable
+    /// when it carries a non-empty `resourceURI`, regardless of
+    /// whether it's a container — Sonos's `AddURIToQueue` /
+    /// `AddMultipleURIsToQueue` actions both expand SMAPI containers
+    /// (`x-rincon-cpcontainer:` album / playlist URIs from Spotify,
+    /// Apple Music, Plex, etc.) server-side. Items with no URI (UPnP
+    /// browse-only containers like local-library albums) need a
+    /// separate child-fetch path and are not queueable as-is.
+    ///
+    /// Pulled out so the regression test in
+    /// `BatchQueueFilterTests` can pin the contract that drove issue
+    /// "Add All silently no-op'd on artist albums".
+    static func isQueueable(_ item: BrowseItem) -> Bool {
+        guard let uri = item.resourceURI, !uri.isEmpty else { return false }
+        return true
+    }
+
     public func addBrowseItemsToQueue(_ items: [BrowseItem], in group: SonosGroup, playNext: Bool = false) async throws -> Int {
         guard !items.isEmpty else { return 0 }
         if items.count == 1 {
@@ -1953,7 +1980,19 @@ public class SonosManager: ObservableObject {
         var metas: [String] = []
         var optimisticSource: [BrowseItem] = []
         for item in items {
-            guard let uri = item.resourceURI, !uri.isEmpty, !item.isContainer else { continue }
+            // Skip only items with no usable URI. SMAPI containers
+            // (`x-rincon-cpcontainer:` album/playlist URIs from
+            // Spotify, Apple Music, Plex etc.) DO have a URI and Sonos
+            // expands them server-side. The earlier `!item.isContainer`
+            // filter was silently dropping every container, which is
+            // why Add All on an artist's album list (or any list of
+            // album/playlist containers) was a no-op while the
+            // singular Play Next / Add to Queue paths worked — those
+            // never ran the filter. If batch faults on a mixed
+            // container payload, the per-item fallback below uses
+            // `addURIToQueue` per item, which already accepts
+            // containers (see the singular `addBrowseItemToQueue`).
+            guard let uri = item.resourceURI, !uri.isEmpty else { continue }
             uris.append(uri)
             var meta = item.resourceMetadata ?? ""
             if meta.contains("&lt;") {

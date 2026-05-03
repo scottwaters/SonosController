@@ -65,8 +65,12 @@ public final class ServiceSearchProvider {
             return []
         }
 
-        let sid = ServiceID.appleMusic
-        let serviceType = (sid << 8) + 7  // 52231
+        // Resolve via the catalog so households whose Apple Music sid
+        // drifted from the compile-time constant get the right runtime
+        // value. Falls back to the constant when the catalog hasn't
+        // loaded yet (first-launch race), matching pre-catalog behaviour.
+        let sid = MusicServiceCatalog.shared.sid(forName: ServiceName.appleMusic) ?? ServiceID.appleMusic
+        let serviceType = MusicServiceCatalog.shared.rinconServiceType(forSid: sid)
 
         switch entity {
         case .song, .all:
@@ -249,8 +253,8 @@ public final class ServiceSearchProvider {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let results = json["results"] as? [[String: Any]] else { return [] }
 
-        let sid = ServiceID.appleMusic
-        let serviceType = (sid << 8) + 7
+        let sid = MusicServiceCatalog.shared.sid(forName: ServiceName.appleMusic) ?? ServiceID.appleMusic
+        let serviceType = MusicServiceCatalog.shared.rinconServiceType(forSid: sid)
         // First result is the artist itself — skip it
         let albumResults = results.filter { ($0["wrapperType"] as? String) == "collection" }
         return parseAlbumResults(albumResults, sid: sid, serviceType: serviceType, sn: sn)
@@ -268,8 +272,8 @@ public final class ServiceSearchProvider {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let results = json["results"] as? [[String: Any]] else { return [] }
 
-        let sid = ServiceID.appleMusic
-        let serviceType = (sid << 8) + 7
+        let sid = MusicServiceCatalog.shared.sid(forName: ServiceName.appleMusic) ?? ServiceID.appleMusic
+        let serviceType = MusicServiceCatalog.shared.rinconServiceType(forSid: sid)
         // First result is the album itself — skip it
         let trackResults = results.filter { ($0["wrapperType"] as? String) == "track" }
         return parseSongResults(trackResults, sid: sid, serviceType: serviceType, sn: sn)
@@ -320,7 +324,8 @@ public final class ServiceSearchProvider {
                 let subtext = station["subtext"] as? String ?? ""
                 let imageURL = station["image"] as? String
 
-                let resourceURI = "x-sonosapi-stream:\(guideId)?sid=\(ServiceID.tuneIn)&flags=8224&sn=0"
+                let tuneInSid = MusicServiceCatalog.shared.sid(forName: ServiceName.tuneIn) ?? ServiceID.tuneIn
+                let resourceURI = "x-sonosapi-stream:\(guideId)?sid=\(tuneInSid)&flags=8224&sn=0"
                 let metadata = buildTuneInDIDL(guideId: guideId, title: text)
 
                 return BrowseItem(
@@ -439,8 +444,8 @@ public final class ServiceSearchProvider {
 
             // Also fetch category names
             let catNames = await fetchCalmRadioCategoryNames()
-            let sid = ServiceID.calmRadio
-            let serviceType = (sid << 8) + 7 // 36871
+            let sid = MusicServiceCatalog.shared.sid(forName: ServiceName.calmRadio) ?? ServiceID.calmRadio
+            let serviceType = MusicServiceCatalog.shared.rinconServiceType(forSid: sid)
 
             return json.compactMap { entry -> CalmRadioCategory? in
                 let catID = entry["category"] as? Int ?? 0
@@ -614,44 +619,33 @@ public final class ServiceSearchProvider {
 
     // MARK: - Per-Service URI Construction
 
-    /// Known RINCON service types — SMAPI sid does not always match RINCON sid.
-    private static let rinconServiceTypes: [Int: Int] = [:] // Reserved for future overrides
-
-    /// Services that use a custom URI prefix instead of x-sonos-http
-    private static let serviceURIPrefixes: [Int: String] = [
-        ServiceID.spotify: "x-sonos-spotify:",
-    ]
-
-    /// File-extension hint appended before the `?sid=…` query string.
-    /// Sonos uses the extension to pre-select a codec path and rejects
-    /// URIs without one (UPnP 714 "illegal MIME type") for services that
-    /// serve raw HTTP streams — Apple Music uses `.mp4`, Plex uses `.mp3`.
-    /// Services that already embed the media type in their URI (Spotify's
-    /// `x-sonos-spotify:` scheme) don't need this.
-    private static let serviceURIExtensions: [Int: String] = [
-        ServiceID.appleMusic: ".mp4",
-        ServiceID.plex: ".mp3",
-    ]
-
-    /// Playback-flag override. The third bit (value 8) tells the speaker
-    /// to resolve the URI via SMAPI `getMediaURI` instead of HTTP-GET'ing
-    /// it directly. Services that stream from their own CDN (Apple Music,
-    /// Plex) need this; services with an embedded URI scheme (Spotify)
-    /// don't. 8232 = 0x2028 vs the default 8224 = 0x2020.
-    private static let serviceFlagsOverrides: [Int: Int] = [
-        ServiceID.appleMusic: 8232,
-        ServiceID.plex: 8232,
-    ]
-
-    /// Returns the correct RINCON service type for a given SMAPI service ID.
+    /// RINCON service type for the runtime sid the speaker reports.
+    /// Routes through the catalog so households whose sid for a service
+    /// drifted (issue #19) still get the correct RINCON value, with the
+    /// `(sid << 8) + 7` formula as the fallback when the catalog hasn't
+    /// loaded yet.
     private func rinconServiceType(for serviceID: Int) -> Int {
-        Self.rinconServiceTypes[serviceID] ?? (serviceID << 8) + 7
+        MusicServiceCatalog.shared.rinconServiceType(forSid: serviceID)
     }
 
     /// Builds the correct playback URI for a track from an SMAPI service.
     /// Colons in service-specific IDs (e.g. spotify:track:xxx) must be percent-encoded to %3a.
+    ///
+    /// Resolution path: looks the runtime sid up in `MusicServiceCatalog`
+    /// → service name → protocol rules. Per-service URI quirks (Spotify
+    /// wants `x-sonos-spotify:`, Apple Music wants `.mp4` + flags 8232,
+    /// etc.) live in the catalog so the lookup tracks the household's
+    /// actual sid for the service rather than a compile-time guess. The
+    /// previous compile-time tables silently mis-routed any household
+    /// whose sid for a service didn't match the constants — see
+    /// issue #19 for the resulting "x-sonos-http: → SOAP 714" failure
+    /// on accounts where Spotify is sid 9 instead of 12.
+    ///
+    /// Falls back to `x-sonos-http:` and logs a CATALOG diagnostic when
+    /// the catalog has no rules for this sid (either it hasn't been
+    /// refreshed yet or this is a service we don't know about).
     private func buildPlayURI(itemID: String, itemType: String, serviceID: Int, sn: Int) -> String {
-        let prefix = Self.serviceURIPrefixes[serviceID] ?? "x-sonos-http:"
+        let catalog = MusicServiceCatalog.shared
         // Percent-encode first, then replace colons with lowercase %3a (Sonos is case-sensitive).
         // Also lowercase any uppercase hex from addingPercentEncoding (e.g. %3A → %3a).
         var encodedID = (itemID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? itemID)
@@ -659,10 +653,13 @@ public final class ServiceSearchProvider {
         // Force lowercase hex — Sonos rejects uppercase percent-encoding for Spotify URIs
         encodedID = encodedID.replacingOccurrences(of: "%3A", with: "%3a")
         if itemType == "stream" || itemType == "program" {
-            return "x-sonosapi-stream:\(encodedID)?sid=\(serviceID)&flags=8224&sn=\(sn)"
+            let streamScheme = catalog.rules(forSid: serviceID)?.streamURIScheme ?? URIPrefix.sonosApiStream
+            let streamFlags = catalog.rules(forSid: serviceID)?.streamPlaybackFlags ?? 8224
+            return "\(streamScheme)\(encodedID)?sid=\(serviceID)&flags=\(streamFlags)&sn=\(sn)"
         }
-        let ext = Self.serviceURIExtensions[serviceID] ?? ""
-        let flags = Self.serviceFlagsOverrides[serviceID] ?? 8224
+        let prefix = catalog.trackURIScheme(forSid: serviceID)
+        let ext = catalog.trackURIExtension(forSid: serviceID)
+        let flags = catalog.trackPlaybackFlags(forSid: serviceID)
         return "\(prefix)\(encodedID)\(ext)?sid=\(serviceID)&flags=\(flags)&sn=\(sn)"
     }
 

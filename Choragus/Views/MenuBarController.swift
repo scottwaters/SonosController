@@ -292,7 +292,7 @@ struct MenuBarPlayerView: View {
                         guard let group = selectedGroup else { return }
                         Task { try? await sonosManager.previous(group: group) }
                     } label: {
-                        Image(systemName: "backward.fill")
+                        Image(systemName: "backward.end.fill")
                             .font(.system(size: 16))
                     }
                     .buttonStyle(.plain)
@@ -318,7 +318,7 @@ struct MenuBarPlayerView: View {
                         guard let group = selectedGroup else { return }
                         Task { try? await sonosManager.next(group: group) }
                     } label: {
-                        Image(systemName: "forward.fill")
+                        Image(systemName: "forward.end.fill")
                             .font(.system(size: 16))
                     }
                     .buttonStyle(.plain)

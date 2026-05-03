@@ -30,6 +30,10 @@ topology_cache.json
 # Local-only TODO (cross-release notes, not for GitHub)
 docs/TODO.md
 
+# Claude Code project settings — local-only IDE configuration that can
+# embed personal-machine paths in its allowlist. Must never be committed.
+.claude/
+
 # Defense-in-depth — secret/key patterns that should never be committed.
 # Nothing matching currently exists in the tree; these prevent accidental
 # adds if a developer ever drops a cert or env file into the repo.

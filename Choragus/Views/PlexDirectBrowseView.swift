@@ -493,7 +493,8 @@ struct PlexDirectBrowseView: View {
             artist: track.grandparentTitle ?? "",
             album: track.parentTitle ?? "",
             artURL: artURL,
-            streamURI: uri
+            streamURI: uri,
+            durationMs: track.durationMs
         )
         return BrowseItem(
             id: "plexd:track:\(track.ratingKey)",
@@ -633,14 +634,24 @@ struct PlexDirectBrowseView: View {
     /// manager's metadata-merge logic eventually overwrites cached art.
     /// Keeping it minimal — Sonos accepts loosely-formed DIDL as long as
     /// the namespaces and `<upnp:class>` are present.
+    ///
+    /// `duration` on the `<res>` element is what makes the Now Playing
+    /// seek bar appear with a proper track length. Without it, Sonos's
+    /// GetPositionInfo returns 00:00:00 for `TrackDuration` and the
+    /// player UI falls back to the "Live" label as if it were a radio
+    /// stream. Plex always knows the track length (`durationMs` from
+    /// the library API), so emit it whenever it's present.
     private static func buildDIDL(title: String, artist: String, album: String,
-                                  artURL: String?, streamURI: String) -> String {
+                                  artURL: String?, streamURI: String,
+                                  durationMs: Int?) -> String {
         let id = "plex-direct"
         let escTitle = xmlEscape(title)
         let escArtist = xmlEscape(artist)
         let escAlbum = xmlEscape(album)
         let escStream = xmlEscape(streamURI)
         let artElement: String = artURL.map { "<upnp:albumArtURI>\(xmlEscape($0))</upnp:albumArtURI>" } ?? ""
+        let durationAttr: String = durationMs
+            .map { " duration=\"\(formatDIDLDuration(milliseconds: $0))\"" } ?? ""
         return """
         <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" \
         xmlns:dc="http://purl.org/dc/elements/1.1/" \
@@ -651,9 +662,21 @@ struct PlexDirectBrowseView: View {
         <upnp:album>\(escAlbum)</upnp:album>\
         \(artElement)\
         <upnp:class>object.item.audioItem.musicTrack</upnp:class>\
-        <res protocolInfo="http-get:*:*:*">\(escStream)</res>\
+        <res protocolInfo="http-get:*:*:*"\(durationAttr)>\(escStream)</res>\
         </item></DIDL-Lite>
         """
+    }
+
+    /// `H:MM:SS.fff` per UPnP `<res>` `duration` attribute spec. Hours
+    /// are unpadded (Sonos accepts both forms), minutes and seconds are
+    /// always two digits, milliseconds always three.
+    private static func formatDIDLDuration(milliseconds ms: Int) -> String {
+        let totalMs = max(0, ms)
+        let hours = totalMs / 3_600_000
+        let minutes = (totalMs % 3_600_000) / 60_000
+        let seconds = (totalMs % 60_000) / 1000
+        let millis = totalMs % 1000
+        return String(format: "%d:%02d:%02d.%03d", hours, minutes, seconds, millis)
     }
 
     private static func xmlEscape(_ s: String) -> String {

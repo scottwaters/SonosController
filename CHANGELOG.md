@@ -1,6 +1,69 @@
 
 # Changelog
 
+## v4.6 — 2026-05-03 — SMAPI catalog + sandboxed auto-update + DMG distribution
+
+Streaming-service URI routing is now per-household instead of compile-time, the in-app auto-update path actually works on the sandboxed build (entitlements gap closed end-to-end), Settings is a real macOS Preferences window, and distribution moves from a bare ZIP to a signed/notarized DMG with a drag-to-Applications layout.
+
+### MusicServiceCatalog — runtime per-household URI routing
+
+- New `MusicServiceCatalog` actor (in `SonosKit/Services/`) splits SMAPI service knowledge into two layers: a static rules table (Spotify wants `x-sonos-spotify:`, Apple Music wants `.mp4` + flags 8232, etc.) keyed by canonical name, and a per-household `sid → name` table populated from the speaker's `ListAvailableServices` response. Lookup at URI-build time goes `sid → name → rules`, so households whose Spotify is sid 9 (or anything other than the historically-hardcoded 12) now route to the correct URI scheme. Closes [#19](https://github.com/scottwaters/Choragus/issues/19) — single-track Spotify clicks were faulting with SOAP 714 because the prefix lookup missed by sid.
+- Catalog driven refreshes on speaker bind, periodic 6-hour TTL, and miss-triggered (when `buildPlayURI` is called for a sid the catalog hasn't seen yet). Drift detection logs a CATALOG warning when the same service name reports a different sid between refreshes — rare but real on accounts where a service was removed and re-added in the Sonos app.
+- `SMAPIAuthManager.loadServices` now delegates the descriptor fetch to the catalog and reads back through it, instead of owning a separate parser. `ServiceSearchProvider.buildPlayURI` and the iTunes-search Apple Music URIs both consult the catalog. TuneIn / Calm Radio search URIs do too.
+- Tests: 17 new `MusicServiceCatalogTests` covering static rules, sid-resolution, refresh coalescing, drift detection, ensure-fresh TTL, and miss-triggered refresh.
+
+### Add All on artist-album lists actually enqueues every album
+
+- `addBrowseItemsToQueue` and `fillQueueInBackground` previously had a `!item.isContainer` guard that silently dropped every container — so on a Spotify artist's album list, "Add All" appeared to do nothing while "Play Next" on a single album worked fine. The single-track path used `addBrowseItemToQueue` (no filter), the bulk path filtered. Same shape for Plex playlists and any service that returns `x-rincon-cpcontainer:` URIs in browse results.
+- Removed the filter; both paths now pass containers through to `AddURIToQueue` / `AddMultipleURIsToQueue`. Sonos expands them server-side. The existing per-item fallback covers the case where a batch faults on a mixed payload (no-op on local-library tracks; on cpcontainer mixes the per-item path takes over).
+- Extracted a static `SonosManager.isQueueable(_:)` helper so the contract is regression-testable. New `BatchQueueFilterTests` (7 tests) cover Spotify/Apple Music/Plex containers, UPnP-only album items (no URI), empty URIs, and mixed lists.
+
+### Plex direct: track duration in DIDL
+
+- `PlexDirectBrowseView.buildDIDL` now emits `duration="H:MM:SS.fff"` on the `<res>` element using the Plex API's `durationMs`. Without it, Sonos's GetPositionInfo returned `0:00:00` for `TrackDuration` and the Now Playing UI showed "Live" instead of a seek bar — same UX as a radio stream. Track length now resolves correctly on freshly-added Plex direct tracks.
+- `formatDIDLDuration(milliseconds:)` helper added alongside.
+
+### Now Playing transport — semantically-correct icons + seek
+
+- Previous/next buttons now use `backward.end.fill` / `forward.end.fill` (skip-to-track glyphs) instead of `backward.fill` / `forward.fill` (rewind/scrub glyphs). The actions were always next/previous track on Sonos; the icons just disagreed with the metaphor. Same swap in the menu-bar transport.
+- New `±15 s` and `±30 s` seek buttons in their own row beneath the play/prev/next group. `gobackward.15` / `gobackward.30` / `goforward.15` / `goforward.30` SF Symbols, `.footnote` size so the main row stays visually dominant. Layout: pairs flank the centre, with the gap on each side aligned roughly under the prev / next icons. Wired to a new `NowPlayingViewModel.seekRelative(by:)` that clamps to `duration - 1` so a hold near the track end doesn't accidentally trigger queue advance. Disabled with the same gate as next/prev (radio streams that aren't queue-sourced).
+- 4 new L10n keys (`skipBack15`, `skipForward15`, `skipBack30`, `skipForward30`).
+
+### Encrypted bug bundle — `.log` extension + wider scrub before encryption
+
+- Filename is now `Choragus-Bug-Bundle-<stamp>.choragus-bundle.log` (was `.choragus-bundle`). GitHub's attachment uploader rejects unknown extensions; users like the issue #19 reporter were renaming the file by hand to add `.log` before drag-drop. The trailing `.log` makes drag-drop work directly. The decrypter (`scripts/decrypt-bug-bundle.swift` and the `ChoragusBugBundleReader` helper app) doesn't care about the filename. Reader's open-panel allowlist updated to accept `.log`, `.choragus-bundle` (legacy), and `.json`.
+- Encryption pipeline now runs the wider `scrubForPublicOutput` pass (account `sn=` bindings, LAN IPs, home paths, OAuth tokens, RINCON device-ID tail-mask) over each entry's `message` and `context` before assembly — defence in depth. Even though the body is encrypted to the maintainer's pubkey, minimisation principle: the maintainer doesn't need any of those values to diagnose, so don't ship them. Pre-fix bundles were leaking `sn=274` from the URI in context JSON.
+- `BugReportBundle.scrubForPublicOutput(_:)` exposed as the single composable scrub helper. `DiagnosticsView.submitEncryptedReport` calls it; preview UI also routes through `bundleText` so what the user sees in the consent sheet matches what's actually shipped.
+- Tests: 13 `DiagnosticsRedactorTests` (every redactor pattern: sn, home path, LAN IP across all RFC1918 ranges, link-local, RINCON device ID, Bearer token, query-string token), plus 6 `BugReportBundleScrubTests` including a full encrypted-bundle round-trip that asserts the decrypted body contains no leaked secrets.
+
+### Sandboxed Sparkle auto-update — complete entitlements set
+
+- v4.5 had only the static `org.sparkle-project.InstallerLauncher` and `DownloaderService` mach-lookup entitlements. Sparkle 2's installer flow on a sandboxed app ALSO needs the dynamic per-app status / connection / progress services it registers with launchd (`<bundle-id>-spki`, `<bundle-id>-spks`, `<bundle-id>-spkp`). Without those, the launcher would start, the Autoupdate helper would spawn, then the parent's "probe status service" would fail and the install would error out with a generic "An error occurred while launching the installer." dialog.
+- `Choragus.entitlements` now grants both the static and dynamic mach-lookup names. Sparkle's full install + relaunch flow works end-to-end on the sandboxed build for the first time.
+- `release.sh` now per-component-signs each Sparkle nested binary (Installer.xpc, Downloader.xpc, Updater.app, Autoupdate, then the framework, then the app shell) with our Developer ID + timestamp + hardened runtime, but without `--entitlements` on the inner components — `--deep` would clobber Sparkle's own entitlements posture and break the installer XPC. Single targeted re-sign of `Choragus.debug.dylib` and `__preview.dylib` adds the secure timestamp Apple's notary requires.
+
+### Settings as a real Preferences window
+
+- `SettingsView` is now wired through SwiftUI's `Settings { }` scene at the App level, presented as a separate non-modal window. Replaces the previous `.sheet(isPresented:)` presentation that was modal over the main window — that was blocking interaction with every other Choragus window AND preventing Sparkle's "Install and Relaunch" alert from surfacing because it tried to attach to the same already-modal window. The same complaint was filed in issue #23 ("The Settings popup is locally modal").
+- ⌘, opens it (system-wired). `@Environment(\.openSettings)` in `ContentView` for the toolbar gear and the first-run welcome's "Open Settings" button.
+- Settings → Software Updates surfaces the current version (clickable to open the About window) for quick reference.
+
+### DMG distribution
+
+- `release.sh` (production path) now produces a signed/notarized `Choragus.dmg` with the standard drag-to-Applications layout via `create-dmg`. Background art generated by `scripts/dmg/build-background.py` from the existing icon and wordmark assets — 640×480 canvas with the wordmark at the bottom and the app icon / Applications shortcut centred at the icon row. Falls back to ZIP if `create-dmg` isn't installed (with a warning).
+- `release.sh --beta` continues to produce a ZIP — beta channel is arm64-only now (smaller, faster pre-release iteration; production stays universal).
+- Beta releases get a build-suffixed git tag (`vX.Y.Z-betaN`) so they're separate GitHub release objects from any future stable `vX.Y.Z`. Beta release notes and stable release notes never overlap on the same release page.
+
+### Queue UX
+
+- Full-window busy overlay during long add-to-queue operations replaces the easy-to-miss inline header spinner. Shows on top of the existing queue list (translucent backdrop + centred ProgressView + label) so the user can still see what's there but the in-progress signal is unmistakable. Allows hit-testing of unrelated rows so reorder / delete on already-queued items still works while a batch lands.
+
+### Build / signing pipeline
+
+- Per-component Sparkle re-signing (see entitlements section above).
+- `release.sh` channel-aware artifact + tag + appcast enclosure type.
+- `MARKETING_VERSION` 4.5 → 4.6, `CURRENT_PROJECT_VERSION` 13 → 23 across iterations.
+
 ## v4.5 — 2026-05-02 — Karaoke + auto-update + encrypted bug reports + perf
 
 A substantial release: the karaoke window now has its own resizable popout with smooth art crossfades and radio-art grace handling, Choragus now self-updates via Sparkle 2 with EdDSA-signed releases and an opt-in beta channel, the diagnostics surface gains an encrypted bug-report path that ships an opaque-to-GitHub bundle to the maintainer plus a live UPnP event monitor in a tabbed shell, and there's a substantial under-the-hood pass to drive idle CPU churn and SwiftUI invalidation rate down.

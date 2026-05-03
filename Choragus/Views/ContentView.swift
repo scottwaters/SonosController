@@ -28,8 +28,15 @@ struct ContentView: View {
     @AppStorage(UDKey.showBrowse) private var showBrowse = false
     // Alarms: Sonos S2 app uses cloud API for alarms, not local UPnP AlarmClock.
     // UPnP returns 0 alarms. Feature removed until cloud API access is available.
-    @State private var showSettings = false
     @State private var showPresetManager = false
+
+    /// Opens the proper macOS Preferences window — the standalone
+    /// non-modal Settings scene wired up at App level. Replaces the
+    /// previous `.sheet`-based Settings presentation, which was modal
+    /// over the main window and blocked any other alert/sheet from
+    /// surfacing while it was open (notably Sparkle's "Install and
+    /// Relaunch" prompt during in-app auto-update).
+    @Environment(\.openSettings) private var openSettings
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .automatic
     @State private var showFirstRunWelcome = false
 
@@ -372,7 +379,7 @@ struct ContentView: View {
                         FirstRunWelcome.markShown()
                         showFirstRunWelcome = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                            showSettings = true
+                            openSettings()
                         }
                     },
                     onDismiss: {
@@ -504,22 +511,12 @@ struct ContentView: View {
                     }
 
                     Button {
-                        showSettings.toggle()
+                        openSettings()
                     } label: {
                         Image(systemName: "gear")
                     }
                     .help(L10n.appSettings)
-                    .sheet(isPresented: $showSettings) {
-                        SettingsView()
-                            .environmentObject(sonosManager)
-                            .environmentObject(playHistoryManager)
-                            .environmentObject(smapiManager)
-                            .environmentObject(plexAuth)
-                    }
                 }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
-                showSettings = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .menuToggleBrowse)) { _ in
                 showBrowse.toggle()

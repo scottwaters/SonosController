@@ -60,7 +60,16 @@ public final class SMAPIAuthManager: ObservableObject {
 
     // MARK: - Service Discovery
 
-    /// Loads available services and device identity from a speaker
+    /// Loads available services and device identity from a speaker.
+    ///
+    /// Service-descriptor fetching is delegated to `MusicServiceCatalog`,
+    /// which owns the SOAP call and the per-household sid → name table.
+    /// We then derive `availableServices` from the catalog's published
+    /// descriptors so existing UI code (BrowseView, MusicServicesView)
+    /// keeps reading from this manager without needing to migrate to the
+    /// catalog directly. The ambassador speaker IP is bound on the
+    /// catalog so its periodic / miss-triggered refresh paths know where
+    /// to call.
     public func loadServices(speakerIP: String, musicServicesList: [MusicService]) async {
         sonosDebugLog("[SMAPI] loadServices start (speakerIP=\(speakerIP))")
         do {
@@ -71,15 +80,16 @@ public final class SMAPIAuthManager: ObservableObject {
             sonosDebugLog("[SMAPI] Failed to get device identity: \(error)")
         }
 
-        // Build service descriptors from the MusicServices list
-        // We need the SecureUri which isn't in the basic list — fetch full descriptor
-        do {
-            let descriptorXML = try await fetchServiceDescriptors(speakerIP: speakerIP)
-            availableServices = parseServiceDescriptors(descriptorXML)
-            sonosDebugLog("[SMAPI] descriptors loaded: \(availableServices.count) services — \(availableServices.map { "\($0.name)(\($0.id))" }.joined(separator: ", "))")
-        } catch {
-            sonosDebugLog("[SMAPI] Failed to load service descriptors: \(error)")
+        let catalog = MusicServiceCatalog.shared
+        catalog.bind(speakerIP: speakerIP)
+        await catalog.refresh(speakerIP: speakerIP)
+        availableServices = catalog.allDescriptors().map { d in
+            SMAPIServiceDescriptor(
+                id: d.id, name: d.name, secureUri: d.secureUri,
+                authType: d.authType, capabilities: d.capabilities
+            )
         }
+        sonosDebugLog("[SMAPI] descriptors loaded via catalog: \(availableServices.count) services — \(availableServices.map { "\($0.name)(\($0.id))" }.joined(separator: ", "))")
     }
 
     /// Known services that don't support third-party AppLink auth
@@ -281,60 +291,8 @@ public final class SMAPIAuthManager: ObservableObject {
         objectWillChange.send()
     }
 
-    // MARK: - Service Descriptor Parsing
-
-    private func fetchServiceDescriptors(speakerIP: String) async throws -> String {
-        let body = """
-        <?xml version="1.0" encoding="utf-8"?>
-        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
-         s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-        <s:Body>
-        <u:ListAvailableServices xmlns:u="urn:schemas-upnp-org:service:MusicServices:1"/>
-        </s:Body></s:Envelope>
-        """
-        let port = SonosProtocol.defaultPort
-        guard let url = URL(string: "http://\(speakerIP):\(port)/MusicServices/Control") else { return "" }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("text/xml; charset=\"utf-8\"", forHTTPHeaderField: "Content-Type")
-        request.setValue("\"urn:schemas-upnp-org:service:MusicServices:1#ListAvailableServices\"", forHTTPHeaderField: "SOAPAction")
-        request.httpBody = body.data(using: .utf8)
-        request.timeoutInterval = 10
-
-        let (data, _) = try await URLSession.shared.data(for: request)
-        return String(data: data, encoding: .utf8) ?? ""
-    }
-
-    private func parseServiceDescriptors(_ xml: String) -> [SMAPIServiceDescriptor] {
-        let unescaped = XMLResponseParser.xmlUnescape(xml)
-
-        var services: [SMAPIServiceDescriptor] = []
-        let parts = unescaped.components(separatedBy: "<Service ")
-        for part in parts.dropFirst() {
-            guard let idStr = extractAttr(part, "Id"),
-                  let id = Int(idStr),
-                  let name = extractAttr(part, "Name"),
-                  let secureUri = extractAttr(part, "SecureUri") else { continue }
-
-            var authType = "Anonymous"
-            if let policyRange = part.range(of: "Auth=\""),
-               let endQuote = part[policyRange.upperBound...].range(of: "\"") {
-                authType = String(part[policyRange.upperBound..<endQuote.lowerBound])
-            }
-
-            let capabilities = Int(extractAttr(part, "Capabilities") ?? "0") ?? 0
-
-            services.append(SMAPIServiceDescriptor(
-                id: id, name: name, secureUri: secureUri,
-                authType: authType, capabilities: capabilities
-            ))
-        }
-        return services.sorted { $0.name < $1.name }
-    }
-
-    private func extractAttr(_ text: String, _ name: String) -> String? {
-        guard let range = text.range(of: "\(name)=\""),
-              let endQuote = text[range.upperBound...].range(of: "\"") else { return nil }
-        return String(text[range.upperBound..<endQuote.lowerBound])
-    }
+    // Service-descriptor fetching + parsing now lives in
+    // `MusicServiceCatalog` / `MusicServiceCatalogParser`. `loadServices`
+    // above delegates to the catalog and reads back the parsed
+    // descriptors.
 }

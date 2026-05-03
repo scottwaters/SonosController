@@ -31,6 +31,20 @@ struct QueueView: View {
             Divider()
             content
         }
+        // Full-window overlay shown whenever the queue is mid-mutation
+        // (a batch add-to-queue or a refresh fetch in flight). The
+        // earlier inline header indicator was easy to miss for the
+        // long Plex / local-library batch adds where the user is left
+        // wondering "is anything happening?". Translucent so the
+        // existing queue stays visible underneath as a reassurance
+        // that the prior state is still there. Excluded when the
+        // queue is empty — that state already has its own dedicated
+        // full-screen progress block in `content`.
+        .overlay {
+            if (vm.isLoading || sonosManager.isAddingToQueue) && !vm.queueItems.isEmpty {
+                queueBusyOverlay
+            }
+        }
         .onAppear { Task { await vm.loadQueue() } }
         .onChange(of: group.id) { _, newID in
             // Propagate the speaker-selection change into the view model,
@@ -89,9 +103,10 @@ struct QueueView: View {
                 .truncationMode(.tail)
                 .layoutPriority(0)
                 .fixedSize(horizontal: false, vertical: false)
-            if (vm.isLoading || sonosManager.isAddingToQueue) && !vm.queueItems.isEmpty {
-                ProgressView().controlSize(.small)
-            }
+            // The mid-mutation indicator now lives as a full-window
+            // overlay (see `queueBusyOverlay`) so it's hard to miss
+            // during long Plex / local-library batch adds. The header
+            // stays clean.
             Spacer(minLength: 0)
             // Track count is informational — drops out before any
             // button gets clipped.
@@ -150,6 +165,30 @@ struct QueueView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    /// Translucent full-window overlay shown while a batch add-to-queue
+    /// or a queue refresh is in flight. Sits on top of the existing
+    /// queue list so the user can still see what's there (reassurance
+    /// the prior state is intact) but the spinner makes "work in
+    /// progress" unmistakable. The `.allowsHitTesting(false)` means
+    /// row interactions still pass through, so the user can scroll /
+    /// reorder / delete unrelated rows while the batch lands.
+    private var queueBusyOverlay: some View {
+        ZStack {
+            Color(NSColor.windowBackgroundColor).opacity(0.55)
+            VStack(spacing: 12) {
+                ProgressView()
+                    .scaleEffect(1.4)
+                Text(sonosManager.isAddingToQueue
+                     ? L10n.addingToQueueEllipsis
+                     : L10n.loadingQueueEllipsis)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
     }
 
     @ViewBuilder

@@ -518,6 +518,29 @@ private struct TabContentView: View {
     private var updatesSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             settingsSection(L10n.softwareUpdates) {
+                // Quick-reference version line at the top of the pane.
+                // Clickable so users hunting for "what version am I on?"
+                // can drill straight into the full About window (with
+                // build, copyright, credits) without leaving the
+                // Software Updates context. Plain-button styling +
+                // .link pointer keeps it understated — version strings
+                // shouldn't shout.
+                HStack(spacing: 4) {
+                    Text(L10n.currentVersionLabel)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        showAboutPanel()
+                    } label: {
+                        Text(currentVersionString)
+                            .font(.callout)
+                            .underline()
+                    }
+                    .buttonStyle(.plain)
+                    .help(L10n.openAboutWindowTooltip)
+                    Spacer()
+                }
+
                 Toggle(L10n.autoCheckForUpdates, isOn: sparkleObserver.autoCheckBinding)
 
                 Toggle(L10n.autoDownloadUpdates, isOn: sparkleObserver.autoDownloadBinding)
@@ -564,6 +587,17 @@ private struct TabContentView: View {
         fmt.timeStyle = .short
         fmt.locale = L10n.currentLocale
         return L10n.lastCheckedFormat(fmt.string(from: last))
+    }
+
+    /// Marketing version + build number, e.g. "4.5.1 (build 14)". Read
+    /// from the running bundle so it tracks whatever was installed
+    /// regardless of source. Used for the clickable label in the
+    /// Software Updates pane.
+    private var currentVersionString: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return L10n.versionBuildFormat(version, build)
     }
 
     // MARK: - Layout Helpers

@@ -411,6 +411,10 @@ public enum L10n {
     public static var name: String { tr("name") }
     public static var next: String { tr("next") }
     public static var previous: String { tr("previous") }
+    public static var skipBack15: String { tr("skipBack15") }
+    public static var skipForward15: String { tr("skipForward15") }
+    public static var skipBack30: String { tr("skipBack30") }
+    public static var skipForward30: String { tr("skipForward30") }
     public static var crossfade: String { tr("crossfade") }
     public static var starVerb: String { tr("starVerb") }
     public static var unstarVerb: String { tr("unstarVerb") }
@@ -858,6 +862,11 @@ public enum L10n {
     }
     public static var softwareUpdatesBetaOptIn: String { tr("softwareUpdatesBetaOptIn") }
     public static var softwareUpdatesBetaWarning: String { tr("softwareUpdatesBetaWarning") }
+    public static var currentVersionLabel: String { tr("currentVersionLabel") }
+    public static var openAboutWindowTooltip: String { tr("openAboutWindowTooltip") }
+    public static func versionBuildFormat(_ version: String, _ build: String) -> String {
+        String(format: tr("versionBuildFormat"), version, build)
+    }
     public static var diagEncryptedReportBug: String { tr("diagEncryptedReportBug") }
     public static var diagEncryptedReportBugHelp: String { tr("diagEncryptedReportBugHelp") }
     public static var diagEncryptedReportSecurity: String { tr("diagEncryptedReportSecurity") }
@@ -6927,6 +6936,23 @@ public enum L10n {
             "ja": "\u{524D}\u{3078}", "pt": "Anterior", "pl": "Poprzedni",
             "zh-Hans": "\u{4E0A}\u{4E00}\u{4E2A}",
         ],
+        // Seek-by-offset tooltips for the ±15s / ±30s skip buttons in
+        // the Now Playing transport row. English-only initially —
+        // `tr()` falls back to English when a language entry is
+        // missing, so other locales degrade gracefully until a
+        // translator fills these in.
+        "skipBack15": [
+            "en": "Skip back 15 seconds",
+        ],
+        "skipForward15": [
+            "en": "Skip forward 15 seconds",
+        ],
+        "skipBack30": [
+            "en": "Skip back 30 seconds",
+        ],
+        "skipForward30": [
+            "en": "Skip forward 30 seconds",
+        ],
         "crossfade": [
             "en": "Crossfade", "de": "\u{00DC}berblenden",
             "fr": "Fondu encha\u{00EE}n\u{00E9}", "nl": "Crossfade",
@@ -9197,7 +9223,7 @@ public enum L10n {
             "zh-Hans": "Bug 报告 — 已附加诊断包",
         ],
         "diagEncryptedReportFormBody": [
-            "en": "## What happened?\n\n<!-- Describe what you were doing when the bug occurred. -->\n\n\n## Diagnostic bundle\n\nPlease attach the encrypted bundle file just saved to your Downloads folder:\n\n`%@`\n\nDrag it from the Finder window that just opened into this comment to attach it.\n\nThe bundle is opaque to GitHub and to anyone but the maintainer — auth tokens have already been removed at the Choragus side.",
+            "en": "## What happened?\n\n<!-- Describe what you were doing when the bug occurred. -->\n\n\n## Diagnostic bundle\n\nPlease attach the encrypted bundle file just saved to your Downloads folder:\n\n`%@`\n\nDrag it from the Finder window that just opened into this comment to attach it. (The `.log` suffix is just so GitHub accepts the upload — the file is still the encrypted bundle, not a plain log; no rename needed.)\n\nThe bundle is opaque to GitHub and to anyone but the maintainer — auth tokens have already been removed at the Choragus side.",
             "de": "## Was ist passiert?\n\n<!-- Beschreibe, was du gemacht hast, als der Fehler auftrat. -->\n\n\n## Diagnose-Paket\n\nBitte h\u{e4}nge die verschl\u{fc}sselte Paketdatei an, die gerade in deinen Downloads-Ordner gespeichert wurde:\n\n`%@`\n\nZiehe sie aus dem ge\u{f6}ffneten Finder-Fenster in diesen Kommentar, um sie anzuh\u{e4}ngen.\n\nDas Paket ist f\u{fc}r GitHub und alle au\u{df}er dem Betreuer undurchsichtig — Auth-Token wurden bereits auf der Choragus-Seite entfernt.",
             "fr": "## Que s\u{2019}est-il pass\u{e9}\u{a0}?\n\n<!-- D\u{e9}crivez ce que vous faisiez quand le bug s\u{2019}est produit. -->\n\n\n## Lot de diagnostic\n\nVeuillez joindre le fichier de lot chiffr\u{e9} qui vient d\u{2019}\u{ea}tre enregistr\u{e9} dans votre dossier T\u{e9}l\u{e9}chargements\u{a0}:\n\n`%@`\n\nGlissez-le depuis la fen\u{ea}tre du Finder qui vient de s\u{2019}ouvrir vers ce commentaire pour le joindre.\n\nLe lot est opaque pour GitHub et pour quiconque sauf le mainteneur — les jetons d\u{2019}authentification ont d\u{e9}j\u{e0} \u{e9}t\u{e9} retir\u{e9}s c\u{f4}t\u{e9} Choragus.",
             "nl": "## Wat is er gebeurd?\n\n<!-- Beschrijf wat je aan het doen was toen de bug optrad. -->\n\n\n## Diagnostisch pakket\n\nVoeg het versleutelde pakketbestand toe dat zojuist in je Downloads-map is opgeslagen:\n\n`%@`\n\nSleep het uit het zojuist geopende Finder-venster in deze opmerking om het bij te voegen.\n\nHet pakket is ondoorzichtig voor GitHub en iedereen behalve de beheerder — auth-tokens zijn al verwijderd aan de Choragus-kant.",
@@ -9270,6 +9296,20 @@ public enum L10n {
             "pt": "As vers\u{f5}es beta s\u{e3}o compila\u{e7}\u{f5}es pr\u{e9}-lan\u{e7}amento. Podem ser inst\u{e1}veis, perder dados ou quebrar funcionalidades que funcionam na vers\u{e3}o est\u{e1}vel. N\u{e3}o ative isto no seu \u{fa}nico Mac. Para sair do canal beta, desative isto — permanecer\u{e1} na \u{fa}ltima beta instalada at\u{e9} que a pr\u{f3}xima vers\u{e3}o est\u{e1}vel alcance.",
             "pl": "Wersje beta to przedpremierowe kompilacje. Mog\u{105} by\u{107} niestabilne, traci\u{107} dane lub psu\u{107} funkcje, kt\u{f3}re dzia\u{142}aj\u{105} w wersji stabilnej. Nie w\u{142}\u{105}czaj tego na swoim jedynym Macu. Aby opu\u{15b}ci\u{107} kana\u{142} beta, wy\u{142}\u{105}cz to — pozostaniesz na ostatniej zainstalowanej wersji beta, dopóki nast\u{119}pna stabilna wersja jej nie dogoni.",
             "zh-Hans": "测试版是预发布构建。可能不稳定、丢失数据或破坏稳定版中可用的功能。不要在您唯一的 Mac 上启用此项。要离开测试通道，请关闭此项 — 您将停留在已安装的最新测试版，直到下一个稳定版赶上。",
+        ],
+        // Quick-reference version line in Settings → Software Updates.
+        // Click target opens the full About window. English-only
+        // initially — `tr()` falls back to English when a locale entry
+        // is missing, so other languages degrade gracefully until a
+        // translator fills these in.
+        "currentVersionLabel": [
+            "en": "Current version:",
+        ],
+        "openAboutWindowTooltip": [
+            "en": "Open the About window",
+        ],
+        "versionBuildFormat": [
+            "en": "%@ (build %@)",
         ],
         "diagEncryptedReportBug": [
             "en": "Report Bug (encrypted)",
@@ -10846,7 +10886,7 @@ public enum L10n {
             "zh-Hans": "加密 bug 报告",
         ],
         "helpDiagnosticsEncryptedBody": [
-            "en": "When the build supports it, the Diagnostics footer shows a Report Bug (encrypted) button. Click it to: (1) preview the bundle that will be sent in a sheet that highlights what was redacted; (2) on confirm, write a Choragus-Bug-Bundle-*.choragus-bundle file to your Downloads folder, reveal it in Finder, and open the GitHub Issues form with title and body pre-filled. Drag the file from Finder into the comment to attach. The bundle is wrapped with the maintainer\u{2019}s public key (Curve25519 + ChaChaPoly), so only the maintainer can read it \u{2014} GitHub itself, your network, and any caching proxy see only opaque ciphertext.",
+            "en": "When the build supports it, the Diagnostics footer shows a Report Bug (encrypted) button. Click it to: (1) preview the bundle that will be sent in a sheet that highlights what was redacted; (2) on confirm, write a Choragus-Bug-Bundle-*.choragus-bundle.log file to your Downloads folder, reveal it in Finder, and open the GitHub Issues form with title and body pre-filled. Drag the file from Finder into the comment to attach \u{2014} the trailing .log suffix is just there so GitHub accepts the upload without a manual rename; the file is the encrypted bundle, not a plain log. The bundle is wrapped with the maintainer\u{2019}s public key (Curve25519 + ChaChaPoly), so only the maintainer can read it \u{2014} GitHub itself, your network, and any caching proxy see only opaque ciphertext.",
             "de": "Wenn der Build dies unterst\u{fc}tzt, zeigt die Diagnose-Fu\u{df}leiste eine Schaltfl\u{e4}che \u{201E}Fehler melden (verschl\u{fc}sselt)\u{201C}. Klick sie an, um: (1) das zu sendende Paket in einer Vorschau anzuzeigen, die hervorhebt, was geschw\u{e4}rzt wurde; (2) nach Best\u{e4}tigung eine Datei Choragus-Bug-Bundle-*.choragus-bundle in deinen Downloads-Ordner zu schreiben, sie im Finder anzuzeigen und das GitHub-Issues-Formular mit vorausgef\u{fc}lltem Titel und Text zu \u{f6}ffnen. Zieh die Datei aus dem Finder in den Kommentar, um sie anzuh\u{e4}ngen. Das Paket wird mit dem \u{f6}ffentlichen Schl\u{fc}ssel des Betreuers verpackt (Curve25519 + ChaChaPoly), sodass nur der Betreuer es lesen kann \u{2014} GitHub selbst, dein Netzwerk und jeder Cache-Proxy sehen nur undurchsichtigen Chiffretext.",
             "fr": "Quand la version le permet, le pied de page Diagnostics affiche un bouton Signaler un bug (chiffr\u{e9}). Cliquez-le pour : (1) pr\u{e9}visualiser le lot qui sera envoy\u{e9} dans une feuille qui met en \u{e9}vidence ce qui a \u{e9}t\u{e9} masqu\u{e9} ; (2) apr\u{e8}s confirmation, \u{e9}crire un fichier Choragus-Bug-Bundle-*.choragus-bundle dans votre dossier T\u{e9}l\u{e9}chargements, le r\u{e9}v\u{e9}ler dans le Finder et ouvrir le formulaire GitHub Issues avec titre et corps pr\u{e9}-remplis. Glissez le fichier depuis le Finder dans le commentaire pour l\u{2019}attacher. Le lot est chiffr\u{e9} avec la cl\u{e9} publique du mainteneur (Curve25519 + ChaChaPoly), donc seul le mainteneur peut le lire \u{2014} GitHub lui-m\u{ea}me, votre r\u{e9}seau et tout proxy de cache ne voient qu\u{2019}un chiffr\u{e9} opaque.",
             "nl": "Wanneer de build het ondersteunt, toont de Diagnostics-voettekst een knop Bug melden (versleuteld). Klik erop om: (1) het te verzenden pakket te bekijken in een venster dat aangeeft wat is geredigeerd; (2) na bevestiging een Choragus-Bug-Bundle-*.choragus-bundle bestand naar je Downloads-map te schrijven, het in Finder te tonen en het GitHub Issues-formulier te openen met vooraf ingevulde titel en tekst. Sleep het bestand vanuit Finder in de opmerking om het bij te voegen. Het pakket is versleuteld met de openbare sleutel van de beheerder (Curve25519 + ChaChaPoly), dus alleen de beheerder kan het lezen \u{2014} GitHub zelf, je netwerk en elke caching-proxy zien alleen ondoorzichtige versleutelde tekst.",
